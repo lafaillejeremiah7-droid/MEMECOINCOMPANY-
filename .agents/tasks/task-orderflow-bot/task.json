@@ -1,0 +1,7 @@
+{
+  "task_id": "task-orderflow-bot",
+  "task_description": "Build a self-adapting NAS100 (NQ futures) order flow signal bot that connects to Interactive Brokers Gateway via ib_insync in read-only mode. Includes real-time order flow computations (cumulative delta, volume profile, DOM analysis, large prints, absorption), signal generation with self-adaptation (auto-disable/re-enable based on rolling performance), Telegram alerts, and SQLite persistence. All code in orderflow/ directory.",
+  "status": "in_progress",
+  "feature_order": ["FEAT-001"],
+  "blocked_reason": null
+}

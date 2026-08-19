@@ -1,0 +1,51 @@
+{
+  "id": "FEAT-001",
+  "type": "feat",
+  "description": "Build the complete orderflow bot module - IB connection, order flow computations, signal generation, self-adaptation engine, Telegram alerts, SQLite persistence, and configuration. All code in orderflow/ directory alongside existing nas100bot/.",
+  "status": "in_progress",
+  "steps": [
+    "Create orderflow/ package directory with __init__.py containing version and package description",
+    "Create orderflow/config.py - YAML config loader that reads orderflow_config.yaml with all settings (IB connection, Telegram, thresholds, adaptation params). Follow pattern from nas100bot/config.py.",
+    "Create orderflow_config.example.yaml at repo root with all configurable parameters documented: IB Gateway host/port/client_id, Telegram bot_token/chat_id, large_print_threshold (default 20), dom_imbalance_threshold (default 3.0), delta_divergence_lookback (default 10), absorption params, adaptation params (disable_threshold 0.50, re_enable_threshold 0.55, rolling_window 30), signal_cooldown (300s)",
+    "Create orderflow/connection.py - IB Gateway connection manager using ib_insync. Connects to localhost:4001 read-only. Subscribes to NQ front-month continuous contract. Handles: tick-by-tick trades, Level 2 market depth (5 levels), real-time bars. Includes reconnection logic on disconnect, graceful shutdown on SIGINT/SIGTERM, contract rollover handling for quarterly NQ expiry.",
+    "Create orderflow/delta.py - Cumulative Delta computation. Track running sum of (volume_at_ask - volume_at_bid) per bar and per session. Detect Delta Divergence: price new high but delta declining (exhaustion short signal), price new low but delta rising (exhaustion long signal). Use configurable lookback window.",
+    "Create orderflow/volume_profile.py - Session volume profile tracking. Record volume at each price level during the session. Identify HVN (high-volume nodes) and LVN (low-volume nodes) using statistical methods. Compute POC (Point of Control) - price level with highest volume. Detect POC Reclaim signal: price sweeps below POC then reclaims above.",
+    "Create orderflow/dom.py - DOM (Depth of Market) analysis. Track bid/ask depth at best 5 levels. Compute bid/ask ratio. Detect DOM Imbalance when ratio exceeds threshold (default 3:1). Detect DOM Imbalance Flip when ratio flips from extreme one side to extreme other (reversal signal).",
+    "Create orderflow/large_prints.py - Large print detection. Flag trades above N contracts (configurable, default 20). Detect Large Print Clusters: multiple large prints in same direction within N seconds. Track institutional footprint patterns.",
+    "Create orderflow/absorption.py - Absorption detection. Identify when large resting limit orders eat aggressive market orders without price moving (high volume + no price change at a level). Generate absorption signals: heavy selling absorbed at level (price holds) -> LONG, heavy buying absorbed (price holds) -> SHORT.",
+    "Create orderflow/signals.py - Signal generation engine. Combine all computation modules into unified signal output. Signal types: DeltaDivergence, Absorption, LargePrintCluster, DOMImbalanceFlip, POCReclaim. Each signal includes: timestamp, signal_type, direction (LONG/SHORT), entry_price, confidence score, delta_reading, dom_state. Implement signal cooldown (don't fire same type within N seconds, default 300).",
+    "Create orderflow/database.py - SQLite persistence layer using aiosqlite. Tables: signals (id, timestamp, signal_type, direction, entry_price, confidence, delta_reading, dom_state, rolling_wr), forward_results (signal_id, price_5m, price_15m, price_30m, price_1h, result_direction), adaptation_log (timestamp, signal_type, action, reason, metrics). Methods for logging signals, updating forward results, querying rolling performance.",
+    "Create orderflow/adaptation.py - Self-adaptation engine. Track forward results: what price did 5min, 15min, 30min, 1h after each signal. Compute rolling win rate per signal type (window of last 30 signals). Auto-disable signal if rolling WR drops below 50% over 30 instances (alert user). Re-enable if theoretical WR recovers above 55% over next 20 instances (alert user). Adjust confidence thresholds dynamically: tighten if signal outperforms. Generate weekly self-report: active/disabled signals, performance of each.",
+    "Create orderflow/telegram.py - Telegram alert module. Real-time signal alerts with: signal_type, direction, price, delta_reading, DOM state, confidence score, rolling WR. Hourly session summary: cumulative delta, volume profile summary, large print count. Daily performance report: signals fired, theoretical results, hot/cold signals. Weekly adaptation report: disabled/re-enabled signals, overall system WR. Use python-telegram-bot async API with HTML parse mode, matching nas100bot pattern.",
+    "Create orderflow/main.py - Main entry point and async event loop orchestrator. Parse CLI args (--config, --dry-run). Initialize all modules. Set up IB connection and data subscriptions. Run async event loop processing ticks, DOM updates, and bars. Schedule hourly/daily/weekly reports. Handle SIGINT/SIGTERM graceful shutdown. All times in US/Eastern.",
+    "Create orderflow/__main__.py - Allow running as python -m orderflow",
+    "Update requirements.txt at repo root to add: ib_insync>=0.9.86, aiosqlite>=0.19.0 (keep all existing deps)",
+    "Create orderflow/README.md with complete setup instructions for Linux: install IB Gateway (download from IBKR, configure API settings, enable read-only mode), configure API port 4001, create config from example, run the bot. Include architecture diagram, signal descriptions, adaptation logic explanation.",
+    "Create tests/test_orderflow_delta.py - Unit tests for delta.py: test cumulative delta computation, test delta divergence detection (bullish and bearish cases), test lookback window behavior",
+    "Create tests/test_orderflow_signals.py - Unit tests for signals.py: test signal generation for each type, test cooldown logic, test confidence scoring",
+    "Create tests/test_orderflow_adaptation.py - Unit tests for adaptation.py: test rolling WR computation, test auto-disable logic at 50% threshold, test re-enable logic at 55% threshold, test weekly report generation",
+    "Create tests/test_orderflow_database.py - Unit tests for database.py: test signal logging, test forward result updates, test adaptation log queries",
+    "Create tests/test_orderflow_dom.py - Unit tests for dom.py: test bid/ask ratio computation, test imbalance detection, test flip detection",
+    "Create tests/test_orderflow_volume_profile.py - Unit tests for volume_profile.py: test volume tracking, test HVN/LVN identification, test POC computation, test POC reclaim detection"
+  ],
+  "acceptance_criteria": [
+    "orderflow/ directory exists with all module files (__init__.py, config.py, connection.py, delta.py, volume_profile.py, dom.py, large_prints.py, absorption.py, signals.py, database.py, adaptation.py, telegram.py, main.py, __main__.py)",
+    "orderflow_config.example.yaml exists at repo root with all documented parameters",
+    "orderflow/README.md exists with complete Linux setup instructions",
+    "requirements.txt includes ib_insync and aiosqlite alongside existing deps",
+    "All code is SIGNAL-ONLY - grep for 'placeOrder' or 'order' placement returns zero results in orderflow/",
+    "python3 -c 'import orderflow' succeeds after pip install",
+    "python3 -m pytest tests/test_orderflow_*.py -v passes all tests",
+    "Connection module includes reconnection logic and graceful shutdown handlers",
+    "Adaptation module implements disable at 50% WR / re-enable at 55% WR with rolling window of 30",
+    "All times use US/Eastern timezone"
+  ],
+  "verification": [
+    "pip install -r requirements.txt",
+    "python3 -c 'import orderflow; print(orderflow.__version__)'",
+    "python3 -m pytest tests/test_orderflow_*.py -v",
+    "grep -r 'placeOrder\\|place_order\\|reqIds' orderflow/ | grep -v '#' | grep -v 'NEVER' || echo 'PASS: No order placement code found'"
+  ],
+  "blocked_reason": null,
+  "findings": ""
+}

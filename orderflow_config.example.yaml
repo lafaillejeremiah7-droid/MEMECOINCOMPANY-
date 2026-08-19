@@ -1,0 +1,80 @@
+# =============================================================================
+# NAS100 Order Flow Bot Configuration
+# =============================================================================
+# IMPORTANT: This bot is SIGNAL-ONLY. It NEVER places orders or executes trades.
+# It observes market microstructure via IB Gateway and alerts you via Telegram.
+# You decide all risk, sizing, and execution manually.
+# =============================================================================
+
+# --- IB Gateway Connection ---
+# Download IB Gateway from: https://www.interactivebrokers.com/en/trading/ibgateway-stable.php
+# MUST enable "Read-Only API" in IB Gateway API settings
+ib_gateway:
+  host: "127.0.0.1"         # IB Gateway host
+  port: 4001                 # IB Gateway port (4001 = live, 4002 = paper)
+  client_id: 1              # Client ID (unique per connection)
+  readonly: true             # MUST be true - bot never places orders
+  timeout: 30               # Connection timeout in seconds
+  reconnect_delay: 5        # Seconds between reconnection attempts
+  max_reconnect_attempts: 10 # Max reconnection attempts before giving up
+
+# --- Telegram Settings ---
+# Create a bot via @BotFather on Telegram to get your token
+# Get your chat ID by messaging @userinfobot
+telegram:
+  bot_token: "YOUR_BOT_TOKEN_HERE"
+  chat_id: "YOUR_CHAT_ID_HERE"
+
+# --- Instrument Settings ---
+# NQ futures (Nasdaq 100 E-mini) on CME
+instrument:
+  symbol: "NQ"               # Futures symbol
+  exchange: "CME"            # Exchange
+  currency: "USD"            # Currency
+  sec_type: "FUT"            # Security type (futures)
+
+# --- Order Flow Thresholds ---
+thresholds:
+  large_print_threshold: 20          # Minimum contracts for a "large print" (institutional)
+  dom_imbalance_threshold: 3.0       # Bid/Ask ratio threshold for DOM imbalance (3:1)
+  delta_divergence_lookback: 10      # Number of bars to look back for delta divergence
+  absorption_min_volume: 50          # Minimum volume at a level for absorption detection
+  absorption_max_price_change: 0.25  # Max price change (points) for absorption to be valid
+  large_print_cluster_seconds: 30    # Time window (seconds) for large print cluster detection
+  large_print_cluster_min_count: 3   # Minimum large prints for a cluster signal
+
+# --- Self-Adaptation Parameters ---
+adaptation:
+  disable_threshold: 0.50            # Disable signal if rolling WR drops below 50%
+  re_enable_threshold: 0.55          # Re-enable signal if theoretical WR recovers above 55%
+  rolling_window: 30                 # Number of signals for rolling WR calculation
+  re_enable_window: 20               # Number of signals for re-enable WR check
+  forward_result_intervals:          # Forward result check intervals (seconds)
+    - 300                            # 5 minutes
+    - 900                            # 15 minutes
+    - 1800                           # 30 minutes
+    - 3600                           # 1 hour
+
+# --- Signal Settings ---
+signals:
+  cooldown_seconds: 300              # Don't fire same signal type within 5 minutes
+  confidence_base: 0.7               # Base confidence level for signals
+
+# --- Schedule Settings ---
+# All times in US/Eastern
+schedule:
+  timezone: "US/Eastern"
+  hourly_summary: true               # Send hourly session summaries
+  daily_report: true                 # Send daily performance reports (after 4PM ET)
+  weekly_report: true                # Send weekly adaptation reports (Friday after 4PM ET)
+
+# --- Database Settings ---
+database:
+  path: "orderflow_signals.db"       # SQLite database file for signal logging
+
+# --- Logging ---
+logging:
+  level: "INFO"                      # DEBUG, INFO, WARNING, ERROR
+  file: "orderflow.log"             # Log file path
+  max_bytes: 10485760                # 10MB max log file size
+  backup_count: 5                    # Number of rotated log files to keep

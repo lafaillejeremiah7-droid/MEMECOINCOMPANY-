@@ -1,0 +1,24 @@
+{
+  "project_type": "Python async trading signal bot using ib_insync for IB Gateway connectivity",
+  "language": "Python 3.9+",
+  "build_system": "pip with requirements.txt, no Makefile or Dockerfile",
+  "test_framework": "pytest with conftest.py fixtures in tests/ directory",
+  "build_command": "pip install -r requirements.txt",
+  "test_command": "python3 -m pytest tests/ -v",
+  "verification_instructions": "1. Install deps: pip install -r requirements.txt. 2. Run tests: python3 -m pytest tests/ -v. 3. Import check: python3 -c 'import orderflow'",
+  "snapshot_or_generated_files": null,
+  "setup_instructions": "pip install -r requirements.txt (OPEN_INTERNET mode available for package installs)",
+  "environment_constraints": "OPEN_INTERNET - full network access. Python 3.9.25 available at /usr/bin/python3. No IB Gateway running (cannot do live integration tests). Tests must mock ib_insync connections.",
+  "contribution_requirements": "Signal-only system. NEVER place orders or execute trades. Read-only API mode. User decides all risk/sizing. Modular code structure matching existing nas100bot patterns.",
+  "key_patterns": "Existing project uses: YAML config with config.example.yaml, python-telegram-bot async API with sync wrapper, dataclass-based signal objects, pytest with fixtures in conftest.py, logging with rotating file handler, pytz for US/Eastern timezone handling, argparse for CLI. Telegram module uses HTML parse mode.",
+  "relevant_files": [
+    "nas100bot/main.py",
+    "nas100bot/config.py",
+    "nas100bot/telegram_bot.py",
+    "nas100bot/signals.py",
+    "config.example.yaml",
+    "requirements.txt",
+    "tests/conftest.py"
+  ],
+  "directory_structure": "hii/ (repo root): nas100bot/ (daily signal bot), journal/ (trade journal), tests/ (pytest tests), config.example.yaml, requirements.txt, README.md. New orderflow/ directory will be added alongside these."
+}
