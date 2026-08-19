@@ -2,7 +2,7 @@
   "id": "FEAT-001",
   "type": "feat",
   "description": "Create the complete NAS100 signal bot project structure with all core modules - data fetching, edge detection, signal generation, Kelly criterion math, confluence scoring, Telegram alerts, and scheduling. This is the main implementation feature.",
-  "status": "in_progress",
+  "status": "completed",
   "steps": [
     "Create requirements.txt with dependencies: yfinance, pandas, numpy, python-telegram-bot, schedule, pyyaml, ta (technical analysis library), pytz, pytest (dev)",
     "Create config.example.yaml with all user-configurable settings: telegram_bot_token, telegram_chat_id, account_balance (for Kelly sizing suggestions), default_risk_percent, max_kelly_fraction, ticker symbol (^NDX or NQ=F), check_intervals (market_open, after_first_hour, kill_zone, afternoon), timezone (US/Eastern)",
@@ -41,5 +41,5 @@
     "Verify README.md contains signal-only disclaimer"
   ],
   "blocked_reason": null,
-  "findings": ""
+  "findings": "All 122 tests pass. Dry-run mode works correctly, fetching real market data from yfinance and evaluating all edges. Fixed numpy boolean type issue (np.True_ vs Python True) by explicitly casting to bool() in edge functions that do pandas/numpy comparisons. Used python3 command as python is not aliased in this pyenv setup."
 }
