@@ -1,0 +1,7 @@
+{
+  "task_id": "task-nas100-signal-bot",
+  "task_description": "Build a complete NAS100 signal-only trading bot that detects statistically-proven edges from research data, computes Kelly-optimal sizing suggestions, scores confluence, and alerts the user via Telegram. The bot NEVER auto-executes trades - it is signal-only. The user decides all trade execution and risk sizing.",
+  "status": "in_progress",
+  "feature_order": ["FEAT-001"],
+  "blocked_reason": null
+}

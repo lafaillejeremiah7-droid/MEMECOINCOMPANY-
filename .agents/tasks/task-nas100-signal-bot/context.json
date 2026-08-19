@@ -1,0 +1,30 @@
+{
+  "project_type": "Python signal-only trading bot for NAS100",
+  "language": "Python",
+  "build_system": "pip with requirements.txt",
+  "test_framework": "pytest",
+  "build_command": "pip install -r requirements.txt",
+  "test_command": "python -m pytest tests/ -v",
+  "verification_instructions": "1. Install deps: pip install -r requirements.txt 2. Run pytest tests/ 3. Run python -m nas100bot.main --dry-run to verify bot starts without errors",
+  "snapshot_or_generated_files": null,
+  "setup_instructions": "pip install -r requirements.txt && cp config.example.yaml config.yaml",
+  "environment_constraints": "OPEN_INTERNET - full network access. Python 3.9 system default, pyenv has 3.10-3.14. yfinance, pandas, numpy already installed. Need to install python-telegram-bot, schedule, pyyaml, ta (technical analysis).",
+  "contribution_requirements": "None - greenfield project",
+  "key_patterns": "Greenfield - establishing patterns: modular Python package (nas100bot/), YAML config, signal-only architecture (never auto-execute trades), Kelly criterion math, confluence scoring",
+  "relevant_files": [
+    "nas100bot/__init__.py",
+    "nas100bot/main.py",
+    "nas100bot/config.py",
+    "nas100bot/data.py",
+    "nas100bot/edges.py",
+    "nas100bot/signals.py",
+    "nas100bot/kelly.py",
+    "nas100bot/telegram_bot.py",
+    "nas100bot/scheduler.py",
+    "config.example.yaml",
+    "requirements.txt",
+    "README.md",
+    "tests/"
+  ],
+  "directory_structure": "Root: /projects/sandbox/hii. Structure to create: nas100bot/ (main package with modules for data, edges, signals, kelly, telegram, scheduler), tests/ (pytest tests), config.example.yaml, requirements.txt, README.md"
+}

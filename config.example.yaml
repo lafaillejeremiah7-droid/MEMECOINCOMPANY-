@@ -1,0 +1,61 @@
+# =============================================================================
+# NAS100 Signal Bot Configuration
+# =============================================================================
+# IMPORTANT: This bot is SIGNAL-ONLY. It will NEVER auto-execute trades.
+# All position sizing suggestions are advisory - YOU decide final risk/lot size.
+# =============================================================================
+
+# --- Telegram Settings ---
+# Create a bot via @BotFather on Telegram to get your token
+# Get your chat ID by messaging @userinfobot
+telegram:
+  bot_token: "YOUR_BOT_TOKEN_HERE"
+  chat_id: "YOUR_CHAT_ID_HERE"
+
+# --- Account Settings ---
+# Used ONLY for Kelly sizing SUGGESTIONS - bot never executes trades
+account:
+  balance: 10000.0           # Account balance in USD (for Kelly suggestions only)
+  default_risk_percent: 1.0  # Default risk per trade suggestion (%)
+  max_kelly_fraction: 0.5    # Cap Kelly at half-Kelly for safety (0.5 = half-Kelly)
+  currency: "USD"
+
+# --- Market Data Settings ---
+market:
+  ticker: "^IXIC"            # NAS100 ticker symbol (^IXIC for Nasdaq Composite via yfinance)
+  # Alternative tickers: "NQ=F" (Nasdaq futures), "^NDX" (Nasdaq 100)
+  daily_lookback_days: 30    # Days of daily data to fetch
+  hourly_lookback_days: 5    # Days of hourly data to fetch
+  data_cache_minutes: 5      # Cache data for N minutes to avoid excessive API calls
+
+# --- Schedule Settings ---
+# All times in US/Eastern (ET)
+# Bot checks market conditions at these times
+schedule:
+  timezone: "US/Eastern"
+  check_times:
+    - "09:30"   # Market open
+    - "10:30"   # After first hour (first 1H candle close)
+    - "11:00"   # End of kill zone
+    - "14:00"   # After dead zone
+    - "15:00"   # Afternoon session
+    - "15:45"   # Near close
+
+# --- Signal Thresholds ---
+thresholds:
+  min_confluence: 1          # Minimum edges needed to generate a signal
+  first_candle_threshold: 0.003  # 0.3% threshold for first 1H candle
+  pdl_sweep_threshold: 0.3   # 0.3R sweep threshold for PDL reclaim
+  pdh_sweep_threshold: 0.2   # 0.2R sweep threshold for PDH rejection
+  rsi_oversold: 30           # RSI oversold level
+  consecutive_red_days: 5    # Number of consecutive red days for bounce setup
+  rolling_decline_pct: 5.0   # 5% rolling decline threshold
+  large_drop_pct: 4.0        # 4% single-day drop threshold
+  large_rally_pct: 3.0       # 3% single-day rally threshold
+
+# --- Logging ---
+logging:
+  level: "INFO"              # DEBUG, INFO, WARNING, ERROR
+  file: "nas100bot.log"      # Log file path
+  max_bytes: 10485760        # 10MB max log file size
+  backup_count: 5            # Number of rotated log files to keep

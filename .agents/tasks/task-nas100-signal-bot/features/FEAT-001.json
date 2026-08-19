@@ -1,0 +1,45 @@
+{
+  "id": "FEAT-001",
+  "type": "feat",
+  "description": "Create the complete NAS100 signal bot project structure with all core modules - data fetching, edge detection, signal generation, Kelly criterion math, confluence scoring, Telegram alerts, and scheduling. This is the main implementation feature.",
+  "status": "in_progress",
+  "steps": [
+    "Create requirements.txt with dependencies: yfinance, pandas, numpy, python-telegram-bot, schedule, pyyaml, ta (technical analysis library), pytz, pytest (dev)",
+    "Create config.example.yaml with all user-configurable settings: telegram_bot_token, telegram_chat_id, account_balance (for Kelly sizing suggestions), default_risk_percent, max_kelly_fraction, ticker symbol (^NDX or NQ=F), check_intervals (market_open, after_first_hour, kill_zone, afternoon), timezone (US/Eastern)",
+    "Create nas100bot/__init__.py with package version",
+    "Create nas100bot/config.py - loads YAML config, validates required fields, provides defaults",
+    "Create nas100bot/data.py - fetches NAS100 data via yfinance: daily bars (for multi-day setups), hourly/1h bars (for intraday setups like first candle), calculates Previous Day High (PDH), Previous Day Low (PDL), ATR, RSI(14). Caches data to avoid re-fetching.",
+    "Create nas100bot/edges.py - implements all edge detection functions from the research. LONG edges: (1) first_1h_candle_bullish (>+0.3% close, 87.6% WR), (2) pdl_sweep_reclaim (PDL sweep >0.3R + close back above, 76.4% WR), (3) rsi_oversold (RSI14 daily <30, 70.1% WR on 5-day hold, avg +1.36%), (4) consecutive_red_days (5 red days, 63.4% bounce, avg +0.50%), (5) rolling_decline (5-day decline >5%, 67.3% WR, avg +1.44%), (6) large_drop_bounce (single day >4% drop, 66.7% next day green, avg +0.59%). SHORT edges: (1) first_1h_candle_bearish (<-0.3% close, 84.8% WR), (2) pdh_sweep_rejection (PDH sweep >0.2R + close back below, 83.1% WR), (3) large_rally_fade (>3% single-day rally, 58.5% next day red, avg -0.73%), (4) weak_period_short (Thu/Fri 3PM ET, 46-47% green rate). Each edge function returns: triggered (bool), win_rate, avg_win, avg_loss, sample_size, description.",
+    "Create nas100bot/kelly.py - implements Kelly criterion: kelly_fraction = (win_rate * avg_win - (1-win_rate) * avg_loss) / avg_win. Also compute expected_value = (win_rate * avg_win) - ((1-win_rate) * avg_loss). Apply half-Kelly cap from config. Return kelly_pct, expected_value, suggested_risk_amount (as suggestion only, user decides).",
+    "Create nas100bot/signals.py - orchestrates edge detection and signal generation. (1) Runs all applicable edges for current market state, (2) computes confluence_score (count of triggered edges), (3) determines direction (LONG/SHORT based on which edges dominate), (4) computes weighted_win_rate across active edges, (5) calls kelly.py for position sizing suggestion, (6) determines time-of-day context (kill zone 9:30-11:00, dead zone 12:00-14:00, etc), (7) sets stop_loss (below PDL for longs, above PDH for shorts), (8) sets targets (PDH for longs, PDL for shorts as draw on liquidity), (9) computes risk:reward ratio. Returns a Signal dataclass with all fields.",
+    "Create nas100bot/telegram_bot.py - formats Signal into a readable Telegram message with all quant stats, sends via python-telegram-bot async API. Message format shows: direction, confluence score, edge breakdown, win rate, EV, Kelly %, suggested size (with disclaimer that user decides), stop loss, targets, time context, R:R ratio. Include bold/emoji formatting for Telegram.",
+    "Create nas100bot/timing.py - utility module for time-of-day logic: is_kill_zone(dt) -> bool (9:30-11:00 ET), is_dead_zone(dt) -> bool (12:00-14:00 ET), is_weak_period(dt) -> bool (Thu/Fri 3PM ET), get_best_long_days() -> ['Monday', 'Wednesday'], high_of_day_window() -> '9:30-10:30 ET (43.6%)', low_of_day_window() -> '9:30-10:30 ET (53.4%)'",
+    "Create nas100bot/scheduler.py - schedule-based runner: checks at market open (9:30 ET), after first hour (10:30 ET), during kill zone, and at user-configured intervals. Uses schedule library. Only runs on market days (Mon-Fri, skip market holidays).",
+    "Create nas100bot/main.py - entry point: loads config, initializes modules, starts scheduler loop. Supports --dry-run flag for testing without Telegram. Includes logging setup (to file + stdout).",
+    "Create tests/test_edges.py - unit tests for all edge detection functions with mock data. Test both triggered and not-triggered cases.",
+    "Create tests/test_kelly.py - unit tests for Kelly criterion calculations with known values.",
+    "Create tests/test_signals.py - unit tests for signal generation with mocked edge results.",
+    "Create tests/test_timing.py - unit tests for timing utilities (kill zone, dead zone, weak period detection).",
+    "Create tests/conftest.py - shared pytest fixtures (mock market data, sample configs).",
+    "Create README.md - comprehensive documentation: overview (signal-only system disclaimer), features, setup instructions, configuration guide, how signals work, edge explanations with stats, Kelly criterion explanation, running the bot, architecture diagram (text-based)."
+  ],
+  "acceptance_criteria": [
+    "pip install -r requirements.txt succeeds",
+    "python -m pytest tests/ -v passes all tests",
+    "python -m nas100bot.main --dry-run runs without errors and logs a startup message",
+    "config.example.yaml contains all required settings with documentation comments",
+    "README.md clearly states this is SIGNAL-ONLY and user decides all trade execution and sizing",
+    "All edge functions return correct win rates matching the research data",
+    "Kelly criterion calculation is mathematically correct",
+    "Telegram message format includes all required fields: direction, confluence, edges, win rate, EV, Kelly %, suggested size, stop loss, targets, time context, R:R",
+    "Code never auto-executes trades or auto-determines position sizes without user confirmation"
+  ],
+  "verification": [
+    "Run: pip install -r requirements.txt (confirm no errors)",
+    "Run: python -m pytest tests/ -v (confirm all tests pass)",
+    "Run: python -m nas100bot.main --dry-run (confirm it starts, logs, and exits cleanly)",
+    "Verify README.md contains signal-only disclaimer"
+  ],
+  "blocked_reason": null,
+  "findings": ""
+}
