@@ -59,6 +59,14 @@ class AbsorptionDetector:
       price change is less than max_price_change, flag as absorption
     - Selling absorbed (high bid volume eaten, price holds) -> LONG
     - Buying absorbed (high ask volume eaten, price holds) -> SHORT
+
+    Signal priority at contested levels:
+    - If both sell and buy volume exceed min_volume at the same level,
+      the sell-absorption signal (LONG) fires first and resets the level.
+    - The buy-absorption signal (SHORT) will only fire after new volume
+      accumulates past the threshold again.
+    - This gives implicit priority to LONG signals at heavily contested
+      price levels where both sides are active simultaneously.
     """
 
     def __init__(
@@ -162,6 +170,14 @@ class AbsorptionDetector:
     ) -> Optional[AbsorptionSignal]:
         """
         Check if absorption is occurring at a price level.
+
+        Priority: If both sell and buy volume exceed `min_volume` at the same
+        level simultaneously (heavily contested level), the sell-absorption
+        check fires first (generating a LONG signal), and `_reset_level` clears
+        the tracking state. The buy-absorption check will not fire until new
+        volume accumulates. This implicit priority means that at contested levels,
+        selling-absorbed (LONG) signals take precedence over buying-absorbed
+        (SHORT) signals.
 
         Args:
             level: Price level to check.

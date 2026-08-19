@@ -156,6 +156,10 @@ class OrderFlowBot:
         self._last_hourly_report: Optional[datetime] = None
         self._last_daily_report: Optional[datetime] = None
         self._last_weekly_report: Optional[datetime] = None
+        self._last_bar_close: Optional[datetime] = None
+        self._bar_interval_seconds: int = config.get("thresholds", {}).get(
+            "bar_interval_seconds", 5
+        )
 
     async def start(self) -> None:
         """Start the order flow bot."""
@@ -186,6 +190,17 @@ class OrderFlowBot:
         # Main loop
         try:
             while self._running:
+                now = datetime.now(ET)
+
+                # Close bars periodically so delta divergence detection can fire
+                if (
+                    self._last_bar_close is None
+                    or (now - self._last_bar_close).total_seconds()
+                    >= self._bar_interval_seconds
+                ):
+                    self.delta.close_bar(now)
+                    self._last_bar_close = now
+
                 await self._check_scheduled_reports()
                 await self._check_forward_results()
                 await asyncio.sleep(1)
@@ -207,8 +222,25 @@ class OrderFlowBot:
             timestamp = datetime.now(ET)
             price = ticker.last
             volume = ticker.lastSize or 1
-            # Determine aggressor side from tick type
-            is_ask = True  # Default; in live IB, this comes from tick attributes
+
+            # Determine aggressor side by comparing trade price to bid/ask.
+            # If trade price >= ask, the trade was buyer-initiated (lifted the ask).
+            # If trade price <= bid, the trade was seller-initiated (hit the bid).
+            # If between bid and ask, default to buyer-initiated.
+            bid = getattr(ticker, "bid", None)
+            ask = getattr(ticker, "ask", None)
+            if bid is not None and ask is not None and bid > 0 and ask > 0:
+                if price <= bid:
+                    is_ask = False
+                elif price >= ask:
+                    is_ask = True
+                else:
+                    # Trade between bid and ask: classify based on proximity
+                    mid = (bid + ask) / 2.0
+                    is_ask = price >= mid
+            else:
+                # Fallback when bid/ask not available
+                is_ask = True
 
             if not price or price <= 0:
                 return
@@ -457,10 +489,73 @@ class OrderFlowBot:
                     await send_weekly_report(report, self.config)
 
     async def _check_forward_results(self) -> None:
-        """Check and update forward results for past signals."""
-        # This would normally check current price against past signal prices
-        # In production, this runs periodically to update the forward results table
-        pass
+        """
+        Check and update forward results for past signals.
+
+        Queries signals that do not yet have complete forward results,
+        checks elapsed time since signal, and records the current price
+        at the appropriate intervals (5m, 15m, 30m, 1h).
+        """
+        try:
+            # Get current price from the most recent tick data
+            current_price = self._get_current_price()
+            if current_price is None or current_price <= 0:
+                return
+
+            now = datetime.now(ET)
+            signals = await self.database.get_signals_without_results()
+
+            for sig in signals:
+                signal_time = datetime.fromisoformat(sig["timestamp"])
+                # Ensure timezone-aware comparison
+                if signal_time.tzinfo is None:
+                    signal_time = ET.localize(signal_time)
+
+                elapsed = (now - signal_time).total_seconds()
+                entry_price = sig["entry_price"]
+                direction = sig["direction"]
+                signal_id = sig["id"]
+
+                # Determine which intervals have elapsed and record prices
+                price_5m = None
+                price_15m = None
+                price_30m = None
+                price_1h = None
+
+                # Only record at 5m if at least 5 minutes have passed
+                if elapsed >= 300:  # 5 minutes
+                    price_5m = current_price
+                if elapsed >= 900:  # 15 minutes
+                    price_15m = current_price
+                if elapsed >= 1800:  # 30 minutes
+                    price_30m = current_price
+                if elapsed >= 3600:  # 1 hour
+                    price_1h = current_price
+
+                # Only update if we have at least one interval to record
+                if price_5m is not None:
+                    await self.database.update_forward_result(
+                        signal_id=signal_id,
+                        price_5m=price_5m,
+                        price_15m=price_15m,
+                        price_30m=price_30m,
+                        price_1h=price_1h,
+                        entry_price=entry_price,
+                        direction=direction,
+                    )
+
+        except Exception as e:
+            logger.error(f"Error checking forward results: {e}", exc_info=True)
+
+    def _get_current_price(self) -> Optional[float]:
+        """Get the current price from the most recent tick data."""
+        # Use the volume profile's last recorded price or the delta's current bar
+        if self.delta.current_bar is not None:
+            return self.delta.current_bar.price_close
+        # Check the last closed bar
+        if self.delta.bars:
+            return self.delta.bars[-1].price_close
+        return None
 
 
 def main() -> None:

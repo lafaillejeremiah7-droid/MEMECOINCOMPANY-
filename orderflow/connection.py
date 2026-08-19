@@ -185,7 +185,11 @@ class IBConnection:
             self._on_disconnect_callback()
 
         if not self.shutting_down:
-            asyncio.ensure_future(self._reconnect())
+            try:
+                asyncio.ensure_future(self._reconnect())
+            except RuntimeError:
+                # Event loop may already be closed during shutdown race
+                pass
 
     async def _reconnect(self) -> None:
         """Attempt to reconnect to IB Gateway with exponential backoff."""
