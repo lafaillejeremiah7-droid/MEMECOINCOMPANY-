@@ -1,0 +1,35 @@
+telegram:
+  bot_token: "YOUR_BOT_TOKEN"
+  chat_id: "YOUR_CHAT_ID"
+
+scanner:
+  check_interval_seconds: 10
+  min_score: 60
+  max_token_age_hours: 6
+
+filters:
+  min_liquidity_usd: 5000
+  min_buy_sell_ratio: 1.0
+  max_dev_holding_pct: 50
+
+scoring:
+  weights:
+    buy_sell_ratio: 0.25
+    liquidity: 0.25
+    volume_turnover: 0.20
+    engagement_velocity: 0.15
+    narrative: 0.10
+    momentum: 0.05
+
+adaptation:
+  track_outcomes: true
+  outcome_check_intervals_hours: [1, 6, 24]
+  min_samples_for_reweight: 50
+  reweight_day: "sunday"
+
+database:
+  path: "memescanner.db"
+
+logging:
+  level: "INFO"
+  file: "memescanner.log"
