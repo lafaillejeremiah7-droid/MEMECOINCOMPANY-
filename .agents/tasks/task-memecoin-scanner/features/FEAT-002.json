@@ -2,7 +2,7 @@
   "id": "FEAT-002",
   "type": "fix",
   "description": "Fix 4 bugs: probability calculator broken EV for tokens above 100k MC, duplicate tokens from live+graduated lists, narrative temperature showing '?', and score breakdown key naming.",
-  "status": "in_progress",
+  "status": "completed",
   "steps": [
     "Fix probability.py: if current MC is already above a target, P(reaching that target) = 1.0. Only calculate probability for targets ABOVE current MC. EV calculated based on realistic upside from current price.",
     "Fix main.py: deduplicate tokens by mint address before processing in scan cycle using a set of seen mints per cycle.",
@@ -20,5 +20,5 @@
     "python -c 'from memescanner.probability import ProbabilityCalculator; calc = ProbabilityCalculator(); r = calc.calculate({\"total_score\": 70, \"components\": {}}, current_mc=150000); print(r)'"
   ],
   "blocked_reason": null,
-  "findings": null
+  "findings": "All 80 tests pass. EV for token at 150k MC is now -$89.65 (reasonable), not -10000%. Token at 10k MC with high score gets +$163.70 EV. Tokens above targets correctly show 100% probability. Deduplication uses a per-cycle set in _scan_cycle. Narrative temperature field added as alias alongside best_temperature. Breakdown dict uses correct keys."
 }
