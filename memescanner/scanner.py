@@ -4,12 +4,18 @@ Strict signal scanner for the Memescanner bot.
 Implements the focused scanning pipeline:
 1. Fetch recently graduated tokens from Pump.fun (sort by last_trade_timestamp)
 2. FILTER 1: Only keep tokens where twitter field contains "x.com" or "twitter.com"
-3. FILTER 2: Only keep tokens between 10 minutes and 1 hour old
-4. FILTER 3: Get DEXScreener data. Reject if liquidity < $5k or buys < sells
-5. FILTER 4: Calculate rug %. Reject if > 50%
-6. Score remaining tokens with P(2x) rubric
-7. Only signal tokens where P(2x) >= 20%
-8. Send the TOP signal to Telegram
+3. FILTER 2 (NEW): Serial deployer check - reject accounts with >= 2 prior tokens
+4. FILTER 3: Only keep tokens between 10 minutes and 1 hour old
+5. FILTER 4: Get DEXScreener data. Reject if liquidity < $5k or buys < sells
+6. FILTER 5: Calculate rug %. Reject if > 50%
+7. FILTER 6: On-chain verification via Helius RPC
+8. (NEW) Apply narrative wave multiplier to P(2x)
+9. Score remaining tokens with P(2x) rubric, filter >= 20%
+10. Send the TOP signal to Telegram
+
+Pipeline order:
+Fetch -> Twitter filter -> SERIAL DEPLOYER filter -> Age filter ->
+DEX filter -> Rug filter -> On-chain filter -> WAVE MULTIPLIER -> P(2x) filter -> Alert
 
 P(2x) rubric:
 - Base rate by MC tier
@@ -18,6 +24,7 @@ P(2x) rubric:
 - Age multiplier (10min-30min = x1.8, 30min-1h = x1.5)
 - Momentum multiplier (1h price change)
 - KOL tweet bonus: if twitter contains "/status/" -> multiply final P by 1.5
+- Wave multiplier: HOT keyword = x1.6, COLD keyword = x0.3
 - Cap at 45%, floor at 1%
 
 Rug estimation:
@@ -35,7 +42,9 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import httpx
 
+from memescanner.deployer_tracker import DeployerTracker
 from memescanner.onchain import OnchainAnalyzer, MAX_ONCHAIN_CHECKS_PER_CYCLE
+from memescanner.wave_detector import WaveDetector, NEUTRAL_MULTIPLIER
 
 logger = logging.getLogger(__name__)
 
@@ -237,6 +246,32 @@ def extract_twitter_handle(twitter_url: str) -> str:
         return f"@{handle} (project)"
 
 
+def extract_twitter_account(twitter_url: str) -> str:
+    """
+    Extract just the Twitter/X account name (without @) for deployer tracking.
+
+    Args:
+        twitter_url: Full Twitter/X URL.
+
+    Returns:
+        Account name string (lowercase), or empty string if not extractable.
+    """
+    if not twitter_url:
+        return ""
+
+    # Remove trailing slashes and query params
+    url = twitter_url.rstrip("/").split("?")[0]
+
+    # Check if it's a tweet (contains /status/)
+    if "/status/" in url:
+        parts = url.split("/status/")[0]
+        handle = parts.rstrip("/").split("/")[-1]
+    else:
+        handle = url.split("/")[-1]
+
+    return handle.lower().strip()
+
+
 def format_market_cap(mc: float) -> str:
     """Format market cap with commas."""
     if mc >= 1_000_000:
@@ -290,7 +325,8 @@ def format_onchain_line(onchain_data: Optional[Dict[str, Any]]) -> Optional[str]
 def format_telegram_message(token: Dict[str, Any], dex_data: Dict[str, Any],
                             p2x: float, p5x: float, p10x: float,
                             rug_pct: float, age_minutes: float,
-                            onchain_data: Optional[Dict[str, Any]] = None) -> str:
+                            onchain_data: Optional[Dict[str, Any]] = None,
+                            wave_info: Optional[Dict[str, str]] = None) -> str:
     """
     Format the Telegram alert message in the exact required format.
 
@@ -303,6 +339,7 @@ def format_telegram_message(token: Dict[str, Any], dex_data: Dict[str, Any],
         rug_pct: Rug percentage (0-50).
         age_minutes: Token age in minutes.
         onchain_data: Optional on-chain analysis result.
+        wave_info: Optional wave detection info with 'keyword' and 'temperature'.
 
     Returns:
         Formatted message string.
@@ -340,6 +377,15 @@ def format_telegram_message(token: Dict[str, Any], dex_data: Dict[str, Any],
     onchain_line = format_onchain_line(onchain_data)
     if onchain_line:
         lines.append(onchain_line)
+
+    # Add wave info line if applicable
+    if wave_info:
+        keyword = wave_info.get("keyword", "")
+        temperature = wave_info.get("temperature", "")
+        if temperature == "HOT":
+            lines.append(f"\U0001f525 Wave: \"{keyword}\" (HOT)")
+        elif temperature == "COLD":
+            lines.append(f"\u2744\ufe0f Wave: \"{keyword}\" (COLD)")
 
     lines.extend([
         "",
@@ -506,6 +552,10 @@ async def run_scan_cycle(alerted_mints: set) -> Dict[str, Any]:
     """
     Run one complete scan cycle with all filters applied.
 
+    Pipeline:
+    Fetch -> Twitter filter -> SERIAL DEPLOYER filter -> Age filter ->
+    DEX filter -> Rug filter -> On-chain filter -> WAVE MULTIPLIER -> P(2x) filter -> Alert
+
     Args:
         alerted_mints: Set of mint addresses already alerted (to avoid duplicates).
 
@@ -515,267 +565,342 @@ async def run_scan_cycle(alerted_mints: set) -> Dict[str, Any]:
     results = {
         "total_fetched": 0,
         "passed_twitter_filter": 0,
+        "serial_deployer_rejected": 0,
         "passed_age_filter": 0,
         "passed_dex_filter": 0,
         "passed_rug_filter": 0,
+        "passed_onchain_filter": 0,
         "passed_p2x_filter": 0,
         "alerted": None,
         "filtered_reasons": [],
     }
 
-    # Step 1: Fetch graduated tokens
-    tokens = await fetch_graduated_tokens()
-    results["total_fetched"] = len(tokens)
+    # Initialize deployer tracker and wave detector
+    deployer_tracker = DeployerTracker()
+    await deployer_tracker.initialize()
 
-    if not tokens:
-        print("  [!] No tokens fetched from Pump.fun")
-        return results
+    wave_detector = WaveDetector()
+    await wave_detector.initialize()
 
-    print(f"  [1] Fetched {len(tokens)} graduated tokens from Pump.fun")
+    try:
+        # Step 1: Fetch graduated tokens
+        tokens = await fetch_graduated_tokens()
+        results["total_fetched"] = len(tokens)
 
-    # Step 2: FILTER 1 - Twitter/X present
-    twitter_filtered = []
-    for token in tokens:
-        twitter = token.get("twitter", "") or ""
-        if "x.com" in twitter or "twitter.com" in twitter:
-            twitter_filtered.append(token)
+        if not tokens:
+            print("  [!] No tokens fetched from Pump.fun")
+            return results
 
-    results["passed_twitter_filter"] = len(twitter_filtered)
-    print(f"  [2] Twitter/X filter: {len(twitter_filtered)}/{len(tokens)} passed")
+        print(f"  [1] Fetched {len(tokens)} graduated tokens from Pump.fun")
 
-    if not twitter_filtered:
-        results["filtered_reasons"].append("No tokens with Twitter/X links")
-        return results
+        # Update wave detector from top tokens (by MC) each cycle
+        top_by_mc = sorted(
+            tokens,
+            key=lambda t: t.get("usd_market_cap") or 0,
+            reverse=True,
+        )[:20]
+        await wave_detector.update_from_top_tokens(top_by_mc)
 
-    # Step 3: FILTER 2 - Age between 10 minutes and 1 hour
-    age_filtered = []
-    for token in twitter_filtered:
-        age_min = get_token_age_minutes(token)
-        if 10 <= age_min <= 60:
-            age_filtered.append((token, age_min))
-        else:
-            if age_min < 10:
+        # Step 2: FILTER 1 - Twitter/X present
+        twitter_filtered = []
+        for token in tokens:
+            twitter = token.get("twitter", "") or ""
+            if "x.com" in twitter or "twitter.com" in twitter:
+                twitter_filtered.append(token)
+
+        results["passed_twitter_filter"] = len(twitter_filtered)
+        print(f"  [2] Twitter/X filter: {len(twitter_filtered)}/{len(tokens)} passed")
+
+        if not twitter_filtered:
+            results["filtered_reasons"].append("No tokens with Twitter/X links")
+            return results
+
+        # Step 2.5: SERIAL DEPLOYER filter (cheap DB lookup, no API call)
+        # Always record tokens for future tracking, reject known serial deployers
+        deployer_passed = []
+        serial_rejected = 0
+
+        for token in twitter_filtered:
+            twitter_url = token.get("twitter", "") or ""
+            account = extract_twitter_account(twitter_url)
+            mint = token.get("mint", "")
+
+            # Always record this token for the account (builds DB over time)
+            if account and mint:
+                await deployer_tracker.record_token(account, mint)
+
+            # Check if serial deployer
+            if account and await deployer_tracker.is_serial_deployer(account):
+                serial_rejected += 1
                 results["filtered_reasons"].append(
-                    f"  {token.get('symbol', '???')}: too young ({age_min:.0f}m)"
-                )
-            elif age_min > 60:
-                results["filtered_reasons"].append(
-                    f"  {token.get('symbol', '???')}: too old ({age_min:.0f}m)"
-                )
-
-    results["passed_age_filter"] = len(age_filtered)
-    print(f"  [3] Age filter (10m-1h): {len(age_filtered)}/{len(twitter_filtered)} passed")
-
-    if not age_filtered:
-        results["filtered_reasons"].append("No tokens in 10min-1h age range")
-        return results
-
-    # Step 4: FILTER 3 - DEXScreener metrics (liquidity >= $5k, buys > sells)
-    dex_filtered = []
-    for token, age_min in age_filtered:
-        mint = token.get("mint", "")
-        if not mint:
-            continue
-
-        # Skip already alerted
-        if mint in alerted_mints:
-            results["filtered_reasons"].append(
-                f"  {token.get('symbol', '???')}: already alerted"
-            )
-            continue
-
-        # Get DEX data with rate limit delay
-        dex_data = await fetch_dex_data(mint)
-        await asyncio.sleep(0.5)  # 0.5s delay between DEXScreener requests
-
-        if dex_data is None:
-            results["filtered_reasons"].append(
-                f"  {token.get('symbol', '???')}: no DEX data (skipped)"
-            )
-            continue
-
-        # Use pump.fun market cap as fallback
-        if not dex_data.get("market_cap"):
-            dex_data["market_cap"] = token.get("usd_market_cap", 0) or 0
-
-        liquidity = dex_data.get("liquidity_usd", 0)
-        buys = dex_data.get("buys_24h", 0)
-        sells = dex_data.get("sells_24h", 0)
-
-        if liquidity < 5000:
-            results["filtered_reasons"].append(
-                f"  {token.get('symbol', '???')}: liquidity too low (${liquidity:,.0f})"
-            )
-            continue
-
-        if buys <= sells:
-            results["filtered_reasons"].append(
-                f"  {token.get('symbol', '???')}: buys ({buys}) <= sells ({sells})"
-            )
-            continue
-
-        dex_filtered.append((token, age_min, dex_data))
-
-    results["passed_dex_filter"] = len(dex_filtered)
-    print(f"  [4] DEX filter (liq >= $5k, buys > sells): {len(dex_filtered)}/{len(age_filtered)} passed")
-
-    if not dex_filtered:
-        results["filtered_reasons"].append("No tokens passed DEX filters")
-        return results
-
-    # Step 5: FILTER 4 - Rug percentage
-    rug_filtered = []
-    for token, age_min, dex_data in dex_filtered:
-        buy_sell_ratio = dex_data.get("buy_sell_ratio", 1.0)
-        sells = dex_data.get("sells_24h", 0)
-        market_cap = dex_data.get("market_cap", 0)
-
-        rug_pct = estimate_rug_percentage(buy_sell_ratio, sells, age_min, market_cap)
-
-        if rug_pct > 50:
-            results["filtered_reasons"].append(
-                f"  {token.get('symbol', '???')}: rug too high ({rug_pct:.0f}%)"
-            )
-            continue
-
-        rug_filtered.append((token, age_min, dex_data, rug_pct))
-
-    results["passed_rug_filter"] = len(rug_filtered)
-    print(f"  [5] Rug filter (<= 50%): {len(rug_filtered)}/{len(dex_filtered)} passed")
-
-    if not rug_filtered:
-        results["filtered_reasons"].append("No tokens passed rug filter")
-        return results
-
-    # Step 6: FILTER 5 - On-chain verification via Helius RPC
-    # Only run for tokens that passed ALL previous filters, max 5 per cycle
-    onchain_filtered = []
-    onchain_analyzer = OnchainAnalyzer()
-    onchain_checks_done = 0
-
-    for token, age_min, dex_data, rug_pct in rug_filtered:
-        mint = token.get("mint", "")
-        creator = token.get("creator", "")
-
-        # Rate limit: max 5 on-chain checks per scan cycle
-        if onchain_checks_done >= MAX_ONCHAIN_CHECKS_PER_CYCLE:
-            # Skip on-chain but still pass through (without on-chain data)
-            onchain_filtered.append((token, age_min, dex_data, rug_pct, None))
-            results["filtered_reasons"].append(
-                f"  {token.get('symbol', '???')}: on-chain check skipped (rate limit)"
-            )
-            continue
-
-        # Perform on-chain check
-        onchain_data = None
-        try:
-            if mint and creator:
-                onchain_data = await onchain_analyzer.check_token(mint, creator)
-                onchain_checks_done += 1
-            elif mint:
-                # No creator available, still check mint/freeze authority
-                onchain_data = await onchain_analyzer.check_token(mint, "")
-                onchain_checks_done += 1
-        except Exception as e:
-            logger.warning("On-chain check failed for %s: %s", token.get('symbol', '???'), str(e))
-            # On error, skip on-chain check but still allow token through
-            onchain_filtered.append((token, age_min, dex_data, rug_pct, None))
-            continue
-
-        if onchain_data:
-            # Rejection: dev_holding > 30%
-            dev_pct = onchain_data.get("dev_holding_pct", 0.0)
-            if dev_pct > 30:
-                results["filtered_reasons"].append(
-                    f"  {token.get('symbol', '???')}: dev holding too high ({dev_pct:.1f}%)"
+                    f"  {token.get('symbol', '???')}: serial deployer @{account}"
                 )
                 continue
 
-            # Rejection: mint_authority NOT revoked
-            mint_revoked = onchain_data.get("mint_authority_revoked")
-            if mint_revoked is False:
+            deployer_passed.append(token)
+
+        results["serial_deployer_rejected"] = serial_rejected
+        print(f"  [2.5] Serial deployer check: {serial_rejected} rejected (known scammers)")
+
+        if not deployer_passed:
+            results["filtered_reasons"].append("All tokens from serial deployers")
+            return results
+
+        # Step 3: FILTER 2 - Age between 10 minutes and 1 hour
+        age_filtered = []
+        for token in deployer_passed:
+            age_min = get_token_age_minutes(token)
+            if 10 <= age_min <= 60:
+                age_filtered.append((token, age_min))
+            else:
+                if age_min < 10:
+                    results["filtered_reasons"].append(
+                        f"  {token.get('symbol', '???')}: too young ({age_min:.0f}m)"
+                    )
+                elif age_min > 60:
+                    results["filtered_reasons"].append(
+                        f"  {token.get('symbol', '???')}: too old ({age_min:.0f}m)"
+                    )
+
+        results["passed_age_filter"] = len(age_filtered)
+        print(f"  [3] Age filter (10m-1h): {len(age_filtered)}/{len(deployer_passed)} passed")
+
+        if not age_filtered:
+            results["filtered_reasons"].append("No tokens in 10min-1h age range")
+            return results
+
+        # Step 4: FILTER 3 - DEXScreener metrics (liquidity >= $5k, buys > sells)
+        dex_filtered = []
+        for token, age_min in age_filtered:
+            mint = token.get("mint", "")
+            if not mint:
+                continue
+
+            # Skip already alerted
+            if mint in alerted_mints:
                 results["filtered_reasons"].append(
-                    f"  {token.get('symbol', '???')}: mint authority not revoked"
+                    f"  {token.get('symbol', '???')}: already alerted"
                 )
                 continue
 
-            # Adjust rug % based on safe_score
-            safe_score = onchain_data.get("safe_score", 50)
-            if safe_score > 70:
-                rug_pct = max(0.0, rug_pct - 10.0)
-            elif safe_score < 30:
-                rug_pct = min(50.0, rug_pct + 15.0)
+            # Get DEX data with rate limit delay
+            dex_data = await fetch_dex_data(mint)
+            await asyncio.sleep(0.5)  # 0.5s delay between DEXScreener requests
 
-            onchain_filtered.append((token, age_min, dex_data, rug_pct, onchain_data))
+            if dex_data is None:
+                results["filtered_reasons"].append(
+                    f"  {token.get('symbol', '???')}: no DEX data (skipped)"
+                )
+                continue
+
+            # Use pump.fun market cap as fallback
+            if not dex_data.get("market_cap"):
+                dex_data["market_cap"] = token.get("usd_market_cap", 0) or 0
+
+            liquidity = dex_data.get("liquidity_usd", 0)
+            buys = dex_data.get("buys_24h", 0)
+            sells = dex_data.get("sells_24h", 0)
+
+            if liquidity < 5000:
+                results["filtered_reasons"].append(
+                    f"  {token.get('symbol', '???')}: liquidity too low (${liquidity:,.0f})"
+                )
+                continue
+
+            if buys <= sells:
+                results["filtered_reasons"].append(
+                    f"  {token.get('symbol', '???')}: buys ({buys}) <= sells ({sells})"
+                )
+                continue
+
+            dex_filtered.append((token, age_min, dex_data))
+
+        results["passed_dex_filter"] = len(dex_filtered)
+        print(f"  [4] DEX filter (liq >= $5k, buys > sells): {len(dex_filtered)}/{len(age_filtered)} passed")
+
+        if not dex_filtered:
+            results["filtered_reasons"].append("No tokens passed DEX filters")
+            return results
+
+        # Step 5: FILTER 4 - Rug percentage
+        rug_filtered = []
+        for token, age_min, dex_data in dex_filtered:
+            buy_sell_ratio = dex_data.get("buy_sell_ratio", 1.0)
+            sells = dex_data.get("sells_24h", 0)
+            market_cap = dex_data.get("market_cap", 0)
+
+            rug_pct = estimate_rug_percentage(buy_sell_ratio, sells, age_min, market_cap)
+
+            if rug_pct > 50:
+                results["filtered_reasons"].append(
+                    f"  {token.get('symbol', '???')}: rug too high ({rug_pct:.0f}%)"
+                )
+                continue
+
+            rug_filtered.append((token, age_min, dex_data, rug_pct))
+
+        results["passed_rug_filter"] = len(rug_filtered)
+        print(f"  [5] Rug filter (<= 50%): {len(rug_filtered)}/{len(dex_filtered)} passed")
+
+        if not rug_filtered:
+            results["filtered_reasons"].append("No tokens passed rug filter")
+            return results
+
+        # Step 6: FILTER 5 - On-chain verification via Helius RPC
+        # Only run for tokens that passed ALL previous filters, max 5 per cycle
+        onchain_filtered = []
+        onchain_analyzer = OnchainAnalyzer()
+        onchain_checks_done = 0
+
+        for token, age_min, dex_data, rug_pct in rug_filtered:
+            mint = token.get("mint", "")
+            creator = token.get("creator", "")
+
+            # Rate limit: max 5 on-chain checks per scan cycle
+            if onchain_checks_done >= MAX_ONCHAIN_CHECKS_PER_CYCLE:
+                # Skip on-chain but still pass through (without on-chain data)
+                onchain_filtered.append((token, age_min, dex_data, rug_pct, None))
+                results["filtered_reasons"].append(
+                    f"  {token.get('symbol', '???')}: on-chain check skipped (rate limit)"
+                )
+                continue
+
+            # Perform on-chain check
+            onchain_data = None
+            try:
+                if mint and creator:
+                    onchain_data = await onchain_analyzer.check_token(mint, creator)
+                    onchain_checks_done += 1
+                elif mint:
+                    # No creator available, still check mint/freeze authority
+                    onchain_data = await onchain_analyzer.check_token(mint, "")
+                    onchain_checks_done += 1
+            except Exception as e:
+                logger.warning("On-chain check failed for %s: %s", token.get('symbol', '???'), str(e))
+                # On error, skip on-chain check but still allow token through
+                onchain_filtered.append((token, age_min, dex_data, rug_pct, None))
+                continue
+
+            if onchain_data:
+                # Rejection: dev_holding > 30%
+                dev_pct = onchain_data.get("dev_holding_pct", 0.0)
+                if dev_pct > 30:
+                    results["filtered_reasons"].append(
+                        f"  {token.get('symbol', '???')}: dev holding too high ({dev_pct:.1f}%)"
+                    )
+                    continue
+
+                # Rejection: mint_authority NOT revoked
+                mint_revoked = onchain_data.get("mint_authority_revoked")
+                if mint_revoked is False:
+                    results["filtered_reasons"].append(
+                        f"  {token.get('symbol', '???')}: mint authority not revoked"
+                    )
+                    continue
+
+                # Adjust rug % based on safe_score
+                safe_score = onchain_data.get("safe_score", 50)
+                if safe_score > 70:
+                    rug_pct = max(0.0, rug_pct - 10.0)
+                elif safe_score < 30:
+                    rug_pct = min(50.0, rug_pct + 15.0)
+
+                onchain_filtered.append((token, age_min, dex_data, rug_pct, onchain_data))
+            else:
+                # No on-chain data available, pass through without it
+                onchain_filtered.append((token, age_min, dex_data, rug_pct, None))
+
+        results["passed_onchain_filter"] = len(onchain_filtered)
+        print(f"  [6] On-chain filter: {len(onchain_filtered)}/{len(rug_filtered)} passed ({onchain_checks_done} checks)")
+
+        if not onchain_filtered:
+            results["filtered_reasons"].append("No tokens passed on-chain filter")
+            return results
+
+        # Step 7: Wave multiplier + P(2x) rubric scoring, filter >= 20%
+        scored_tokens = []
+        for token, age_min, dex_data, rug_pct, onchain_data in onchain_filtered:
+            market_cap = dex_data.get("market_cap", 0)
+            buy_sell_ratio = dex_data.get("buy_sell_ratio", 1.0)
+            turnover = dex_data.get("volume_to_mcap_ratio", 0)
+            momentum_1h = dex_data.get("price_change_1h", 0)
+            twitter = token.get("twitter", "") or ""
+
+            # Calculate base P(2x)
+            p2x = calculate_p2x(market_cap, buy_sell_ratio, turnover, age_min, momentum_1h, twitter)
+
+            # Apply wave multiplier
+            name = token.get("name", "") or ""
+            symbol = token.get("symbol", "") or ""
+            description = token.get("description", "") or ""
+
+            wave_multiplier = await wave_detector.get_wave_multiplier(name, symbol, description)
+            wave_match = await wave_detector.get_matched_keyword(name, symbol, description)
+
+            if wave_multiplier != NEUTRAL_MULTIPLIER:
+                p2x = p2x * wave_multiplier
+                # Re-cap at 45%, floor at 1%
+                p2x = max(0.01, min(0.45, p2x))
+
+                temp_label = wave_match["temperature"] if wave_match else "?"
+                keyword_label = wave_match["keyword"] if wave_match else "?"
+                print(f"  [7] Wave multiplier applied: \"{keyword_label}\" {temp_label} (\u00d7{wave_multiplier})")
+
+            p5x = calculate_p5x(p2x)
+            p10x = calculate_p10x(p2x)
+
+            p2x_pct = p2x * 100
+
+            if p2x_pct >= 20:
+                scored_tokens.append((token, age_min, dex_data, rug_pct, p2x, p5x, p10x, onchain_data, wave_match))
+                print(f"      \u2713 {token.get('symbol', '???')}: P(2x)={p2x_pct:.1f}%")
+            else:
+                results["filtered_reasons"].append(
+                    f"  {token.get('symbol', '???')}: P(2x) too low ({p2x_pct:.1f}%)"
+                )
+
+        results["passed_p2x_filter"] = len(scored_tokens)
+        print(f"  [8] P(2x) filter (>= 20%): {len(scored_tokens)}/{len(onchain_filtered)} passed")
+
+        if not scored_tokens:
+            results["filtered_reasons"].append("No tokens with P(2x) >= 20%")
+            return results
+
+        # Step 9: Send the TOP signal (highest P(2x))
+        scored_tokens.sort(key=lambda x: x[4], reverse=True)  # Sort by P(2x) descending
+        top = scored_tokens[0]
+        token, age_min, dex_data, rug_pct, p2x, p5x, p10x, onchain_data, wave_match = top
+
+        # Format message (includes on-chain line and wave info if available)
+        message = format_telegram_message(
+            token, dex_data, p2x, p5x, p10x, rug_pct, age_min,
+            onchain_data=onchain_data, wave_info=wave_match,
+        )
+
+        print(f"\n  \U0001f4e2 ALERTING: ${token.get('symbol', '???')} - P(2x)={p2x*100:.0f}%")
+        print(f"  Message:\n{message}\n")
+
+        # Send to Telegram
+        success = await send_telegram_message(message)
+
+        if success:
+            mint = token.get("mint", "")
+            alerted_mints.add(mint)
+            results["alerted"] = {
+                "symbol": token.get("symbol", "???"),
+                "mint": mint,
+                "p2x": p2x * 100,
+                "p5x": p5x * 100,
+                "p10x": p10x * 100,
+                "rug_pct": rug_pct,
+                "market_cap": dex_data.get("market_cap", 0),
+            }
+            print(f"  \u2705 Alert sent to Telegram!")
         else:
-            # No on-chain data available, pass through without it
-            onchain_filtered.append((token, age_min, dex_data, rug_pct, None))
+            print(f"  \u274c Failed to send Telegram alert")
 
-    results["passed_onchain_filter"] = len(onchain_filtered)
-    print(f"  [6] On-chain filter: {len(onchain_filtered)}/{len(rug_filtered)} passed ({onchain_checks_done} checks)")
-
-    if not onchain_filtered:
-        results["filtered_reasons"].append("No tokens passed on-chain filter")
         return results
 
-    # Step 7: Score with P(2x) rubric and filter >= 20%
-    scored_tokens = []
-    for token, age_min, dex_data, rug_pct, onchain_data in onchain_filtered:
-        market_cap = dex_data.get("market_cap", 0)
-        buy_sell_ratio = dex_data.get("buy_sell_ratio", 1.0)
-        turnover = dex_data.get("volume_to_mcap_ratio", 0)
-        momentum_1h = dex_data.get("price_change_1h", 0)
-        twitter = token.get("twitter", "") or ""
-
-        p2x = calculate_p2x(market_cap, buy_sell_ratio, turnover, age_min, momentum_1h, twitter)
-        p5x = calculate_p5x(p2x)
-        p10x = calculate_p10x(p2x)
-
-        p2x_pct = p2x * 100
-
-        if p2x_pct >= 20:
-            scored_tokens.append((token, age_min, dex_data, rug_pct, p2x, p5x, p10x, onchain_data))
-            print(f"      \u2713 {token.get('symbol', '???')}: P(2x)={p2x_pct:.1f}%")
-        else:
-            results["filtered_reasons"].append(
-                f"  {token.get('symbol', '???')}: P(2x) too low ({p2x_pct:.1f}%)"
-            )
-
-    results["passed_p2x_filter"] = len(scored_tokens)
-    print(f"  [7] P(2x) filter (>= 20%): {len(scored_tokens)}/{len(onchain_filtered)} passed")
-
-    if not scored_tokens:
-        results["filtered_reasons"].append("No tokens with P(2x) >= 20%")
-        return results
-
-    # Step 8: Send the TOP signal (highest P(2x))
-    scored_tokens.sort(key=lambda x: x[4], reverse=True)  # Sort by P(2x) descending
-    top = scored_tokens[0]
-    token, age_min, dex_data, rug_pct, p2x, p5x, p10x, onchain_data = top
-
-    # Format message (includes on-chain line if data available)
-    message = format_telegram_message(token, dex_data, p2x, p5x, p10x, rug_pct, age_min, onchain_data)
-
-    print(f"\n  \U0001f4e2 ALERTING: ${token.get('symbol', '???')} - P(2x)={p2x*100:.0f}%")
-    print(f"  Message:\n{message}\n")
-
-    # Send to Telegram
-    success = await send_telegram_message(message)
-
-    if success:
-        mint = token.get("mint", "")
-        alerted_mints.add(mint)
-        results["alerted"] = {
-            "symbol": token.get("symbol", "???"),
-            "mint": mint,
-            "p2x": p2x * 100,
-            "p5x": p5x * 100,
-            "p10x": p10x * 100,
-            "rug_pct": rug_pct,
-            "market_cap": dex_data.get("market_cap", 0),
-        }
-        print(f"  \u2705 Alert sent to Telegram!")
-    else:
-        print(f"  \u274c Failed to send Telegram alert")
-
-    return results
+    finally:
+        await deployer_tracker.close()
+        await wave_detector.close()
