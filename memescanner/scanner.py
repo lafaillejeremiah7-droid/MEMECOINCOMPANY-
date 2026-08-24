@@ -398,13 +398,8 @@ def format_telegram_message(token: Dict[str, Any], dex_data: Dict[str, Any],
         x_status = x_search_data.get("status", "X_DATA_NOT_FOUND_OR_NOT_INDEXED")
         if x_status == "FOUND":
             x_count = x_search_data.get("result_count", 0)
-            accounts = x_search_data.get("accounts", [])
             big_account = x_search_data.get("big_account_mention", False)
             has_buzz = x_search_data.get("has_buzz", False)
-
-            # Show first account that tweeted
-            if accounts:
-                lines.append(f"\U0001f4e3 @{accounts[0]} (tweeted)")
 
             # Build X summary line
             x_parts = [f"{x_count} mentions"]
