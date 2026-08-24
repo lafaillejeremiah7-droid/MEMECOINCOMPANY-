@@ -1,0 +1,43 @@
+{
+  "id": "FEAT-001",
+  "type": "feat",
+  "description": "Build the complete memecoin scanner bot: all modules, config, database, scoring engine, Telegram alerts, self-adaptation, main loop, requirements, and README. This is a greenfield build from scratch in an empty repo.",
+  "status": "completed",
+  "steps": [
+    "Create memescanner/__init__.py with package docstring and version",
+    "Create memescanner/config.py - load config.yaml using PyYAML, provide typed access to all config values (telegram, scanner, filters, scoring weights, adaptation, database, logging)",
+    "Create memescanner/database.py - SQLite via aiosqlite. Tables: tokens (mint, name, symbol, first_seen, score, features_json, alerted, outcome_1h, outcome_6h, outcome_24h), narratives (keyword, category, temperature, last_updated, hit_rate), weight_history (date, weights_json). Async init, insert, query, update methods.",
+    "Create memescanner/pump_fun.py - async httpx client for Pump.fun API. Methods: get_currently_live(), get_recently_graduated(), get_token_details(mint). Base URL: https://frontend-api-v3.pump.fun/. Parse fields: mint, name, symbol, description, created_timestamp, usd_market_cap, reply_count, num_participants, bonding curve completion %, twitter, website, ath_market_cap, complete, real_sol_reserves, virtual_sol_reserves, real_token_reserves, virtual_token_reserves, total_supply. Detect graduation (complete=true).",
+    "Create memescanner/dexscreener.py - async httpx client for DEXScreener API. Method: get_token_data(address). URL: https://api.dexscreener.com/latest/dex/tokens/{address}. Extract: price, market_cap, fdv, liquidity_usd, volume_24h/6h/1h, buys_24h/sells_24h/buys_6h/sells_6h/buys_1h/sells_1h, price_change_5m/1h/6h/24h, pair_created_at. Calculate: buy_sell_ratio, volume_to_mcap_ratio.",
+    "Create memescanner/narrative.py - keyword lists by category with temperature (hot/neutral/cold). HOT: cat, ai, agent, elon, musk, trump. NEUTRAL: pepe, frog, sol, moon, meme, chad. COLD: dog, doge, inu. Method match_narrative(name, symbol, description) returns matched keywords + temperature. Method update_temperatures() to self-adjust based on graduated token outcomes.",
+    "Create memescanner/filters.py - hard filters that reject tokens before scoring. Rules: liquidity < $5000 REJECT, buy_sell_ratio < 1.0 REJECT, age > 6h AND price_change_1h < -20% REJECT, flagged/banned REJECT, dev wallet > 50% supply REJECT. Return (pass: bool, reason: str).",
+    "Create memescanner/scoring.py - scoring engine with research-backed weights. Components: buy_sell_ratio (25%, thresholds at 1.0/2.0/5.0), liquidity (25%, thresholds at 5k/20k/50k/200k), volume_turnover (20%, ratio thresholds at 0.1/0.5/1.0/2.0), engagement_velocity (15%, replies/hr thresholds at 1/5/20/50), narrative (10%, hot=100/neutral=50/cold or none=0), momentum (5%, current_mc/ath_mc thresholds at 0.3/0.8). Calculate weighted total 0-100.",
+    "Create memescanner/probability.py - probability calculator. P(target MC | features). Targets: 100k, 300k, 1M, 5M. Base rates: 5%, 2%, 0.5%, 0.1%. Multiply by factor scores. Calculate EV = P(Nx) * (N-1)*R - P(loss)*1*R. Return probability dict and EV assessment (positive/negative).",
+    "Create memescanner/telegram_bot.py - async Telegram bot using httpx (raw Bot API, no library). Methods: send_alert(token_data) with the exact format specified (emoji, score, CA, age, metrics, probability, risk, link). Method: send_weekly_report(stats). Rate limiting on sends.",
+    "Create memescanner/adaptation.py - self-adaptation engine. Log every alerted token with score+features at alert time. Check price at 1h/6h/24h. After 50 tracked tokens: compute correlation between score factors and actual pumps. Adjust weights. Weekly Telegram report on hit rates. Disable cold narratives, boost hot ones.",
+    "Create memescanner/main.py - async main loop with asyncio. Every 10s: scan Pump.fun for new/graduated tokens. Pipeline: check filters -> get DEXScreener data -> score -> calculate probability. If score >= 60 and not alerted: send Telegram alert. Background tasks: outcome checking at 1h/6h/24h, daily narrative updates. Graceful shutdown on SIGINT/SIGTERM. Rate limiting. Logging setup.",
+    "Create config.example.yaml with the exact structure specified in requirements (telegram, scanner, filters, scoring weights, adaptation, database, logging sections)",
+    "Create requirements.txt with: httpx>=0.24.0, pyyaml>=6.0, aiosqlite>=0.19.0, pytest>=7.0, pytest-asyncio>=0.21.0",
+    "Create README.md with: project description, features overview, setup instructions (pip install, config, run), architecture diagram/description, scoring methodology explanation, self-adaptation explanation, signal-only disclaimer",
+    "Create tests/ directory with test files: tests/__init__.py, tests/test_scoring.py (test all score components and weights), tests/test_filters.py (test all filter rules), tests/test_narrative.py (test keyword matching and temperature), tests/test_probability.py (test probability and EV calculations). Tests should use pytest-asyncio where needed and verify actual scoring logic."
+  ],
+  "acceptance_criteria": [
+    "All 11 modules exist in memescanner/ with complete implementations, type hints, and docstrings",
+    "config.example.yaml has all required sections matching the spec exactly",
+    "requirements.txt lists all dependencies",
+    "README.md has clear setup and run instructions",
+    "pip install -r requirements.txt succeeds",
+    "python -c 'from memescanner import main' imports without error",
+    "python -m pytest tests/ -v passes with all tests green",
+    "Scoring engine uses exact weights (0.25, 0.25, 0.20, 0.15, 0.10, 0.05) and thresholds from spec",
+    "Telegram alert format matches the exact emoji+structure specified",
+    "SIGNAL-ONLY: no code anywhere that executes trades or sends transactions"
+  ],
+  "verification": [
+    "pip install -r requirements.txt",
+    "python -c 'from memescanner.pump_fun import PumpFunClient; from memescanner.dexscreener import DexScreenerClient; from memescanner.scoring import ScoringEngine; from memescanner.probability import ProbabilityCalculator; from memescanner.filters import TokenFilter; from memescanner.narrative import NarrativeEngine; from memescanner.telegram_bot import TelegramBot; from memescanner.adaptation import AdaptationEngine; from memescanner.database import Database; from memescanner.main import main; from memescanner.config import Config'",
+    "python -m pytest tests/ -v"
+  ],
+  "blocked_reason": null,
+  "findings": "All 80 tests pass. pip uses python3 (not python). Fixed shallow copy bug in NarrativeEngine initialization to prevent cross-test state mutation. EV calculation uses weighted multi-target formula where tokens at low MC ($10k) show positive EV with high scores due to larger potential multiples. pytest-asyncio 1.2.0 installed (latest compatible with python 3.9)."
+}
