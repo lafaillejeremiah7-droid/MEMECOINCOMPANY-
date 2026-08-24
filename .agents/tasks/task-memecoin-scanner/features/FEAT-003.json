@@ -2,7 +2,7 @@
   "id": "FEAT-003",
   "type": "fix",
   "description": "Fix 3 scoring bugs (engagement velocity, volume turnover, EV for tokens above targets) and add rug detection module with pipeline integration.",
-  "status": "in_progress",
+  "status": "completed",
   "steps": [
     "Fix engagement velocity: ensure reply_count and created_timestamp are correctly extracted from token_data (Pump.fun format) with millisecond handling",
     "Fix volume turnover: add scoring thresholds below 0.1 so low-but-nonzero ratios like 0.005 get a low score instead of 0",
@@ -25,5 +25,5 @@
     "python -c 'from memescanner.rug_detector import RugDetector; print(\"OK\")'"
   ],
   "blocked_reason": null,
-  "findings": null
+  "findings": "All 109 tests pass (29 new tests added). Bug 1: created_timestamp=0 was being treated as epoch (1970), giving 496k hours age. Fixed by treating 0 and pre-2020 timestamps as invalid. Bug 2: volume_to_mcap_ratio of 0.005 was scoring 0 because threshold was 0.1. Added sub-thresholds at 0.01 (score 5) and 0.01-0.1 (score 15). Bug 3: EV was $0 for tokens above 5M. Added extended targets (10M, 50M, 100M, 300M) with lower base rates. Pump.fun API tested live - returns num_participants=0 for many tokens and reply_count varies."
 }
