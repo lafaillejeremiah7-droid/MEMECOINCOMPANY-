@@ -5,6 +5,7 @@ When a position hits -50%, instead of immediately selling, this module
 checks multiple signals to determine if the token might recover:
 - DEXScreener on-chain data (buy/sell ratio, dollar volumes, momentum)
 - Tavily X search (buzz, scam warnings)
+- Holder risk analysis (whale presence, concentration)
 
 Returns a recovery probability and a decision: HOLD, DCA, or SELL.
 """
@@ -14,6 +15,7 @@ from typing import Any, Dict, Optional
 
 import httpx
 
+from memescanner.onchain import OnchainAnalyzer
 from memescanner.x_search import XSearchClient
 
 logger = logging.getLogger(__name__)
@@ -100,8 +102,9 @@ class RecoveryChecker:
     """
 
     def __init__(self):
-        """Initialize the RecoveryChecker with an XSearchClient."""
+        """Initialize the RecoveryChecker with an XSearchClient and OnchainAnalyzer."""
         self._x_client = XSearchClient()
+        self._onchain_analyzer = OnchainAnalyzer()
 
     async def check_recovery(self, mint: str, symbol: str) -> Dict[str, Any]:
         """
@@ -128,6 +131,8 @@ class RecoveryChecker:
                 "x_scam_warning": False,
                 "liquidity": 0.0,
                 "momentum_1h": 0.0,
+                "whale_count": 0,
+                "top_holder_usd": 0.0,
             },
         }
 
@@ -138,6 +143,18 @@ class RecoveryChecker:
 
         # Search X via Tavily
         x_result = await self._x_client.search_token(symbol, symbol, mint)
+
+        # Holder risk analysis
+        current_mc = dex_data.get("market_cap", 0) or 0
+        holder_risk = None
+        if current_mc > 0:
+            try:
+                holder_risk = await self._onchain_analyzer.analyze_holder_risk(
+                    mint, current_mc
+                )
+            except Exception as e:
+                logger.warning("Holder risk analysis failed in recovery for %s: %s",
+                               symbol, str(e))
 
         # Extract signals
         buys_h1 = dex_data.get("buys_h1", 0)
@@ -179,6 +196,15 @@ class RecoveryChecker:
         x_results = x_result.get("result_count", 0)
         x_scam_warning = x_result.get("scam_warning", False)
 
+        # Extract holder risk signals
+        whale_count = 0
+        top_holder_usd = 0.0
+        top_holder_pct_of_mc = 0.0
+        if holder_risk:
+            whale_count = holder_risk.get("whale_count", 0)
+            top_holder_usd = holder_risk.get("top_holder_usd", 0.0)
+            top_holder_pct_of_mc = holder_risk.get("top_holder_pct_of_mc", 0.0)
+
         # Build signals dict
         signals = {
             "bs_ratio": round(bs_ratio, 2),
@@ -189,6 +215,8 @@ class RecoveryChecker:
             "x_scam_warning": x_scam_warning,
             "liquidity": round(liquidity, 2),
             "momentum_1h": round(pc_1h, 2),
+            "whale_count": whale_count,
+            "top_holder_usd": round(top_holder_usd, 2),
         }
 
         # Calculate recovery probability
@@ -203,6 +231,22 @@ class RecoveryChecker:
             liquidity=liquidity,
             pc_1h=pc_1h,
         )
+
+        # Apply whale multiplier to recovery probability
+        whale_mult = 1.0
+        if holder_risk:
+            if top_holder_pct_of_mc > 20:
+                # One person controls it after dump = manipulation
+                whale_mult = 0.3
+            elif whale_count >= 2:
+                # Whales still holding after dump = support
+                whale_mult = 1.5
+            elif whale_count == 0:
+                # No whales, all small holders
+                whale_mult = 0.6
+
+        recovery_probability *= whale_mult
+        recovery_probability = min(0.60, max(0.02, recovery_probability))
 
         # Decision logic
         decision, reason = self._make_decision(

@@ -404,6 +404,149 @@ class OnchainAnalyzer:
 
         return score, flags
 
+    async def analyze_holder_risk(self, mint: str, market_cap: float) -> Dict[str, Any]:
+        """
+        Perform dollar-denominated holder risk analysis.
+
+        Gets top 10 holders, calculates their positions in USD based on
+        market cap, and determines concentration risk level.
+
+        Skips holder #1 if it matches known LP/pool patterns:
+        - Address starts with "5Q544" (Raydium pool prefix)
+        - Holds > 40% of supply (likely LP pool)
+
+        Concentration risk logic:
+        - Top holder > 20% of MC in $: HIGH
+        - Top 3 combined > 40% of MC: HIGH
+        - Top holder > 10% of MC: MEDIUM
+        - Otherwise: LOW
+
+        Args:
+            mint: Token mint address.
+            market_cap: Current market cap in USD.
+
+        Returns:
+            Dict with top_holder_usd, top_holder_pct_of_mc, top3_combined_usd,
+            top3_pct_of_mc, top10_combined_usd, top10_pct_of_mc, whale_count,
+            avg_holder_size_usd, concentration_risk, holder_details.
+        """
+        result = {
+            "top_holder_usd": 0.0,
+            "top_holder_pct_of_mc": 0.0,
+            "top3_combined_usd": 0.0,
+            "top3_pct_of_mc": 0.0,
+            "top10_combined_usd": 0.0,
+            "top10_pct_of_mc": 0.0,
+            "whale_count": 0,
+            "avg_holder_size_usd": 0.0,
+            "concentration_risk": "LOW",
+            "holder_details": [],
+        }
+
+        if market_cap <= 0:
+            return result
+
+        async with httpx.AsyncClient(timeout=self.timeout) as client:
+            # Get total supply
+            total_supply = await self._get_token_supply(client, mint)
+
+            await asyncio.sleep(RPC_CALL_DELAY)
+
+            # Get top token accounts
+            largest_accounts = await self._get_token_largest_accounts(client, mint)
+
+            if not total_supply or total_supply <= 0 or not largest_accounts:
+                return result
+
+            # Parse holder amounts, skipping LP/pool addresses
+            holders = []
+            for account in largest_accounts:
+                address = account.get("address", "")
+                amount_str = account.get("amount", "0")
+                decimals = account.get("decimals", 0)
+                try:
+                    amount = int(amount_str) / (10 ** decimals)
+                except (ValueError, TypeError):
+                    amount = 0.0
+
+                if amount <= 0:
+                    continue
+
+                pct_of_supply = (amount / total_supply) * 100
+
+                # Skip if matches known LP/pool patterns
+                if address.startswith("5Q544") or pct_of_supply > 40:
+                    continue
+
+                holders.append({
+                    "address": address,
+                    "amount": amount,
+                    "pct_of_supply": pct_of_supply,
+                })
+
+            # Take top 10 non-LP holders
+            holders = holders[:10]
+
+            if not holders:
+                return result
+
+            # Calculate USD positions
+            holder_details = []
+            for holder in holders:
+                position_usd = (holder["amount"] / total_supply) * market_cap
+                is_whale = position_usd > 10000
+                holder_details.append({
+                    "pct_of_supply": round(holder["pct_of_supply"], 2),
+                    "position_usd": round(position_usd, 2),
+                    "is_whale": is_whale,
+                })
+
+            result["holder_details"] = holder_details
+
+            # Top holder metrics
+            if holder_details:
+                result["top_holder_usd"] = holder_details[0]["position_usd"]
+                result["top_holder_pct_of_mc"] = (
+                    (result["top_holder_usd"] / market_cap) * 100
+                    if market_cap > 0 else 0.0
+                )
+
+            # Top 3 combined
+            top3 = holder_details[:3]
+            result["top3_combined_usd"] = sum(h["position_usd"] for h in top3)
+            result["top3_pct_of_mc"] = (
+                (result["top3_combined_usd"] / market_cap) * 100
+                if market_cap > 0 else 0.0
+            )
+
+            # Top 10 combined
+            result["top10_combined_usd"] = sum(h["position_usd"] for h in holder_details)
+            result["top10_pct_of_mc"] = (
+                (result["top10_combined_usd"] / market_cap) * 100
+                if market_cap > 0 else 0.0
+            )
+
+            # Whale count (holders with > $10k position)
+            result["whale_count"] = sum(1 for h in holder_details if h["is_whale"])
+
+            # Average holder size
+            if holder_details:
+                result["avg_holder_size_usd"] = (
+                    result["top10_combined_usd"] / len(holder_details)
+                )
+
+            # Concentration risk determination
+            if result["top_holder_pct_of_mc"] > 20:
+                result["concentration_risk"] = "HIGH"
+            elif result["top3_pct_of_mc"] > 40:
+                result["concentration_risk"] = "HIGH"
+            elif result["top_holder_pct_of_mc"] > 10:
+                result["concentration_risk"] = "MEDIUM"
+            else:
+                result["concentration_risk"] = "LOW"
+
+        return result
+
     async def check_token(self, mint: str, creator: str) -> Dict[str, Any]:
         """
         Perform full on-chain verification for a token.

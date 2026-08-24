@@ -326,12 +326,40 @@ def format_onchain_line(onchain_data: Optional[Dict[str, Any]]) -> Optional[str]
     return f"\U0001f512 {dev_str} | {mint_str} | {freeze_str}"
 
 
+def format_holder_line(holder_risk: Optional[Dict[str, Any]]) -> Optional[str]:
+    """
+    Format the whale/holder info line for Telegram message.
+
+    Args:
+        holder_risk: Holder risk analysis result from analyze_holder_risk, or None.
+
+    Returns:
+        Formatted string like '🐋 Whales: X ($XXk largest) | Top10: XX% of MC',
+        or None if no holder data available.
+    """
+    if holder_risk is None:
+        return None
+
+    whale_count = holder_risk.get("whale_count", 0)
+    top_holder_usd = holder_risk.get("top_holder_usd", 0.0)
+    top10_pct = holder_risk.get("top10_pct_of_mc", 0.0)
+
+    # Format largest holder in $k
+    if top_holder_usd >= 1000:
+        largest_str = f"${top_holder_usd / 1000:.0f}k largest"
+    else:
+        largest_str = f"${top_holder_usd:.0f} largest"
+
+    return f"\U0001f40b Whales: {whale_count} ({largest_str}) | Top10: {top10_pct:.0f}% of MC"
+
+
 def format_telegram_message(token: Dict[str, Any], dex_data: Dict[str, Any],
                             p2x: float, p5x: float, p10x: float,
                             rug_pct: float, age_minutes: float,
                             onchain_data: Optional[Dict[str, Any]] = None,
                             wave_info: Optional[Dict[str, str]] = None,
-                            x_search_data: Optional[Dict[str, Any]] = None) -> str:
+                            x_search_data: Optional[Dict[str, Any]] = None,
+                            holder_risk: Optional[Dict[str, Any]] = None) -> str:
     """
     Format the Telegram alert message in the exact required format.
 
@@ -346,6 +374,7 @@ def format_telegram_message(token: Dict[str, Any], dex_data: Dict[str, Any],
         onchain_data: Optional on-chain analysis result.
         wave_info: Optional wave detection info with 'keyword' and 'temperature'.
         x_search_data: Optional X search result from XSearchClient.
+        holder_risk: Optional holder risk analysis from analyze_holder_risk.
 
     Returns:
         Formatted message string.
@@ -383,6 +412,11 @@ def format_telegram_message(token: Dict[str, Any], dex_data: Dict[str, Any],
     onchain_line = format_onchain_line(onchain_data)
     if onchain_line:
         lines.append(onchain_line)
+
+    # Add holder risk line after on-chain line
+    holder_line = format_holder_line(holder_risk)
+    if holder_line:
+        lines.append(holder_line)
 
     # Add wave info line if applicable
     if wave_info:
@@ -885,14 +919,36 @@ async def run_scan_cycle(alerted_mints: set) -> Dict[str, Any]:
             results["filtered_reasons"].append("No tokens passed X search filter")
             return results
 
-        # Step 7: Wave multiplier + P(2x) rubric scoring, filter >= 20%
+        # Step 7: Holder risk analysis + Wave multiplier + P(2x) rubric scoring, filter >= 20%
         scored_tokens = []
+        holder_analyses_done = 0
+        MAX_HOLDER_ANALYSES_PER_CYCLE = 5
+
         for token, age_min, dex_data, rug_pct, onchain_data, x_data in x_search_filtered:
             market_cap = dex_data.get("market_cap", 0)
             buy_sell_ratio = dex_data.get("buy_sell_ratio", 1.0)
             turnover = dex_data.get("volume_to_mcap_ratio", 0)
             momentum_1h = dex_data.get("price_change_1h", 0)
             twitter = token.get("twitter", "") or ""
+            mint = token.get("mint", "")
+
+            # Holder risk analysis (max 5 per cycle for rate limiting)
+            holder_risk = None
+            if market_cap > 0 and mint and holder_analyses_done < MAX_HOLDER_ANALYSES_PER_CYCLE:
+                try:
+                    holder_risk = await onchain_analyzer.analyze_holder_risk(mint, market_cap)
+                    holder_analyses_done += 1
+                except Exception as e:
+                    logger.warning("Holder risk analysis failed for %s: %s",
+                                   token.get('symbol', '???'), str(e))
+
+            # Rejection: top_holder_pct_of_mc > 30% (obvious rug setup)
+            if holder_risk and holder_risk.get("top_holder_pct_of_mc", 0) > 30:
+                results["filtered_reasons"].append(
+                    f"  {token.get('symbol', '???')}: top holder > 30% of MC "
+                    f"({holder_risk['top_holder_pct_of_mc']:.1f}%)"
+                )
+                continue
 
             # Calculate base P(2x)
             p2x = calculate_p2x(market_cap, buy_sell_ratio, turnover, age_min, momentum_1h, twitter)
@@ -925,13 +981,26 @@ async def run_scan_cycle(alerted_mints: set) -> Dict[str, Any]:
                 # Re-cap at 45%, floor at 1%
                 p2x = max(0.01, min(0.45, p2x))
 
+            # Apply holder risk concentration multiplier
+            if holder_risk:
+                concentration_risk = holder_risk.get("concentration_risk", "LOW")
+                whale_count = holder_risk.get("whale_count", 0)
+                if concentration_risk == "HIGH":
+                    p2x *= 0.5
+                    print(f"  [7.6] Holder risk HIGH: x0.5 for {symbol}")
+                elif concentration_risk == "LOW" and whale_count >= 2:
+                    p2x *= 1.3
+                    print(f"  [7.6] Distributed whales ({whale_count}): x1.3 for {symbol}")
+                # Re-cap at 45%, floor at 1%
+                p2x = max(0.01, min(0.45, p2x))
+
             p5x = calculate_p5x(p2x)
             p10x = calculate_p10x(p2x)
 
             p2x_pct = p2x * 100
 
             if p2x_pct >= 20:
-                scored_tokens.append((token, age_min, dex_data, rug_pct, p2x, p5x, p10x, onchain_data, wave_match, x_data))
+                scored_tokens.append((token, age_min, dex_data, rug_pct, p2x, p5x, p10x, onchain_data, wave_match, x_data, holder_risk))
                 print(f"      \u2713 {token.get('symbol', '???')}: P(2x)={p2x_pct:.1f}%")
             else:
                 results["filtered_reasons"].append(
@@ -948,12 +1017,13 @@ async def run_scan_cycle(alerted_mints: set) -> Dict[str, Any]:
         # Step 9: Send the TOP signal (highest P(2x))
         scored_tokens.sort(key=lambda x: x[4], reverse=True)  # Sort by P(2x) descending
         top = scored_tokens[0]
-        token, age_min, dex_data, rug_pct, p2x, p5x, p10x, onchain_data, wave_match, x_data = top
+        token, age_min, dex_data, rug_pct, p2x, p5x, p10x, onchain_data, wave_match, x_data, holder_risk = top
 
         # Format message (includes on-chain line, wave info, and X search info if available)
         message = format_telegram_message(
             token, dex_data, p2x, p5x, p10x, rug_pct, age_min,
             onchain_data=onchain_data, wave_info=wave_match, x_search_data=x_data,
+            holder_risk=holder_risk,
         )
 
         print(f"\n  \U0001f4e2 ALERTING: ${token.get('symbol', '???')} - P(2x)={p2x*100:.0f}%")

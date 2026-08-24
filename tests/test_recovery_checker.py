@@ -302,6 +302,18 @@ class TestRecoveryCheckerIntegration:
             "has_buzz": False,
             "top_snippet": "",
         }
+        mock_holder_risk = {
+            "top_holder_usd": 0.0,
+            "top_holder_pct_of_mc": 0.0,
+            "top3_combined_usd": 0.0,
+            "top3_pct_of_mc": 0.0,
+            "top10_combined_usd": 0.0,
+            "top10_pct_of_mc": 0.0,
+            "whale_count": 0,
+            "avg_holder_size_usd": 0.0,
+            "concentration_risk": "LOW",
+            "holder_details": [],
+        }
 
         with patch(
             "memescanner.recovery_checker._fetch_recovery_dex_data",
@@ -309,6 +321,9 @@ class TestRecoveryCheckerIntegration:
             return_value=mock_dex,
         ), patch.object(
             rc._x_client, "search_token", new_callable=AsyncMock, return_value=mock_x
+        ), patch.object(
+            rc._onchain_analyzer, "analyze_holder_risk", new_callable=AsyncMock,
+            return_value=mock_holder_risk
         ):
             result = await rc.check_recovery("mint123", "WEAK")
 
@@ -342,6 +357,18 @@ class TestRecoveryCheckerIntegration:
             "has_buzz": True,
             "top_snippet": "This token is pumping!",
         }
+        mock_holder_risk = {
+            "top_holder_usd": 15000.0,
+            "top_holder_pct_of_mc": 15.0,
+            "top3_combined_usd": 30000.0,
+            "top3_pct_of_mc": 30.0,
+            "top10_combined_usd": 50000.0,
+            "top10_pct_of_mc": 50.0,
+            "whale_count": 3,
+            "avg_holder_size_usd": 5000.0,
+            "concentration_risk": "MEDIUM",
+            "holder_details": [],
+        }
 
         with patch(
             "memescanner.recovery_checker._fetch_recovery_dex_data",
@@ -349,6 +376,9 @@ class TestRecoveryCheckerIntegration:
             return_value=mock_dex,
         ), patch.object(
             rc._x_client, "search_token", new_callable=AsyncMock, return_value=mock_x
+        ), patch.object(
+            rc._onchain_analyzer, "analyze_holder_risk", new_callable=AsyncMock,
+            return_value=mock_holder_risk
         ):
             result = await rc.check_recovery("mint456", "STRONG")
 
@@ -356,6 +386,8 @@ class TestRecoveryCheckerIntegration:
         assert result["recovery_probability"] > 0.40
         assert result["signals"]["x_buzz"] == 4
         assert result["signals"]["volume_trend"] == "increasing"
+        assert result["signals"]["whale_count"] == 3
+        assert result["signals"]["top_holder_usd"] == 15000.0
 
     @pytest.mark.asyncio
     async def test_check_recovery_hold_decision(self):
@@ -382,6 +414,18 @@ class TestRecoveryCheckerIntegration:
             "has_buzz": False,
             "top_snippet": "Watching this token",
         }
+        mock_holder_risk = {
+            "top_holder_usd": 8000.0,
+            "top_holder_pct_of_mc": 10.0,
+            "top3_combined_usd": 18000.0,
+            "top3_pct_of_mc": 22.5,
+            "top10_combined_usd": 30000.0,
+            "top10_pct_of_mc": 37.5,
+            "whale_count": 1,
+            "avg_holder_size_usd": 3000.0,
+            "concentration_risk": "MEDIUM",
+            "holder_details": [],
+        }
 
         with patch(
             "memescanner.recovery_checker._fetch_recovery_dex_data",
@@ -389,6 +433,9 @@ class TestRecoveryCheckerIntegration:
             return_value=mock_dex,
         ), patch.object(
             rc._x_client, "search_token", new_callable=AsyncMock, return_value=mock_x
+        ), patch.object(
+            rc._onchain_analyzer, "analyze_holder_risk", new_callable=AsyncMock,
+            return_value=mock_holder_risk
         ):
             result = await rc.check_recovery("mint789", "MID")
 
@@ -421,6 +468,18 @@ class TestRecoveryCheckerIntegration:
             "has_buzz": True,
             "top_snippet": "This is a scam, beware",
         }
+        mock_holder_risk = {
+            "top_holder_usd": 15000.0,
+            "top_holder_pct_of_mc": 15.0,
+            "top3_combined_usd": 30000.0,
+            "top3_pct_of_mc": 30.0,
+            "top10_combined_usd": 50000.0,
+            "top10_pct_of_mc": 50.0,
+            "whale_count": 2,
+            "avg_holder_size_usd": 5000.0,
+            "concentration_risk": "MEDIUM",
+            "holder_details": [],
+        }
 
         with patch(
             "memescanner.recovery_checker._fetch_recovery_dex_data",
@@ -428,6 +487,9 @@ class TestRecoveryCheckerIntegration:
             return_value=mock_dex,
         ), patch.object(
             rc._x_client, "search_token", new_callable=AsyncMock, return_value=mock_x
+        ), patch.object(
+            rc._onchain_analyzer, "analyze_holder_risk", new_callable=AsyncMock,
+            return_value=mock_holder_risk
         ):
             result = await rc.check_recovery("scam_mint", "SCAM")
 
@@ -476,6 +538,18 @@ class TestRecoveryCheckerIntegration:
             "has_buzz": False,
             "top_snippet": "",
         }
+        mock_holder_risk = {
+            "top_holder_usd": 12000.0,
+            "top_holder_pct_of_mc": 12.0,
+            "top3_combined_usd": 25000.0,
+            "top3_pct_of_mc": 25.0,
+            "top10_combined_usd": 40000.0,
+            "top10_pct_of_mc": 40.0,
+            "whale_count": 2,
+            "avg_holder_size_usd": 4000.0,
+            "concentration_risk": "MEDIUM",
+            "holder_details": [],
+        }
 
         with patch(
             "memescanner.recovery_checker._fetch_recovery_dex_data",
@@ -483,6 +557,9 @@ class TestRecoveryCheckerIntegration:
             return_value=mock_dex,
         ), patch.object(
             rc._x_client, "search_token", new_callable=AsyncMock, return_value=mock_x
+        ), patch.object(
+            rc._onchain_analyzer, "analyze_holder_risk", new_callable=AsyncMock,
+            return_value=mock_holder_risk
         ):
             result = await rc.check_recovery("mint_test", "TST")
 
@@ -502,6 +579,8 @@ class TestRecoveryCheckerIntegration:
         assert "x_scam_warning" in signals
         assert "liquidity" in signals
         assert "momentum_1h" in signals
+        assert "whale_count" in signals
+        assert "top_holder_usd" in signals
 
         # Verify types
         assert isinstance(result["recovery_probability"], float)
