@@ -11,11 +11,17 @@ Base rates from research:
     - ~0.5% to 1M MC
     - ~0.1% to 5M MC
 
+Extended targets for mature tokens:
+    - ~0.05% to 10M MC
+    - ~0.02% to 50M MC
+    - ~0.01% to 100M MC
+    - ~0.005% to 300M MC
+
 Also calculates Expected Value (EV) for risk assessment.
 """
 
 import logging
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -25,6 +31,14 @@ BASE_RATES: Dict[str, float] = {
     "300k": 0.02,   # 2% reach $300k MC
     "1M": 0.005,    # 0.5% reach $1M MC
     "5M": 0.001,    # 0.1% reach $5M MC
+}
+
+# Extended targets for tokens already above standard targets
+EXTENDED_RATES: Dict[str, float] = {
+    "10M": 0.0005,    # 0.05% reach $10M MC
+    "50M": 0.0002,    # 0.02% reach $50M MC
+    "100M": 0.0001,   # 0.01% reach $100M MC
+    "300M": 0.00005,  # 0.005% reach $300M MC
 }
 
 # Multiple targets relative to typical entry MC
@@ -73,6 +87,9 @@ class ProbabilityCalculator:
         for targets above the current MC. EV is calculated based on
         realistic upside from the current price.
 
+        For tokens above all standard targets (>$5M), extended targets
+        (10M, 50M, 100M, 300M) are used to compute meaningful EV.
+
         Args:
             score_result: Output from ScoringEngine.score_token().
             current_mc: Current market cap in USD for EV calculation.
@@ -105,13 +122,40 @@ class ProbabilityCalculator:
                 adjusted_prob = min(1.0, base_rate * score_multiplier)
                 probabilities[target] = round(adjusted_prob * 100, 1)  # As percentage
 
+        # Check if all standard targets are reached
+        all_standard_reached = all(
+            current_mc >= target_mc_values[t] for t in self.base_rates
+        )
+
+        # Extended targets for mature tokens
+        extended_target_mc_values: Dict[str, float] = {
+            "10M": 10_000_000,
+            "50M": 50_000_000,
+            "100M": 100_000_000,
+            "300M": 300_000_000,
+        }
+
+        extended_probabilities: Dict[str, float] = {}
+        if all_standard_reached:
+            for target, base_rate in EXTENDED_RATES.items():
+                target_value = extended_target_mc_values.get(target, 0)
+                if current_mc >= target_value:
+                    extended_probabilities[target] = 100.0
+                else:
+                    adjusted_prob = min(1.0, base_rate * score_multiplier)
+                    extended_probabilities[target] = round(adjusted_prob * 100, 2)
+
         # Calculate EV based on realistic upside from current MC
-        ev_result = self._calculate_ev(probabilities, current_mc)
+        ev_result = self._calculate_ev(
+            probabilities, current_mc,
+            extended_probabilities=extended_probabilities,
+            extended_target_mc_values=extended_target_mc_values,
+        )
 
         # Risk level assessment
         risk_level = self._assess_risk(score_result)
 
-        return {
+        result = {
             "probabilities": probabilities,
             "score_multiplier": round(score_multiplier, 2),
             "ev_per_100": ev_result["ev_per_100"],
@@ -121,6 +165,12 @@ class ProbabilityCalculator:
             "risk_factors": risk_level["factors"],
             "current_mc": current_mc,
         }
+
+        if extended_probabilities:
+            result["extended_probabilities"] = extended_probabilities
+            result["is_mature"] = ev_result.get("is_mature", False)
+
+        return result
 
     @staticmethod
     def _get_score_multiplier(score: float) -> float:
@@ -153,7 +203,10 @@ class ProbabilityCalculator:
 
     @staticmethod
     def _calculate_ev(
-        probabilities: Dict[str, float], current_mc: float
+        probabilities: Dict[str, float],
+        current_mc: float,
+        extended_probabilities: Optional[Dict[str, float]] = None,
+        extended_target_mc_values: Optional[Dict[str, float]] = None,
     ) -> Dict[str, Any]:
         """
         Calculate expected value per $100 risked.
@@ -165,9 +218,14 @@ class ProbabilityCalculator:
         upside). If a target is already reached, it contributes nothing
         to EV since there is no further upside from it.
 
+        For mature tokens (above all standard targets), uses extended
+        targets (10M, 50M, 100M, 300M) to calculate EV.
+
         Args:
             probabilities: Dictionary of target -> probability percentage.
             current_mc: Current market cap for calculating multiples.
+            extended_probabilities: Extended target probabilities for mature tokens.
+            extended_target_mc_values: MC values for extended targets.
 
         Returns:
             Dictionary with EV per $100 and description.
@@ -203,20 +261,41 @@ class ProbabilityCalculator:
             if first_unreached_target is None:
                 first_unreached_target = target_label
 
+        # If all standard targets are reached, try extended targets
+        if not ev_contributions and extended_probabilities and extended_target_mc_values:
+            for target_label, target_mc in extended_target_mc_values.items():
+                if current_mc >= target_mc:
+                    continue
+
+                multiple = target_mc / max(current_mc, 1)
+                p_target = extended_probabilities.get(target_label, 0) / 100
+
+                gain = p_target * (multiple - 1) * risk_amount
+                ev_contributions.append(gain)
+
+                if first_unreached_target is None:
+                    first_unreached_target = target_label
+
         if not ev_contributions:
-            # All targets already reached - minimal further upside expected
-            # Use a small positive EV since the token is already performing
-            ev_total = 0.0
-            ev_positive = False
-            description = "$0.00 per $100 risked (all targets reached)"
+            # All targets (including extended) already reached
             return {
                 "ev_per_100": 0.0,
                 "ev_positive": False,
-                "description": description,
+                "description": "Mature - no probability-based edge",
+                "is_mature": True,
             }
 
+        # If we used extended targets, the token is mature
+        is_mature = (
+            all(current_mc >= target_mc_values[t] for t in target_mc_values)
+            and extended_probabilities is not None
+        )
+
         # Primary EV: use the first unreached target for loss calculation
-        p_first = probabilities.get(first_unreached_target, 0) / 100
+        all_probs = dict(probabilities)
+        if extended_probabilities:
+            all_probs.update(extended_probabilities)
+        p_first = all_probs.get(first_unreached_target, 0) / 100
         p_loss = 1.0 - p_first
         loss_component = p_loss * risk_amount
 
@@ -235,10 +314,14 @@ class ProbabilityCalculator:
         else:
             description = f"-${abs(ev_total):.2f} per $100 risked"
 
+        if is_mature:
+            description += " (extended targets)"
+
         return {
             "ev_per_100": round(ev_total, 2),
             "ev_positive": ev_positive,
             "description": description,
+            "is_mature": is_mature,
         }
 
     @staticmethod

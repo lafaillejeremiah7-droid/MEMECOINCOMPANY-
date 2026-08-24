@@ -29,6 +29,7 @@ from memescanner.filters import TokenFilter
 from memescanner.narrative import NarrativeEngine
 from memescanner.probability import ProbabilityCalculator
 from memescanner.pump_fun import PumpFunClient
+from memescanner.rug_detector import RugDetector
 from memescanner.scoring import ScoringEngine
 from memescanner.telegram_bot import TelegramBot
 
@@ -84,6 +85,7 @@ class MemeScanner:
             min_samples=config.adaptation.min_samples_for_reweight,
             outcome_intervals=config.adaptation.outcome_check_intervals_hours,
         )
+        self.rug_detector = RugDetector()
 
     async def run(self) -> None:
         """
@@ -259,6 +261,19 @@ class MemeScanner:
             score_result = self.scoring_engine.score_token(token, dex_data)
             total_score = score_result["total_score"]
 
+            # Run rug detection
+            rug_result = self.rug_detector.analyze(token, dex_data)
+
+            # Reject tokens with extreme rug probability (>0.85)
+            if self.rug_detector.should_reject(rug_result):
+                logger.info(
+                    "RUG REJECTED %s: %.0f%% rug probability - %s",
+                    token.get("symbol", "???"),
+                    rug_result["rug_probability"] * 100,
+                    rug_result["verdict"],
+                )
+                continue
+
             # Store in database regardless of score
             await self.database.insert_token(
                 {
@@ -279,6 +294,11 @@ class MemeScanner:
                 prob_result = self.probability_calc.calculate(
                     score_result, current_mc=current_mc
                 )
+
+                # Add rug warning if probability > 0.7
+                if self.rug_detector.should_warn(rug_result):
+                    prob_result["rug_warning"] = True
+                    prob_result["rug_result"] = rug_result
 
                 # Send alert
                 success = await telegram.send_alert(

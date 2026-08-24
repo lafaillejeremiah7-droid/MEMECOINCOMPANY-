@@ -153,6 +153,55 @@ class TestEVCalculation:
         assert result["ev_positive"] is False
         assert result["ev_per_100"] < 0
 
+    def test_ev_above_all_standard_targets(
+        self, calculator: ProbabilityCalculator
+    ) -> None:
+        """Token above all standard targets should use extended targets."""
+        score_result = {
+            "total_score": 70,
+            "components": {
+                "liquidity": {"score": 100},
+                "momentum": {"score": 100},
+                "narrative": {"temperature": "hot"},
+                "engagement_velocity": {"score": 75},
+            },
+        }
+        # MC at $60M - above all standard targets (100k, 300k, 1M, 5M)
+        result = calculator.calculate(score_result, current_mc=60_000_000)
+
+        # All standard probabilities should be 100%
+        assert result["probabilities"]["100k"] == 100.0
+        assert result["probabilities"]["300k"] == 100.0
+        assert result["probabilities"]["1M"] == 100.0
+        assert result["probabilities"]["5M"] == 100.0
+
+        # Should have extended probabilities
+        assert "extended_probabilities" in result
+        assert "100M" in result["extended_probabilities"]
+        assert "300M" in result["extended_probabilities"]
+
+        # EV description should contain extended targets info
+        assert result["ev_description"] != "$0.00 per $100 risked (all targets reached)"
+        # It should mention extended targets or be a mature token
+        assert "extended targets" in result["ev_description"] or result.get("is_mature")
+
+    def test_ev_above_all_targets_including_extended(
+        self, calculator: ProbabilityCalculator
+    ) -> None:
+        """Token above ALL targets (including extended) shows mature message."""
+        score_result = {
+            "total_score": 70,
+            "components": {
+                "liquidity": {"score": 100},
+                "momentum": {"score": 100},
+                "narrative": {"temperature": "hot"},
+                "engagement_velocity": {"score": 75},
+            },
+        }
+        # MC at $500M - above even extended targets
+        result = calculator.calculate(score_result, current_mc=500_000_000)
+        assert "Mature" in result["ev_description"] or "no probability-based edge" in result["ev_description"]
+
 
 class TestRiskAssessment:
     """Test risk level determination."""

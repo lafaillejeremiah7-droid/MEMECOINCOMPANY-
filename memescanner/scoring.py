@@ -231,7 +231,9 @@ class ScoringEngine:
         Score the volume-to-market-cap ratio (turnover).
 
         Thresholds based on 4.1x multiplier:
-            - < 0.1: Score 0
+            - 0 (exactly): Score 0
+            - > 0 but < 0.01: Score 5 (minimal activity)
+            - 0.01-0.1: Score 15 (low activity relative to size)
             - 0.1-0.5: Score 25
             - 0.5-1.0: Score 50
             - 1.0-2.0: Score 75
@@ -243,8 +245,12 @@ class ScoringEngine:
         Returns:
             Score from 0 to 100.
         """
-        if ratio < 0.1:
+        if ratio <= 0:
             return 0.0
+        elif ratio < 0.01:
+            return 5.0
+        elif ratio < 0.1:
+            return 15.0
         elif ratio < 0.5:
             return 25.0
         elif ratio < 1.0:
@@ -317,14 +323,19 @@ class ScoringEngine:
         Returns:
             Age in hours, minimum 0.01 to avoid division by zero.
         """
-        if created_timestamp is None:
-            return 1.0  # Default to 1 hour if unknown
+        if created_timestamp is None or created_timestamp == 0:
+            return 1.0  # Default to 1 hour if unknown or zero
 
         ts = float(created_timestamp)
         if ts > 1e12:
             ts = ts / 1000  # Convert milliseconds to seconds
 
+        # Sanity check: timestamp should be after 2020 (1577836800)
+        # and not in the future
         now = time.time()
+        if ts < 1_577_836_800 or ts > now + 3600:
+            return 1.0  # Invalid timestamp, default to 1 hour
+
         age_hours = max(0.01, (now - ts) / 3600)
         return age_hours
 

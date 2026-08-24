@@ -1,0 +1,29 @@
+{
+  "id": "FEAT-003",
+  "type": "fix",
+  "description": "Fix 3 scoring bugs (engagement velocity, volume turnover, EV for tokens above targets) and add rug detection module with pipeline integration.",
+  "status": "in_progress",
+  "steps": [
+    "Fix engagement velocity: ensure reply_count and created_timestamp are correctly extracted from token_data (Pump.fun format) with millisecond handling",
+    "Fix volume turnover: add scoring thresholds below 0.1 so low-but-nonzero ratios like 0.005 get a low score instead of 0",
+    "Fix EV for tokens above all targets: extend probability targets to include 10M, 50M, 100M, 300M for mature tokens. Show 'Mature - no probability-based edge' when no further targets apply",
+    "Create memescanner/rug_detector.py with RugDetector class implementing all red/green flag signals",
+    "Integrate rug detection into the filter/scoring pipeline in main.py",
+    "Add tests for rug detector and updated scoring/probability logic",
+    "Run live test with 30 tokens"
+  ],
+  "acceptance_criteria": [
+    "Engagement velocity shows non-zero for tokens with reply_count > 0",
+    "Volume turnover shows non-zero score for any non-zero volume/MC ratio",
+    "EV shows meaningful values or 'Mature' message for tokens above all standard targets",
+    "Rug detector returns rug_probability, risk_label, red_flags, green_flags, verdict",
+    "Tokens with rug_probability > 0.7 get warning, > 0.85 get rejected",
+    "All existing tests still pass"
+  ],
+  "verification": [
+    "python -m pytest tests/ -v",
+    "python -c 'from memescanner.rug_detector import RugDetector; print(\"OK\")'"
+  ],
+  "blocked_reason": null,
+  "findings": null
+}

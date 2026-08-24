@@ -98,10 +98,20 @@ class TestLiquidityScoring:
 class TestVolumeTurnoverScoring:
     """Test volume turnover scoring thresholds."""
 
-    def test_below_0_1(self, scoring_engine: ScoringEngine) -> None:
-        """Turnover < 0.1 scores 0."""
+    def test_zero(self, scoring_engine: ScoringEngine) -> None:
+        """Turnover exactly 0 scores 0."""
         assert scoring_engine._score_volume_turnover(0.0) == 0.0
-        assert scoring_engine._score_volume_turnover(0.09) == 0.0
+
+    def test_below_0_01(self, scoring_engine: ScoringEngine) -> None:
+        """Turnover > 0 but < 0.01 scores 5 (minimal activity)."""
+        assert scoring_engine._score_volume_turnover(0.005) == 5.0
+        assert scoring_engine._score_volume_turnover(0.009) == 5.0
+
+    def test_0_01_to_0_1(self, scoring_engine: ScoringEngine) -> None:
+        """Turnover 0.01-0.1 scores 15 (low activity)."""
+        assert scoring_engine._score_volume_turnover(0.01) == 15.0
+        assert scoring_engine._score_volume_turnover(0.05) == 15.0
+        assert scoring_engine._score_volume_turnover(0.09) == 15.0
 
     def test_0_1_to_0_5(self, scoring_engine: ScoringEngine) -> None:
         """Turnover 0.1-0.5 scores 25."""

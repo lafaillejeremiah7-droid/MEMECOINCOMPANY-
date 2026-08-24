@@ -221,6 +221,7 @@ class PumpFunClient:
             "ath_market_cap": raw.get("ath_market_cap", 0),
             "complete": raw.get("complete", False),
             "is_graduated": raw.get("complete", False),
+            "creator": raw.get("creator", ""),
             "real_sol_reserves": raw.get("real_sol_reserves", 0),
             "virtual_sol_reserves": raw.get("virtual_sol_reserves", 0),
             "real_token_reserves": raw.get("real_token_reserves", 0),
