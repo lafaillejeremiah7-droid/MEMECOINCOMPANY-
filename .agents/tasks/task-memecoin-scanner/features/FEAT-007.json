@@ -2,7 +2,7 @@
   "id": "FEAT-007",
   "type": "feat",
   "description": "Add coordinated buy detection to OnchainAnalyzer + Tavily X search integration with new XSearchClient module. Integrate both into scanner.py pipeline.",
-  "status": "in_progress",
+  "status": "completed",
   "steps": [
     "Add detect_coordinated_buys method to OnchainAnalyzer in onchain.py",
     "Integrate coordinated buys into check_token method and safe_score",
@@ -32,5 +32,5 @@
     "python -c 'from memescanner.x_search import XSearchClient; print(\"OK\")'"
   ],
   "blocked_reason": null,
-  "findings": null
+  "findings": "All 290 tests pass (239 existing + 51 new). detect_coordinated_buys reuses existing largest_accounts data from check_token to avoid duplicate RPC calls. Cluster detection uses 5% tolerance on raw integer amounts, excluding holder #1 (LP). XSearchClient uses httpx with 15s timeout. Scanner pipeline: Fetch -> Twitter -> Serial Deployer -> Age -> DEX -> Rug -> On-chain (incl. coordinated buys) -> X Search -> Wave -> P(2x) -> Alert. Coordinated HIGH = reject. Scam warning + MEDIUM+ coordinated = reject. big_account_mention boosts P(2x) x1.3, has_buzz boosts x1.15. X_DATA_NOT_FOUND is NOT treated as scam."
 }
