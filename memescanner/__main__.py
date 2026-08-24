@@ -25,6 +25,11 @@ import sys
 import time
 from datetime import datetime, timezone, timedelta
 
+from memescanner.celebrity_scanner import (
+    CelebrityScanner,
+    format_celebrity_alert,
+    send_celebrity_alert,
+)
 from memescanner.paper_trader import PaperTrader
 from memescanner.scanner import run_scan_cycle, send_telegram_message
 
@@ -37,6 +42,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 SCAN_INTERVAL = 15  # seconds between scan cycles
+CELEBRITY_SCAN_INTERVAL = 30  # seconds between celebrity scan cycles
 POSITION_CHECK_INTERVAL = 300  # 5 minutes
 PORTFOLIO_UPDATE_INTERVAL = 3600  # 1 hour
 
@@ -49,12 +55,76 @@ def _get_et_now() -> datetime:
     return datetime.now(timezone.utc) + ET_OFFSET
 
 
+async def celebrity_scan_loop(
+    celebrity_scanner: CelebrityScanner,
+    alerted_mints: set,
+    paper_trader: PaperTrader,
+) -> None:
+    """
+    Celebrity scanner loop. Runs every 30 seconds (separate from main Pump.fun scan).
+
+    Scans DEXScreener token-profiles and token-boosts for celebrity/viral launches.
+    Shares alerted_mints and paper_trader with the main scanner.
+
+    Args:
+        celebrity_scanner: CelebrityScanner instance.
+        alerted_mints: Shared set of already-alerted mint addresses.
+        paper_trader: Shared PaperTrader instance.
+    """
+    while True:
+        try:
+            results = await celebrity_scanner.scan_cycle(alerted_mints)
+
+            # Print summary
+            print(
+                f"  [Celebrity] Scanned {results['new_profiles_scanned']} new profiles, "
+                f"{results['trending_scanned']} trending..."
+            )
+
+            if results["celebrity_detected"] and results["alert"]:
+                signal = results["alert"]
+                address = signal["address"]
+
+                # Format and send alert
+                message = format_celebrity_alert(signal)
+                success = await send_celebrity_alert(message)
+
+                if success:
+                    alerted_mints.add(address)
+                    print(
+                        f"  [Celebrity] ALERT SENT: @{signal['x_handle']} "
+                        f"({signal['verification']})"
+                    )
+
+                    # Paper trade: buy on celebrity signal
+                    token_data = {
+                        "mint": address,
+                        "symbol": signal.get("celebrity_keyword", address[:8]).upper(),
+                    }
+                    dex_data = signal.get("dex_data", {})
+                    position = await paper_trader.buy(token_data, dex_data)
+                    if position:
+                        mc = dex_data.get("market_cap", 0)
+                        print(
+                            f"  [Celebrity] Paper bought at MC ${mc:,.0f}"
+                        )
+                else:
+                    print("  [Celebrity] Failed to send alert")
+
+        except Exception as e:
+            logger.error("Celebrity scan error: %s", str(e), exc_info=True)
+            print(f"  [Celebrity] Scan error: {e}")
+
+        await asyncio.sleep(CELEBRITY_SCAN_INTERVAL)
+
+
 async def main_loop() -> None:
     """
     Main scanning loop. Runs every 15 seconds.
 
     Tracks alerted mints in a set to avoid duplicate alerts.
     Integrates paper trading with position checks and periodic updates.
+    Also launches celebrity scanner loop (every 30s) as a background task.
     """
     alerted_mints: set = set()
     cycle_count = 0
@@ -62,6 +132,9 @@ async def main_loop() -> None:
     # Initialize paper trader
     paper_trader = PaperTrader(starting_balance=1000.0, trade_size=50.0)
     await paper_trader.initialize()
+
+    # Initialize celebrity scanner
+    celebrity_scanner = CelebrityScanner()
 
     # Timing trackers
     last_position_check = time.time()
@@ -71,11 +144,16 @@ async def main_loop() -> None:
     print("=" * 60)
     print("  MEMESCANNER - Strict Signal Bot + Paper Trading")
     print("  Filters: X only | 10min-1h age | High P(2x) only")
-    print(f"  Scan interval: {SCAN_INTERVAL}s")
+    print(f"  Scan interval: {SCAN_INTERVAL}s | Celebrity: {CELEBRITY_SCAN_INTERVAL}s")
     print(f"  Paper trading: ${paper_trader.trade_size:.0f}/trade, "
           f"${paper_trader.balance:.0f} balance")
     print("=" * 60)
     print()
+
+    # Launch celebrity scanner as a background task
+    celebrity_task = asyncio.create_task(
+        celebrity_scan_loop(celebrity_scanner, alerted_mints, paper_trader)
+    )
 
     try:
         while True:
@@ -178,6 +256,11 @@ async def main_loop() -> None:
             await asyncio.sleep(SCAN_INTERVAL)
 
     finally:
+        celebrity_task.cancel()
+        try:
+            await celebrity_task
+        except asyncio.CancelledError:
+            pass
         await paper_trader.close()
 
 
