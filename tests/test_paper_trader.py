@@ -250,7 +250,7 @@ class TestPaperTraderCheckPositions:
 
     @pytest.mark.asyncio
     async def test_stop_loss_triggers(self, patch_db_path, mock_telegram, mock_fetch_dex):
-        """Test stop loss triggers at -50%."""
+        """Test stop loss triggers at -50% via recovery check (SELL decision)."""
         pt = PaperTrader(starting_balance=1000.0, trade_size=50.0)
         await pt.initialize()
 
@@ -261,10 +261,31 @@ class TestPaperTraderCheckPositions:
         # Price drops 50%
         mock_fetch_dex.return_value = {"market_cap": 50000}
 
-        closed = await pt.check_positions()
+        # Mock recovery checker to return SELL
+        mock_recovery_result = {
+            "recovery_probability": 0.05,
+            "decision": "SELL",
+            "reason": "Weak signals",
+            "signals": {
+                "bs_ratio": 0.3,
+                "avg_buy_size": 10.0,
+                "avg_sell_size": 50.0,
+                "volume_trend": "decreasing",
+                "x_buzz": 0,
+                "x_scam_warning": False,
+                "liquidity": 2000.0,
+                "momentum_1h": -20.0,
+            },
+        }
+        with patch(
+            "memescanner.paper_trader.RecoveryChecker.check_recovery",
+            new_callable=AsyncMock,
+            return_value=mock_recovery_result,
+        ):
+            closed = await pt.check_positions()
 
         assert len(closed) == 1
-        assert closed[0]["reason"] == "Stop loss (-50%)"
+        assert "Recovery check: SELL" in closed[0]["reason"]
         assert closed[0]["pnl_pct"] == pytest.approx(-50.0, abs=0.1)
         assert closed[0]["pnl_usd"] == pytest.approx(-25.0, abs=0.1)
         assert len(pt.positions) == 0
@@ -526,9 +547,24 @@ class TestPaperTraderPersistence:
         await pt1.initialize()
         await pt1.buy({"mint": "close_mint", "symbol": "CLOS"}, {"market_cap": 100000})
 
-        # Trigger stop loss
+        # Trigger stop loss via recovery check SELL
         mock_fetch_dex.return_value = {"market_cap": 50000}
-        await pt1.check_positions()
+        mock_recovery_result = {
+            "recovery_probability": 0.05,
+            "decision": "SELL",
+            "reason": "Weak signals",
+            "signals": {
+                "bs_ratio": 0.3, "avg_buy_size": 10.0, "avg_sell_size": 50.0,
+                "volume_trend": "decreasing", "x_buzz": 0, "x_scam_warning": False,
+                "liquidity": 2000.0, "momentum_1h": -20.0,
+            },
+        }
+        with patch(
+            "memescanner.paper_trader.RecoveryChecker.check_recovery",
+            new_callable=AsyncMock,
+            return_value=mock_recovery_result,
+        ):
+            await pt1.check_positions()
         assert len(pt1.closed_trades) == 1
         await pt1.close()
 
@@ -537,7 +573,7 @@ class TestPaperTraderPersistence:
         await pt2.initialize()
         assert len(pt2.closed_trades) == 1
         assert pt2.closed_trades[0]["mint"] == "close_mint"
-        assert pt2.closed_trades[0]["reason"] == "Stop loss (-50%)"
+        assert "Recovery check: SELL" in pt2.closed_trades[0]["reason"]
         await pt2.close()
 
 
@@ -546,18 +582,18 @@ class TestPaperTraderEdgeCases:
 
     @pytest.mark.asyncio
     async def test_multiple_buys_different_tokens(self, patch_db_path, mock_telegram):
-        """Test buying multiple different tokens."""
+        """Test buying multiple different tokens up to max positions."""
         pt = PaperTrader(starting_balance=1000.0, trade_size=50.0)
         await pt.initialize()
 
-        for i in range(5):
+        for i in range(MAX_OPEN_POSITIONS):
             token_data = {"mint": f"mint_{i}", "symbol": f"T{i}"}
             dex_data = {"market_cap": 100000 + i * 10000}
             pos = await pt.buy(token_data, dex_data)
             assert pos is not None
 
-        assert len(pt.positions) == 5
-        assert pt.balance == 750.0
+        assert len(pt.positions) == MAX_OPEN_POSITIONS
+        assert pt.balance == 1000.0 - (MAX_OPEN_POSITIONS * 50.0)
 
         await pt.close()
 
@@ -571,9 +607,24 @@ class TestPaperTraderEdgeCases:
         await pt.buy({"mint": "m1", "symbol": "T1"}, {"market_cap": 100000})
         assert pt.balance == 950.0
 
-        # Stop loss at -50%
+        # Stop loss at -50% via recovery SELL
         mock_fetch_dex.return_value = {"market_cap": 50000}
-        await pt.check_positions()
+        mock_recovery_result = {
+            "recovery_probability": 0.05,
+            "decision": "SELL",
+            "reason": "Weak signals",
+            "signals": {
+                "bs_ratio": 0.3, "avg_buy_size": 10.0, "avg_sell_size": 50.0,
+                "volume_trend": "decreasing", "x_buzz": 0, "x_scam_warning": False,
+                "liquidity": 2000.0, "momentum_1h": -20.0,
+            },
+        }
+        with patch(
+            "memescanner.paper_trader.RecoveryChecker.check_recovery",
+            new_callable=AsyncMock,
+            return_value=mock_recovery_result,
+        ):
+            await pt.check_positions()
 
         # Should get back $25 (50 * 0.5)
         assert pt.balance == pytest.approx(975.0, abs=0.1)
@@ -605,3 +656,350 @@ class TestPaperTraderEdgeCases:
         assert len(pt.positions) == 0
 
         await pt.close()
+
+
+class TestPaperTraderRecoveryChecker:
+    """Test smart stop loss with recovery checker integration."""
+
+    @pytest.mark.asyncio
+    async def test_recovery_hold_keeps_position(self, patch_db_path, mock_telegram, mock_fetch_dex):
+        """Test that HOLD decision keeps position open with -70% hard stop."""
+        pt = PaperTrader(starting_balance=1000.0, trade_size=50.0)
+        await pt.initialize()
+
+        await pt.buy({"mint": "hold_mint", "symbol": "HOLD"}, {"market_cap": 100000})
+        assert pt.balance == 950.0
+
+        # Price drops 50%
+        mock_fetch_dex.return_value = {"market_cap": 50000}
+
+        mock_recovery_result = {
+            "recovery_probability": 0.30,
+            "decision": "HOLD",
+            "reason": "Moderate signals, tightening stop",
+            "signals": {
+                "bs_ratio": 1.2, "avg_buy_size": 100.0, "avg_sell_size": 90.0,
+                "volume_trend": "stable", "x_buzz": 2, "x_scam_warning": False,
+                "liquidity": 8000.0, "momentum_1h": 3.0,
+            },
+        }
+        with patch(
+            "memescanner.paper_trader.RecoveryChecker.check_recovery",
+            new_callable=AsyncMock,
+            return_value=mock_recovery_result,
+        ):
+            closed = await pt.check_positions()
+
+        # Position should remain open
+        assert len(closed) == 0
+        assert len(pt.positions) == 1
+        assert pt.positions[0]["recovery_checked"] is True
+        # Balance unchanged
+        assert pt.balance == 950.0
+
+        await pt.close()
+
+    @pytest.mark.asyncio
+    async def test_recovery_dca_adds_to_position(self, patch_db_path, mock_telegram, mock_fetch_dex):
+        """Test that DCA decision adds $25 to position."""
+        pt = PaperTrader(starting_balance=1000.0, trade_size=50.0)
+        await pt.initialize()
+
+        await pt.buy({"mint": "dca_mint", "symbol": "DCA"}, {"market_cap": 100000})
+        assert pt.balance == 950.0
+
+        # Price drops 50%
+        mock_fetch_dex.return_value = {"market_cap": 50000}
+
+        mock_recovery_result = {
+            "recovery_probability": 0.45,
+            "decision": "DCA",
+            "reason": "Strong recovery signals",
+            "signals": {
+                "bs_ratio": 2.0, "avg_buy_size": 200.0, "avg_sell_size": 100.0,
+                "volume_trend": "increasing", "x_buzz": 4, "x_scam_warning": False,
+                "liquidity": 20000.0, "momentum_1h": 12.0,
+            },
+        }
+        with patch(
+            "memescanner.paper_trader.RecoveryChecker.check_recovery",
+            new_callable=AsyncMock,
+            return_value=mock_recovery_result,
+        ):
+            closed = await pt.check_positions()
+
+        # Position should remain open with DCA
+        assert len(closed) == 0
+        assert len(pt.positions) == 1
+        assert pt.positions[0]["amount_usd"] == pytest.approx(75.0, abs=0.1)  # $50 + $25
+        assert pt.positions[0]["dca_done"] is True
+        assert pt.positions[0]["recovery_checked"] is True
+        # Balance: 950 - 25 (DCA) = 925
+        assert pt.balance == pytest.approx(925.0, abs=0.1)
+
+        await pt.close()
+
+    @pytest.mark.asyncio
+    async def test_hard_stop_at_70_percent(self, patch_db_path, mock_telegram, mock_fetch_dex):
+        """Test that hard stop triggers at -70% after recovery HOLD."""
+        pt = PaperTrader(starting_balance=1000.0, trade_size=50.0)
+        await pt.initialize()
+
+        await pt.buy({"mint": "hard_mint", "symbol": "HARD"}, {"market_cap": 100000})
+
+        # First check: price drops 50% -> recovery check HOLD
+        mock_fetch_dex.return_value = {"market_cap": 50000}
+        mock_recovery_result = {
+            "recovery_probability": 0.25,
+            "decision": "HOLD",
+            "reason": "Moderate signals",
+            "signals": {
+                "bs_ratio": 1.1, "avg_buy_size": 100.0, "avg_sell_size": 100.0,
+                "volume_trend": "stable", "x_buzz": 1, "x_scam_warning": False,
+                "liquidity": 7000.0, "momentum_1h": 1.0,
+            },
+        }
+        with patch(
+            "memescanner.paper_trader.RecoveryChecker.check_recovery",
+            new_callable=AsyncMock,
+            return_value=mock_recovery_result,
+        ):
+            await pt.check_positions()
+
+        assert pt.positions[0]["recovery_checked"] is True
+
+        # Second check: price drops to -70% -> hard stop triggers
+        mock_fetch_dex.return_value = {"market_cap": 30000}  # -70% from entry
+        closed = await pt.check_positions()
+
+        assert len(closed) == 1
+        assert "Hard stop (-70%" in closed[0]["reason"]
+        assert len(pt.positions) == 0
+
+        await pt.close()
+
+    @pytest.mark.asyncio
+    async def test_recovery_only_checked_once(self, patch_db_path, mock_telegram, mock_fetch_dex):
+        """Test that recovery is only checked once per position."""
+        pt = PaperTrader(starting_balance=1000.0, trade_size=50.0)
+        await pt.initialize()
+
+        await pt.buy({"mint": "once_mint", "symbol": "ONCE"}, {"market_cap": 100000})
+
+        # First check at -50%: HOLD
+        mock_fetch_dex.return_value = {"market_cap": 50000}
+        mock_recovery_result = {
+            "recovery_probability": 0.25,
+            "decision": "HOLD",
+            "reason": "Moderate signals",
+            "signals": {
+                "bs_ratio": 1.1, "avg_buy_size": 100.0, "avg_sell_size": 100.0,
+                "volume_trend": "stable", "x_buzz": 1, "x_scam_warning": False,
+                "liquidity": 7000.0, "momentum_1h": 1.0,
+            },
+        }
+        with patch(
+            "memescanner.paper_trader.RecoveryChecker.check_recovery",
+            new_callable=AsyncMock,
+            return_value=mock_recovery_result,
+        ) as mock_check:
+            await pt.check_positions()
+            mock_check.assert_called_once()
+
+        # Second check still at -50%: should NOT call recovery again
+        mock_fetch_dex.return_value = {"market_cap": 50000}
+        with patch(
+            "memescanner.paper_trader.RecoveryChecker.check_recovery",
+            new_callable=AsyncMock,
+        ) as mock_check2:
+            await pt.check_positions()
+            mock_check2.assert_not_called()
+
+        # Position should still be open (above -70%)
+        assert len(pt.positions) == 1
+
+        await pt.close()
+
+    @pytest.mark.asyncio
+    async def test_max_one_dca_per_position(self, patch_db_path, mock_telegram, mock_fetch_dex):
+        """Test that DCA can only happen once per position."""
+        pt = PaperTrader(starting_balance=1000.0, trade_size=50.0)
+        await pt.initialize()
+
+        await pt.buy({"mint": "dca2_mint", "symbol": "DCA2"}, {"market_cap": 100000})
+
+        # First check at -50%: DCA
+        mock_fetch_dex.return_value = {"market_cap": 50000}
+        mock_recovery_result = {
+            "recovery_probability": 0.50,
+            "decision": "DCA",
+            "reason": "Strong signals",
+            "signals": {
+                "bs_ratio": 2.0, "avg_buy_size": 200.0, "avg_sell_size": 100.0,
+                "volume_trend": "increasing", "x_buzz": 5, "x_scam_warning": False,
+                "liquidity": 20000.0, "momentum_1h": 15.0,
+            },
+        }
+        with patch(
+            "memescanner.paper_trader.RecoveryChecker.check_recovery",
+            new_callable=AsyncMock,
+            return_value=mock_recovery_result,
+        ):
+            await pt.check_positions()
+
+        assert pt.positions[0]["dca_done"] is True
+        assert pt.positions[0]["amount_usd"] == pytest.approx(75.0, abs=0.1)
+        # Balance: 950 - 25 = 925
+        assert pt.balance == pytest.approx(925.0, abs=0.1)
+
+        # Position is now recovery_checked = True and dca_done = True
+        # Won't be checked again (recovery_checked flag)
+        await pt.close()
+
+    @pytest.mark.asyncio
+    async def test_dca_insufficient_balance(self, patch_db_path, mock_telegram, mock_fetch_dex):
+        """Test DCA skipped when balance insufficient."""
+        pt = PaperTrader(starting_balance=60.0, trade_size=50.0)
+        await pt.initialize()
+
+        await pt.buy({"mint": "low_mint", "symbol": "LOW"}, {"market_cap": 100000})
+        assert pt.balance == 10.0  # Only $10 left, not enough for $25 DCA
+
+        # Price drops 50%: DCA decision but insufficient balance
+        mock_fetch_dex.return_value = {"market_cap": 50000}
+        mock_recovery_result = {
+            "recovery_probability": 0.50,
+            "decision": "DCA",
+            "reason": "Strong signals",
+            "signals": {
+                "bs_ratio": 2.0, "avg_buy_size": 200.0, "avg_sell_size": 100.0,
+                "volume_trend": "increasing", "x_buzz": 5, "x_scam_warning": False,
+                "liquidity": 20000.0, "momentum_1h": 15.0,
+            },
+        }
+        with patch(
+            "memescanner.paper_trader.RecoveryChecker.check_recovery",
+            new_callable=AsyncMock,
+            return_value=mock_recovery_result,
+        ):
+            closed = await pt.check_positions()
+
+        # Position stays open but DCA not executed
+        assert len(closed) == 0
+        assert len(pt.positions) == 1
+        assert pt.positions[0]["amount_usd"] == 50.0  # Unchanged
+        assert pt.balance == 10.0  # Unchanged
+
+        await pt.close()
+
+    @pytest.mark.asyncio
+    async def test_recovery_telegram_message_sent(self, patch_db_path, mock_telegram, mock_fetch_dex):
+        """Test that recovery check results are sent via Telegram."""
+        pt = PaperTrader(starting_balance=1000.0, trade_size=50.0)
+        await pt.initialize()
+
+        await pt.buy({"mint": "msg_mint", "symbol": "MSG"}, {"market_cap": 100000})
+        mock_telegram.reset_mock()
+
+        # Price drops 50%
+        mock_fetch_dex.return_value = {"market_cap": 50000}
+        mock_recovery_result = {
+            "recovery_probability": 0.30,
+            "decision": "HOLD",
+            "reason": "Moderate signals",
+            "signals": {
+                "bs_ratio": 1.2, "avg_buy_size": 100.0, "avg_sell_size": 90.0,
+                "volume_trend": "stable", "x_buzz": 2, "x_scam_warning": False,
+                "liquidity": 8000.0, "momentum_1h": 3.0,
+            },
+        }
+        with patch(
+            "memescanner.paper_trader.RecoveryChecker.check_recovery",
+            new_callable=AsyncMock,
+            return_value=mock_recovery_result,
+        ):
+            await pt.check_positions()
+
+        # Should have sent recovery check message
+        telegram_calls = mock_telegram.call_args_list
+        assert len(telegram_calls) >= 1
+        recovery_msg = telegram_calls[0][0][0]
+        assert "RECOVERY CHECK" in recovery_msg
+        assert "$MSG" in recovery_msg
+        assert "30.0%" in recovery_msg
+        assert "HOLD" in recovery_msg
+
+        await pt.close()
+
+    @pytest.mark.asyncio
+    async def test_recovery_sell_with_scam_warning(self, patch_db_path, mock_telegram, mock_fetch_dex):
+        """Test that scam warning in recovery results in immediate SELL."""
+        pt = PaperTrader(starting_balance=1000.0, trade_size=50.0)
+        await pt.initialize()
+
+        await pt.buy({"mint": "scam_mint", "symbol": "SCAM"}, {"market_cap": 100000})
+
+        # Price drops 50%
+        mock_fetch_dex.return_value = {"market_cap": 50000}
+        mock_recovery_result = {
+            "recovery_probability": 0.05,
+            "decision": "SELL",
+            "reason": "Scam warning detected on X",
+            "signals": {
+                "bs_ratio": 0.5, "avg_buy_size": 30.0, "avg_sell_size": 200.0,
+                "volume_trend": "decreasing", "x_buzz": 3, "x_scam_warning": True,
+                "liquidity": 5000.0, "momentum_1h": -10.0,
+            },
+        }
+        with patch(
+            "memescanner.paper_trader.RecoveryChecker.check_recovery",
+            new_callable=AsyncMock,
+            return_value=mock_recovery_result,
+        ):
+            closed = await pt.check_positions()
+
+        assert len(closed) == 1
+        assert "Recovery check: SELL" in closed[0]["reason"]
+        assert len(pt.positions) == 0
+
+        await pt.close()
+
+    @pytest.mark.asyncio
+    async def test_position_persists_recovery_flags(self, patch_db_path, mock_telegram, mock_fetch_dex):
+        """Test that recovery_checked and dca_done flags persist across restarts."""
+        pt1 = PaperTrader(starting_balance=1000.0, trade_size=50.0)
+        await pt1.initialize()
+
+        await pt1.buy({"mint": "persist_rc", "symbol": "PRC"}, {"market_cap": 100000})
+
+        # Trigger recovery check with DCA
+        mock_fetch_dex.return_value = {"market_cap": 50000}
+        mock_recovery_result = {
+            "recovery_probability": 0.50,
+            "decision": "DCA",
+            "reason": "Strong signals",
+            "signals": {
+                "bs_ratio": 2.0, "avg_buy_size": 200.0, "avg_sell_size": 100.0,
+                "volume_trend": "increasing", "x_buzz": 4, "x_scam_warning": False,
+                "liquidity": 15000.0, "momentum_1h": 10.0,
+            },
+        }
+        with patch(
+            "memescanner.paper_trader.RecoveryChecker.check_recovery",
+            new_callable=AsyncMock,
+            return_value=mock_recovery_result,
+        ):
+            await pt1.check_positions()
+
+        assert pt1.positions[0]["recovery_checked"] is True
+        assert pt1.positions[0]["dca_done"] is True
+        await pt1.close()
+
+        # Reload
+        pt2 = PaperTrader(starting_balance=1000.0, trade_size=50.0)
+        await pt2.initialize()
+        assert len(pt2.positions) == 1
+        assert pt2.positions[0]["recovery_checked"] is True
+        assert pt2.positions[0]["dca_done"] is True
+        assert pt2.positions[0]["amount_usd"] == pytest.approx(75.0, abs=0.1)
+        await pt2.close()

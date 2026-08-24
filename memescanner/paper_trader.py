@@ -13,6 +13,7 @@ from typing import Any, Dict, List, Optional
 import aiosqlite
 import httpx
 
+from memescanner.recovery_checker import RecoveryChecker
 from memescanner.scanner import fetch_dex_data, send_telegram_message
 
 logger = logging.getLogger(__name__)
@@ -23,6 +24,10 @@ DB_PATH = "memescanner.db"
 # Take profit at +100% (2x), stop loss at -50%
 TAKE_PROFIT_PCT = 100.0
 STOP_LOSS_PCT = -50.0
+# Tightened hard stop after recovery check HOLD decision
+HARD_STOP_PCT = -70.0
+# DCA amount for recovery
+DCA_AMOUNT = 25.0
 
 
 class PaperTrader:
@@ -79,7 +84,9 @@ class PaperTrader:
                 pnl_pct REAL,
                 exit_reason TEXT,
                 half_sold INTEGER DEFAULT 0,
-                breakeven_stop INTEGER DEFAULT 0
+                breakeven_stop INTEGER DEFAULT 0,
+                recovery_checked INTEGER DEFAULT 0,
+                dca_done INTEGER DEFAULT 0
             )
         """)
 
@@ -92,6 +99,20 @@ class PaperTrader:
                 trade_size REAL
             )
         """)
+
+        # Migration: add recovery_checked and dca_done columns if missing
+        try:
+            await self._db.execute(
+                "ALTER TABLE paper_positions ADD COLUMN recovery_checked INTEGER DEFAULT 0"
+            )
+        except Exception:
+            pass  # Column already exists
+        try:
+            await self._db.execute(
+                "ALTER TABLE paper_positions ADD COLUMN dca_done INTEGER DEFAULT 0"
+            )
+        except Exception:
+            pass  # Column already exists
 
         await self._db.commit()
 
@@ -124,7 +145,8 @@ class PaperTrader:
         self.positions = []
         async with self._db.execute(
             "SELECT id, mint, symbol, entry_price, entry_mc, amount_usd, tokens_held, "
-            "entry_time, half_sold, breakeven_stop FROM paper_positions WHERE status = 'open'"
+            "entry_time, half_sold, breakeven_stop, recovery_checked, dca_done "
+            "FROM paper_positions WHERE status = 'open'"
         ) as cursor:
             async for row in cursor:
                 self.positions.append({
@@ -140,6 +162,8 @@ class PaperTrader:
                     "unrealized_pnl": 0.0,
                     "half_sold": bool(row[8]),
                     "breakeven_stop": bool(row[9]),
+                    "recovery_checked": bool(row[10]),
+                    "dca_done": bool(row[11]),
                 })
 
         # Load closed trades for today's summary
@@ -236,14 +260,16 @@ class PaperTrader:
             "unrealized_pnl": 0.0,
             "half_sold": False,
             "breakeven_stop": False,
+            "recovery_checked": False,
+            "dca_done": False,
         }
 
         # Save to DB
         if self._db:
             cursor = await self._db.execute(
                 "INSERT INTO paper_positions (mint, symbol, entry_price, entry_mc, amount_usd, "
-                "tokens_held, entry_time, status, half_sold, breakeven_stop) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, 'open', 0, 0)",
+                "tokens_held, entry_time, status, half_sold, breakeven_stop, recovery_checked, dca_done) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, 'open', 0, 0, 0, 0)",
                 (mint, symbol, entry_price, market_cap, self.trade_size, tokens_held, entry_time),
             )
             position["id"] = cursor.lastrowid
@@ -269,6 +295,10 @@ class PaperTrader:
         """
         Update current prices for all open positions and check TP/SL triggers.
 
+        When a position hits -50%, uses RecoveryChecker to decide whether to
+        HOLD (tighten to -70%), DCA ($25 more), or SELL. Only checks recovery
+        once per position.
+
         Returns:
             List of closed positions from this check cycle.
         """
@@ -280,6 +310,7 @@ class PaperTrader:
 
         closed_this_cycle = []
         positions_to_remove = []
+        recovery_checker = RecoveryChecker()
 
         for i, pos in enumerate(self.positions):
             mint = pos["mint"]
@@ -318,14 +349,31 @@ class PaperTrader:
                         positions_to_remove.append(i)
                         continue
 
-                    # Check stop loss: -50%
+                    # Check hard stop (-70%) for positions that passed recovery check
+                    if pos.get("recovery_checked") and not pos.get("breakeven_stop"):
+                        if pnl_pct <= HARD_STOP_PCT:
+                            closed = await self._close_position(
+                                pos, current_price, "Hard stop (-70% after recovery hold)"
+                            )
+                            closed_this_cycle.append(closed)
+                            positions_to_remove.append(i)
+                            continue
+
+                    # Smart stop loss: when position hits -50%
                     if pnl_pct <= STOP_LOSS_PCT:
-                        closed = await self._close_position(
-                            pos, current_price, "Stop loss (-50%)"
-                        )
-                        closed_this_cycle.append(closed)
-                        positions_to_remove.append(i)
-                        continue
+                        # Only check recovery once per position
+                        if not pos.get("recovery_checked"):
+                            result = await self._handle_recovery_check(
+                                pos, current_price, pnl_pct, recovery_checker
+                            )
+                            if result == "CLOSED":
+                                positions_to_remove.append(i)
+                                closed_this_cycle.append(self.closed_trades[-1])
+                            # If HOLD or DCA, position stays open
+                        else:
+                            # Already recovery-checked and still above hard stop
+                            # (hard stop is -70%, checked above)
+                            pass
 
             except Exception as e:
                 logger.warning("Failed to check position %s: %s", pos.get("symbol", "?"), str(e))
@@ -339,6 +387,137 @@ class PaperTrader:
             self.positions.pop(i)
 
         return closed_this_cycle
+
+    async def _handle_recovery_check(
+        self,
+        pos: Dict[str, Any],
+        current_price: float,
+        pnl_pct: float,
+        recovery_checker: RecoveryChecker,
+    ) -> str:
+        """
+        Handle the recovery check for a position at -50%.
+
+        Args:
+            pos: Position dict.
+            current_price: Current market cap.
+            pnl_pct: Current P&L percentage.
+            recovery_checker: RecoveryChecker instance.
+
+        Returns:
+            "CLOSED" if position was sold, "HELD" if kept open.
+        """
+        mint = pos["mint"]
+        symbol = pos["symbol"]
+
+        # Run recovery check
+        result = await recovery_checker.check_recovery(mint, symbol)
+        decision = result["decision"]
+        probability = result["recovery_probability"]
+        reason = result["reason"]
+        signals = result["signals"]
+
+        # Mark as recovery checked
+        pos["recovery_checked"] = True
+        if self._db:
+            await self._db.execute(
+                "UPDATE paper_positions SET recovery_checked = 1 WHERE id = ?",
+                (pos.get("id"),),
+            )
+            await self._db.commit()
+
+        # Send Telegram with recovery check results
+        prob_pct = probability * 100
+        signals_str = (
+            f"BS: {signals['bs_ratio']} | Vol: {signals['volume_trend']} | "
+            f"X: {signals['x_buzz']} tweets | Liq: ${signals['liquidity']:.0f} | "
+            f"Mom: {signals['momentum_1h']}%"
+        )
+        if signals["x_scam_warning"]:
+            signals_str += " | \u26a0\ufe0f SCAM WARNING"
+
+        recovery_msg = (
+            f"\U0001f50d RECOVERY CHECK: ${symbol}\n"
+            f"\U0001f4c9 Position at {pnl_pct:.0f}%\n"
+            f"\U0001f3b2 Recovery P: {prob_pct:.1f}%\n"
+            f"\U0001f4ca Signals: {signals_str}\n"
+            f"\u27a1\ufe0f Decision: {decision}\n"
+            f"\U0001f4dd Reason: {reason}"
+        )
+        await send_telegram_message(recovery_msg)
+
+        if decision == "SELL":
+            closed = await self._close_position(
+                pos, current_price, f"Recovery check: SELL (P={prob_pct:.0f}%)"
+            )
+            return "CLOSED"
+
+        elif decision == "DCA":
+            await self._execute_dca(pos, current_price)
+            return "HELD"
+
+        else:  # HOLD - tighten stop to -70%
+            logger.info(
+                "Recovery HOLD for $%s: keeping position, -70%% hard stop set",
+                symbol,
+            )
+            return "HELD"
+
+    async def _execute_dca(self, pos: Dict[str, Any], current_price: float) -> None:
+        """
+        Execute a DCA (Dollar Cost Average) buy of $25 more for a position.
+
+        Updates amount_usd (+$25), recalculates tokens_held.
+        The -70% hard stop is calculated from ORIGINAL entry price.
+        Max 1 DCA per position.
+
+        Args:
+            pos: Position dict.
+            current_price: Current market cap (price proxy).
+        """
+        symbol = pos["symbol"]
+
+        # Max 1 DCA per position
+        if pos.get("dca_done"):
+            logger.info("DCA already done for $%s, treating as HOLD", symbol)
+            return
+
+        # Check balance
+        if self.balance < DCA_AMOUNT:
+            logger.info("Insufficient balance for DCA on $%s ($%.2f < $%.2f)",
+                        symbol, self.balance, DCA_AMOUNT)
+            return
+
+        # Deduct from balance
+        self.balance -= DCA_AMOUNT
+
+        # Add tokens at current price
+        additional_tokens = DCA_AMOUNT / current_price if current_price > 0 else 0
+        pos["amount_usd"] += DCA_AMOUNT
+        pos["tokens_held"] += additional_tokens
+        pos["dca_done"] = True
+
+        # Update DB
+        if self._db:
+            await self._db.execute(
+                "UPDATE paper_positions SET amount_usd = ?, tokens_held = ?, dca_done = 1 WHERE id = ?",
+                (pos["amount_usd"], pos["tokens_held"], pos.get("id")),
+            )
+            await self._db.commit()
+            await self._save_balance()
+
+        # Send Telegram notification
+        msg = (
+            f"\U0001f504 PAPER DCA: ${symbol}\n"
+            f"\U0001f4b5 Added ${DCA_AMOUNT:.0f} at current price\n"
+            f"\U0001f4b0 Total position: ${pos['amount_usd']:.0f}\n"
+            f"\U0001f6d1 Hard stop: -70% from original entry\n"
+            f"\U0001f4b0 Balance: ${self.balance:.0f} remaining"
+        )
+        await send_telegram_message(msg)
+
+        logger.info("Paper DCA: $%s +$%.0f, total: $%.0f, balance: $%.2f",
+                    symbol, DCA_AMOUNT, pos["amount_usd"], self.balance)
 
     async def _take_profit(self, pos: Dict[str, Any], current_price: float, pnl_pct: float) -> Optional[Dict[str, Any]]:
         """
