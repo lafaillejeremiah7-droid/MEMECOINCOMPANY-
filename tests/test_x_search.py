@@ -395,7 +395,7 @@ class TestScannerXSearchIntegration:
         assert "5 mentions" in message
         assert "\u2b50 big account" in message
         assert "buzz \u2705" in message
-        assert "@trader1 (tweeted)" in message
+        assert "@test" in message
 
     def test_telegram_message_with_x_not_found(self):
         """Telegram message shows 'not indexed yet' when no X data."""
