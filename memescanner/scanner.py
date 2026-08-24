@@ -8,14 +8,16 @@ Implements the focused scanning pipeline:
 4. FILTER 3: Only keep tokens between 10 minutes and 1 hour old
 5. FILTER 4: Get DEXScreener data. Reject if liquidity < $5k or buys < sells
 6. FILTER 5: Calculate rug %. Reject if > 50%
-7. FILTER 6: On-chain verification via Helius RPC
-8. (NEW) Apply narrative wave multiplier to P(2x)
-9. Score remaining tokens with P(2x) rubric, filter >= 20%
-10. Send the TOP signal to Telegram
+7. FILTER 6: On-chain verification via Helius RPC (incl. coordinated buys detection)
+8. FILTER 7: Tavily X search - scam warnings + coordinated risk = REJECT
+9. (NEW) Apply narrative wave multiplier to P(2x)
+10. Score remaining tokens with P(2x) rubric, filter >= 20%
+11. Send the TOP signal to Telegram
 
 Pipeline order:
 Fetch -> Twitter filter -> SERIAL DEPLOYER filter -> Age filter ->
-DEX filter -> Rug filter -> On-chain filter -> WAVE MULTIPLIER -> P(2x) filter -> Alert
+DEX filter -> Rug filter -> On-chain filter (incl. coordinated buys) ->
+X SEARCH filter -> WAVE MULTIPLIER -> P(2x) filter -> Alert
 
 P(2x) rubric:
 - Base rate by MC tier
@@ -25,6 +27,7 @@ P(2x) rubric:
 - Momentum multiplier (1h price change)
 - KOL tweet bonus: if twitter contains "/status/" -> multiply final P by 1.5
 - Wave multiplier: HOT keyword = x1.6, COLD keyword = x0.3
+- X search boosts: big_account_mention = x1.3, has_buzz = x1.15
 - Cap at 45%, floor at 1%
 
 Rug estimation:
@@ -45,6 +48,7 @@ import httpx
 from memescanner.deployer_tracker import DeployerTracker
 from memescanner.onchain import OnchainAnalyzer, MAX_ONCHAIN_CHECKS_PER_CYCLE
 from memescanner.wave_detector import WaveDetector, NEUTRAL_MULTIPLIER
+from memescanner.x_search import XSearchClient
 
 logger = logging.getLogger(__name__)
 
@@ -326,7 +330,8 @@ def format_telegram_message(token: Dict[str, Any], dex_data: Dict[str, Any],
                             p2x: float, p5x: float, p10x: float,
                             rug_pct: float, age_minutes: float,
                             onchain_data: Optional[Dict[str, Any]] = None,
-                            wave_info: Optional[Dict[str, str]] = None) -> str:
+                            wave_info: Optional[Dict[str, str]] = None,
+                            x_search_data: Optional[Dict[str, Any]] = None) -> str:
     """
     Format the Telegram alert message in the exact required format.
 
@@ -340,6 +345,7 @@ def format_telegram_message(token: Dict[str, Any], dex_data: Dict[str, Any],
         age_minutes: Token age in minutes.
         onchain_data: Optional on-chain analysis result.
         wave_info: Optional wave detection info with 'keyword' and 'temperature'.
+        x_search_data: Optional X search result from XSearchClient.
 
     Returns:
         Formatted message string.
@@ -386,6 +392,29 @@ def format_telegram_message(token: Dict[str, Any], dex_data: Dict[str, Any],
             lines.append(f"\U0001f525 Wave: \"{keyword}\" (HOT)")
         elif temperature == "COLD":
             lines.append(f"\u2744\ufe0f Wave: \"{keyword}\" (COLD)")
+
+    # Add X search info
+    if x_search_data:
+        x_status = x_search_data.get("status", "X_DATA_NOT_FOUND_OR_NOT_INDEXED")
+        if x_status == "FOUND":
+            x_count = x_search_data.get("result_count", 0)
+            accounts = x_search_data.get("accounts", [])
+            big_account = x_search_data.get("big_account_mention", False)
+            has_buzz = x_search_data.get("has_buzz", False)
+
+            # Show first account that tweeted
+            if accounts:
+                lines.append(f"\U0001f4e3 @{accounts[0]} (tweeted)")
+
+            # Build X summary line
+            x_parts = [f"{x_count} mentions"]
+            if big_account:
+                x_parts.append("\u2b50 big account")
+            if has_buzz:
+                x_parts.append("buzz \u2705")
+            lines.append(f"\U0001f426 X: {' | '.join(x_parts)}")
+        else:
+            lines.append("\U0001f426 X: not indexed yet")
 
     lines.extend([
         "",
@@ -570,6 +599,7 @@ async def run_scan_cycle(alerted_mints: set) -> Dict[str, Any]:
         "passed_dex_filter": 0,
         "passed_rug_filter": 0,
         "passed_onchain_filter": 0,
+        "passed_x_search_filter": 0,
         "passed_p2x_filter": 0,
         "alerted": None,
         "filtered_reasons": [],
@@ -798,6 +828,14 @@ async def run_scan_cycle(alerted_mints: set) -> Dict[str, Any]:
                     )
                     continue
 
+                # Rejection: coordinated_risk == HIGH
+                coordinated_risk = onchain_data.get("coordinated_risk", "LOW")
+                if coordinated_risk == "HIGH":
+                    results["filtered_reasons"].append(
+                        f"  {token.get('symbol', '???')}: coordinated buys HIGH risk"
+                    )
+                    continue
+
                 # Adjust rug % based on safe_score
                 safe_score = onchain_data.get("safe_score", 50)
                 if safe_score > 70:
@@ -817,9 +855,44 @@ async def run_scan_cycle(alerted_mints: set) -> Dict[str, Any]:
             results["filtered_reasons"].append("No tokens passed on-chain filter")
             return results
 
+        # Step 6.5: X Search via Tavily (only for tokens passing all prior filters)
+        x_search_client = XSearchClient()
+        x_search_filtered = []
+
+        for token, age_min, dex_data, rug_pct, onchain_data in onchain_filtered:
+            symbol = token.get("symbol", "") or ""
+            name = token.get("name", "") or ""
+            mint = token.get("mint", "")
+
+            x_data = None
+            try:
+                x_data = await x_search_client.search_token(symbol, name, mint)
+            except Exception as e:
+                logger.warning("X search failed for %s: %s", symbol, str(e))
+
+            # Check for dual scam signal: scam_warning + coordinated_risk MEDIUM+
+            if x_data and x_data.get("scam_warning", False):
+                coordinated_risk = "LOW"
+                if onchain_data:
+                    coordinated_risk = onchain_data.get("coordinated_risk", "LOW")
+                if coordinated_risk in ("MEDIUM", "HIGH"):
+                    results["filtered_reasons"].append(
+                        f"  {symbol}: X scam warning + coordinated risk {coordinated_risk}"
+                    )
+                    continue
+
+            x_search_filtered.append((token, age_min, dex_data, rug_pct, onchain_data, x_data))
+
+        results["passed_x_search_filter"] = len(x_search_filtered)
+        print(f"  [6.5] X search filter: {len(x_search_filtered)}/{len(onchain_filtered)} passed")
+
+        if not x_search_filtered:
+            results["filtered_reasons"].append("No tokens passed X search filter")
+            return results
+
         # Step 7: Wave multiplier + P(2x) rubric scoring, filter >= 20%
         scored_tokens = []
-        for token, age_min, dex_data, rug_pct, onchain_data in onchain_filtered:
+        for token, age_min, dex_data, rug_pct, onchain_data, x_data in x_search_filtered:
             market_cap = dex_data.get("market_cap", 0)
             buy_sell_ratio = dex_data.get("buy_sell_ratio", 1.0)
             turnover = dex_data.get("volume_to_mcap_ratio", 0)
@@ -846,13 +919,24 @@ async def run_scan_cycle(alerted_mints: set) -> Dict[str, Any]:
                 keyword_label = wave_match["keyword"] if wave_match else "?"
                 print(f"  [7] Wave multiplier applied: \"{keyword_label}\" {temp_label} (\u00d7{wave_multiplier})")
 
+            # Apply X search boosts
+            if x_data and x_data.get("status") == "FOUND":
+                if x_data.get("big_account_mention", False):
+                    p2x *= 1.3
+                    print(f"  [7.5] X big account boost: x1.3 for {symbol}")
+                if x_data.get("has_buzz", False):
+                    p2x *= 1.15
+                    print(f"  [7.5] X buzz boost: x1.15 for {symbol}")
+                # Re-cap at 45%, floor at 1%
+                p2x = max(0.01, min(0.45, p2x))
+
             p5x = calculate_p5x(p2x)
             p10x = calculate_p10x(p2x)
 
             p2x_pct = p2x * 100
 
             if p2x_pct >= 20:
-                scored_tokens.append((token, age_min, dex_data, rug_pct, p2x, p5x, p10x, onchain_data, wave_match))
+                scored_tokens.append((token, age_min, dex_data, rug_pct, p2x, p5x, p10x, onchain_data, wave_match, x_data))
                 print(f"      \u2713 {token.get('symbol', '???')}: P(2x)={p2x_pct:.1f}%")
             else:
                 results["filtered_reasons"].append(
@@ -860,7 +944,7 @@ async def run_scan_cycle(alerted_mints: set) -> Dict[str, Any]:
                 )
 
         results["passed_p2x_filter"] = len(scored_tokens)
-        print(f"  [8] P(2x) filter (>= 20%): {len(scored_tokens)}/{len(onchain_filtered)} passed")
+        print(f"  [8] P(2x) filter (>= 20%): {len(scored_tokens)}/{len(x_search_filtered)} passed")
 
         if not scored_tokens:
             results["filtered_reasons"].append("No tokens with P(2x) >= 20%")
@@ -869,12 +953,12 @@ async def run_scan_cycle(alerted_mints: set) -> Dict[str, Any]:
         # Step 9: Send the TOP signal (highest P(2x))
         scored_tokens.sort(key=lambda x: x[4], reverse=True)  # Sort by P(2x) descending
         top = scored_tokens[0]
-        token, age_min, dex_data, rug_pct, p2x, p5x, p10x, onchain_data, wave_match = top
+        token, age_min, dex_data, rug_pct, p2x, p5x, p10x, onchain_data, wave_match, x_data = top
 
-        # Format message (includes on-chain line and wave info if available)
+        # Format message (includes on-chain line, wave info, and X search info if available)
         message = format_telegram_message(
             token, dex_data, p2x, p5x, p10x, rug_pct, age_min,
-            onchain_data=onchain_data, wave_info=wave_match,
+            onchain_data=onchain_data, wave_info=wave_match, x_search_data=x_data,
         )
 
         print(f"\n  \U0001f4e2 ALERTING: ${token.get('symbol', '???')} - P(2x)={p2x*100:.0f}%")

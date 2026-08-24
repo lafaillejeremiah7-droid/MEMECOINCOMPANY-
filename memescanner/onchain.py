@@ -189,11 +189,136 @@ class OnchainAnalyzer:
 
         return info
 
+    def detect_coordinated_buys(self, largest_accounts: list,
+                               total_supply: float) -> Dict[str, Any]:
+        """
+        Detect coordinated/bundled wallet patterns among top holders.
+
+        Checks for clusters of 3+ wallets holding amounts within 5% of each
+        other, which indicates a bundled launch (dev funded multiple wallets
+        to buy at launch = manipulation/scam).
+
+        Args:
+            largest_accounts: List of account dicts from getTokenLargestAccounts.
+            total_supply: Total token supply as float.
+
+        Returns:
+            Dict with has_bundled_pattern, cluster_count,
+            cluster_pct_of_supply, coordinated_risk.
+        """
+        result = {
+            "has_bundled_pattern": False,
+            "cluster_count": 0,
+            "cluster_pct_of_supply": 0.0,
+            "coordinated_risk": "LOW",
+        }
+
+        if not largest_accounts or total_supply <= 0:
+            return result
+
+        # Exclude holder #1 (usually the LP/pool address)
+        holders = largest_accounts[1:] if len(largest_accounts) > 1 else []
+
+        if len(holders) < 3:
+            return result
+
+        # Parse amounts (raw integer strings in lamports/smallest unit)
+        parsed_amounts = []
+        for account in holders:
+            amount_str = account.get("amount", "0")
+            try:
+                amount = int(amount_str)
+            except (ValueError, TypeError):
+                continue
+            if amount > 0:
+                parsed_amounts.append(amount)
+
+        if len(parsed_amounts) < 3:
+            return result
+
+        # Detect clusters: groups of 3+ wallets with amounts within 5% of each other
+        # Sort amounts for efficient clustering
+        sorted_amounts = sorted(parsed_amounts, reverse=True)
+
+        # Find the largest cluster
+        best_cluster = []
+
+        for i in range(len(sorted_amounts)):
+            cluster = [sorted_amounts[i]]
+            for j in range(i + 1, len(sorted_amounts)):
+                # Check if within 5% of the reference amount (first in cluster)
+                reference = sorted_amounts[i]
+                candidate = sorted_amounts[j]
+                if reference == 0:
+                    continue
+                diff_pct = abs(reference - candidate) / reference
+                if diff_pct <= 0.05:
+                    cluster.append(candidate)
+
+            if len(cluster) >= 3 and len(cluster) > len(best_cluster):
+                best_cluster = cluster
+
+        if len(best_cluster) >= 3:
+            result["has_bundled_pattern"] = True
+            result["cluster_count"] = len(best_cluster)
+
+            # Calculate cluster percentage of total supply
+            # Get total supply in raw units (same as amounts)
+            # Since amounts are raw integers (lamports), we need supply in same unit
+            # total_supply is already in token units (after decimals), but amounts
+            # are raw. We need the raw total supply from the first account's decimals.
+            # Use the sum of ALL top holders as proxy for calculating percentage
+            # relative to the LP holder (#1) + all others
+            total_raw = sum(parsed_amounts)
+            if largest_accounts:
+                lp_amount_str = largest_accounts[0].get("amount", "0")
+                try:
+                    lp_amount = int(lp_amount_str)
+                except (ValueError, TypeError):
+                    lp_amount = 0
+                total_raw += lp_amount
+
+            # Use total supply in raw units: total_supply * 10^decimals
+            # But we can approximate using the sum of all known accounts
+            # Better: compute from total_supply and decimals of any account
+            decimals = 0
+            for account in largest_accounts:
+                d = account.get("decimals", 0)
+                if d > 0:
+                    decimals = d
+                    break
+
+            raw_total_supply = int(total_supply * (10 ** decimals))
+
+            if raw_total_supply > 0:
+                cluster_sum = sum(best_cluster)
+                result["cluster_pct_of_supply"] = (cluster_sum / raw_total_supply) * 100
+            else:
+                # Fallback: use proportion of known holders
+                cluster_sum = sum(best_cluster)
+                all_amounts_sum = sum(parsed_amounts)
+                if largest_accounts:
+                    try:
+                        all_amounts_sum += int(largest_accounts[0].get("amount", "0"))
+                    except (ValueError, TypeError):
+                        pass
+                if all_amounts_sum > 0:
+                    result["cluster_pct_of_supply"] = (cluster_sum / all_amounts_sum) * 100
+
+            # Determine risk level
+            if len(best_cluster) >= 5 or result["cluster_pct_of_supply"] > 20:
+                result["coordinated_risk"] = "HIGH"
+            elif len(best_cluster) >= 3:
+                result["coordinated_risk"] = "MEDIUM"
+
+        return result
+
     def _calculate_safe_score(self, dev_holding_pct: float,
                               top10_concentration_pct: float,
                               mint_authority_revoked: Optional[bool],
                               freeze_authority_revoked: Optional[bool],
-                              lp_locked: bool) -> tuple:
+                              lp_locked: bool,
+                              coordinated_risk: str = "LOW") -> tuple:
         """
         Calculate safe score (0-100) and generate flags.
 
@@ -208,6 +333,8 @@ class OnchainAnalyzer:
         - top10_concentration < 20%: +10
         - top10_concentration > 50%: -10
         - lp_locked: +10
+        - coordinated_risk HIGH: -25
+        - coordinated_risk MEDIUM: -10
 
         Args:
             dev_holding_pct: Creator wallet holding percentage.
@@ -215,6 +342,7 @@ class OnchainAnalyzer:
             mint_authority_revoked: Whether mint authority is revoked.
             freeze_authority_revoked: Whether freeze authority is revoked.
             lp_locked: Whether LP tokens are locked/burned.
+            coordinated_risk: Coordinated buy risk level (LOW/MEDIUM/HIGH).
 
         Returns:
             Tuple of (safe_score, flags list).
@@ -263,6 +391,14 @@ class OnchainAnalyzer:
             score += 10
             flags.append("\u2705 LP locked/burned")
 
+        # Coordinated buys
+        if coordinated_risk == "HIGH":
+            score -= 25
+            flags.append("\ud83d\udea8 Coordinated buys detected (HIGH risk)")
+        elif coordinated_risk == "MEDIUM":
+            score -= 10
+            flags.append("\u26a0\ufe0f Coordinated buys detected (MEDIUM risk)")
+
         # Cap at 100, floor at 0
         score = max(0, min(100, score))
 
@@ -296,6 +432,10 @@ class OnchainAnalyzer:
             "lp_locked": False,
             "safe_score": 50,
             "flags": [],
+            "has_bundled_pattern": False,
+            "cluster_count": 0,
+            "cluster_pct_of_supply": 0.0,
+            "coordinated_risk": "LOW",
         }
 
         async with httpx.AsyncClient(timeout=self.timeout) as client:
@@ -343,6 +483,15 @@ class OnchainAnalyzer:
 
                 result["dev_holding_pct"] = (dev_holding / total_supply) * 100
 
+                # Step 5: Detect coordinated/bundled buys
+                coordinated = self.detect_coordinated_buys(
+                    largest_accounts, total_supply
+                )
+                result["has_bundled_pattern"] = coordinated["has_bundled_pattern"]
+                result["cluster_count"] = coordinated["cluster_count"]
+                result["cluster_pct_of_supply"] = coordinated["cluster_pct_of_supply"]
+                result["coordinated_risk"] = coordinated["coordinated_risk"]
+
         # Calculate safe score and flags
         safe_score, flags = self._calculate_safe_score(
             result["dev_holding_pct"],
@@ -350,6 +499,7 @@ class OnchainAnalyzer:
             result["mint_authority_revoked"],
             result["freeze_authority_revoked"],
             result["lp_locked"],
+            result["coordinated_risk"],
         )
         result["safe_score"] = safe_score
         result["flags"] = flags
