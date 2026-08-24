@@ -17,7 +17,7 @@ from memescanner.scanner import fetch_dex_data, send_telegram_message
 
 logger = logging.getLogger(__name__)
 
-MAX_OPEN_POSITIONS = 20
+MAX_OPEN_POSITIONS = 3
 DB_PATH = "memescanner.db"
 
 # Take profit at +100% (2x), stop loss at -50%
