@@ -32,6 +32,7 @@ from memescanner.pump_fun import PumpFunClient
 from memescanner.rug_detector import RugDetector
 from memescanner.scoring import ScoringEngine
 from memescanner.telegram_bot import TelegramBot
+from memescanner.trajectory import TrajectoryAnalyzer
 
 logger = logging.getLogger(__name__)
 
@@ -86,6 +87,7 @@ class MemeScanner:
             outcome_intervals=config.adaptation.outcome_check_intervals_hours,
         )
         self.rug_detector = RugDetector()
+        self.trajectory_analyzer = TrajectoryAnalyzer()
 
     async def run(self) -> None:
         """
@@ -198,7 +200,8 @@ class MemeScanner:
         Execute one scan cycle.
 
         Fetches tokens from Pump.fun, applies filters, scores survivors,
-        and sends alerts for high-scoring tokens.
+        takes snapshots for graduated tokens, and sends alerts for high-scoring
+        tokens. Suppresses alerts for DUMPING/DEAD trajectory phases.
         """
         # Fetch live and graduated tokens
         live_tokens = await pump_client.get_currently_live(limit=30)
@@ -219,6 +222,8 @@ class MemeScanner:
         ]
 
         if not new_tokens:
+            # Even if no new tokens, update snapshots for tracked graduated tokens
+            await self._update_tracked_snapshots(dex_client)
             return
 
         logger.info("Processing %d new tokens", len(new_tokens))
@@ -257,6 +262,28 @@ class MemeScanner:
                 )
                 continue
 
+            # Take a snapshot for graduated tokens
+            is_graduated = token.get("complete", False)
+            trajectory_data = None
+            if is_graduated:
+                await self._take_snapshot(mint, dex_data)
+                # Get existing snapshots for trajectory assessment
+                snapshots = await self.database.get_snapshots(mint)
+                if len(snapshots) >= 2:
+                    current_liquidity = dex_data.get("liquidity_usd", 0)
+                    graduation_ts = token.get("created_timestamp")
+                    if graduation_ts and graduation_ts > 1577836800000:
+                        # Convert milliseconds to seconds if needed
+                        if graduation_ts > 1e12:
+                            graduation_ts = int(graduation_ts / 1000)
+                    else:
+                        graduation_ts = None
+                    trajectory_data = self.trajectory_analyzer.assess_continuation(
+                        snapshots,
+                        graduation_ts=graduation_ts,
+                        current_liquidity=current_liquidity,
+                    )
+
             # Score the token
             score_result = self.scoring_engine.score_token(token, dex_data)
             total_score = score_result["total_score"]
@@ -289,10 +316,22 @@ class MemeScanner:
 
             # Check if score meets threshold for alert
             if total_score >= self.config.scanner.min_score:
-                # Calculate probability
+                # Suppress alert if trajectory phase is DUMPING or DEAD
+                if trajectory_data and trajectory_data.get("phase") in ("DUMPING", "DEAD"):
+                    logger.info(
+                        "TRAJECTORY SUPPRESSED %s: phase=%s, score=%.1f",
+                        token.get("symbol", "???"),
+                        trajectory_data["phase"],
+                        total_score,
+                    )
+                    continue
+
+                # Calculate probability with trajectory data
                 current_mc = dex_data.get("market_cap", 0)
                 prob_result = self.probability_calc.calculate(
-                    score_result, current_mc=current_mc
+                    score_result,
+                    current_mc=current_mc,
+                    trajectory_assessment=trajectory_data,
                 )
 
                 # Add rug warning if probability > 0.7
@@ -300,9 +339,19 @@ class MemeScanner:
                     prob_result["rug_warning"] = True
                     prob_result["rug_result"] = rug_result
 
-                # Send alert
+                # Mark HIGH PRIORITY if LAUNCHING phase and score > 50
+                is_high_priority = (
+                    trajectory_data is not None
+                    and trajectory_data.get("phase") == "LAUNCHING"
+                    and total_score > 50
+                )
+                if is_high_priority:
+                    prob_result["high_priority"] = True
+
+                # Send alert with trajectory data
                 success = await telegram.send_alert(
-                    token, dex_data, score_result, prob_result
+                    token, dex_data, score_result, prob_result,
+                    trajectory_data=trajectory_data,
                 )
 
                 if success:
@@ -316,13 +365,59 @@ class MemeScanner:
                         market_cap=current_mc,
                     )
 
+                priority_label = " [HIGH PRIORITY]" if is_high_priority else ""
                 logger.info(
-                    "ALERT: %s ($%s) - Score: %.1f, MC: $%,.0f",
+                    "ALERT%s: %s ($%s) - Score: %.1f, MC: $%,.0f",
+                    priority_label,
                     token.get("symbol", "???"),
                     mint[:8],
                     total_score,
                     current_mc,
                 )
+
+        # Update snapshots for previously tracked graduated tokens
+        await self._update_tracked_snapshots(dex_client)
+
+    async def _take_snapshot(
+        self, mint: str, dex_data: Dict[str, Any]
+    ) -> None:
+        """
+        Record a snapshot of token metrics for trajectory analysis.
+
+        Args:
+            mint: Token mint address.
+            dex_data: Current DEXScreener data for the token.
+        """
+        import time as _time
+
+        snapshot = {
+            "token_mint": mint,
+            "timestamp": int(_time.time()),
+            "market_cap": dex_data.get("market_cap", 0),
+            "liquidity": dex_data.get("liquidity_usd", 0),
+            "volume_1h": dex_data.get("volume_1h", 0),
+            "buys_1h": dex_data.get("buys_1h", 0),
+            "sells_1h": dex_data.get("sells_1h", 0),
+            "price": dex_data.get("price", 0),
+        }
+        await self.database.insert_snapshot(snapshot)
+
+    async def _update_tracked_snapshots(
+        self, dex_client: DexScreenerClient
+    ) -> None:
+        """
+        Update snapshots for all previously tracked graduated tokens.
+
+        Fetches fresh DEX data and records a new snapshot each cycle.
+        """
+        try:
+            tracked_mints = await self.database.get_tracked_graduated_mints()
+            for mint in tracked_mints[:10]:  # Limit to 10 per cycle to avoid rate limits
+                dex_data = await dex_client.get_token_data(mint)
+                if dex_data:
+                    await self._take_snapshot(mint, dex_data)
+        except Exception as e:
+            logger.debug("Snapshot update error: %s", str(e))
 
     async def _outcome_check_loop(self, dex_client: DexScreenerClient) -> None:
         """

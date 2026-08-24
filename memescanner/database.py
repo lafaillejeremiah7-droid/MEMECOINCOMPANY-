@@ -2,12 +2,14 @@
 Database module for the Memescanner bot.
 
 Provides async SQLite persistence using aiosqlite for storing token data,
-narrative temperatures, and weight history for the self-adaptation engine.
+narrative temperatures, weight history for the self-adaptation engine,
+and token snapshots for trajectory analysis.
 
 Tables:
     - tokens: Scanned token data, scores, and tracked outcomes
     - narratives: Keyword categories with temperature ratings
     - weight_history: Historical scoring weight adjustments
+    - token_snapshots: Time-series snapshots for trajectory analysis
 """
 
 import json
@@ -24,9 +26,10 @@ class Database:
     """
     Async SQLite database for token tracking and adaptation.
 
-    Manages three tables: tokens for scan results and outcomes,
-    narratives for keyword temperature tracking, and weight_history
-    for scoring weight evolution over time.
+    Manages four tables: tokens for scan results and outcomes,
+    narratives for keyword temperature tracking, weight_history
+    for scoring weight evolution over time, and token_snapshots
+    for trajectory analysis time-series data.
 
     Usage:
         db = Database("memescanner.db")
@@ -92,12 +95,30 @@ class Database:
                 created_at TEXT DEFAULT CURRENT_TIMESTAMP
             );
 
+            CREATE TABLE IF NOT EXISTS token_snapshots (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                token_mint TEXT NOT NULL,
+                timestamp INTEGER NOT NULL,
+                market_cap REAL,
+                liquidity REAL,
+                volume_1h REAL,
+                buys_1h INTEGER,
+                sells_1h INTEGER,
+                price REAL
+            );
+
             CREATE INDEX IF NOT EXISTS idx_tokens_alerted
                 ON tokens(alerted);
             CREATE INDEX IF NOT EXISTS idx_tokens_first_seen
                 ON tokens(first_seen);
             CREATE INDEX IF NOT EXISTS idx_narratives_temperature
                 ON narratives(temperature);
+            CREATE INDEX IF NOT EXISTS idx_snapshots_mint
+                ON token_snapshots(token_mint);
+            CREATE INDEX IF NOT EXISTS idx_snapshots_timestamp
+                ON token_snapshots(timestamp);
+            CREATE INDEX IF NOT EXISTS idx_snapshots_mint_ts
+                ON token_snapshots(token_mint, timestamp);
             """
         )
         await self._db.commit()
@@ -355,3 +376,99 @@ class Database:
             if row:
                 return json.loads(row["weights_json"])
         return None
+
+    # --- Token Snapshot Operations ---
+
+    async def insert_snapshot(self, snapshot: Dict[str, Any]) -> None:
+        """
+        Insert a token snapshot for trajectory analysis.
+
+        Args:
+            snapshot: Dictionary with token_mint, timestamp, market_cap,
+                     liquidity, volume_1h, buys_1h, sells_1h, price.
+        """
+        assert self._db is not None
+
+        await self._db.execute(
+            """
+            INSERT INTO token_snapshots
+                (token_mint, timestamp, market_cap, liquidity,
+                 volume_1h, buys_1h, sells_1h, price)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                snapshot["token_mint"],
+                snapshot["timestamp"],
+                snapshot.get("market_cap", 0),
+                snapshot.get("liquidity", 0),
+                snapshot.get("volume_1h", 0),
+                snapshot.get("buys_1h", 0),
+                snapshot.get("sells_1h", 0),
+                snapshot.get("price", 0),
+            ),
+        )
+        await self._db.commit()
+
+    async def get_snapshots(
+        self, token_mint: str, limit: int = 100
+    ) -> List[Dict[str, Any]]:
+        """
+        Get snapshots for a token, ordered by timestamp ascending.
+
+        Args:
+            token_mint: The token's mint address.
+            limit: Maximum number of snapshots to return.
+
+        Returns:
+            List of snapshot dictionaries sorted by timestamp.
+        """
+        assert self._db is not None
+
+        async with self._db.execute(
+            """
+            SELECT token_mint, timestamp, market_cap, liquidity,
+                   volume_1h, buys_1h, sells_1h, price
+            FROM token_snapshots
+            WHERE token_mint = ?
+            ORDER BY timestamp ASC
+            LIMIT ?
+            """,
+            (token_mint, limit),
+        ) as cursor:
+            rows = await cursor.fetchall()
+            return [dict(row) for row in rows]
+
+    async def get_tracked_graduated_mints(self) -> List[str]:
+        """
+        Get mint addresses of all tokens that have snapshots.
+
+        Returns:
+            List of unique mint addresses with existing snapshots.
+        """
+        assert self._db is not None
+
+        async with self._db.execute(
+            "SELECT DISTINCT token_mint FROM token_snapshots"
+        ) as cursor:
+            rows = await cursor.fetchall()
+            return [row["token_mint"] for row in rows]
+
+    async def cleanup_old_snapshots(self, max_age_seconds: int = 86400) -> int:
+        """
+        Remove snapshots older than max_age_seconds.
+
+        Args:
+            max_age_seconds: Maximum age of snapshots to keep (default: 24h).
+
+        Returns:
+            Number of deleted rows.
+        """
+        assert self._db is not None
+        import time
+
+        cutoff = int(time.time()) - max_age_seconds
+        cursor = await self._db.execute(
+            "DELETE FROM token_snapshots WHERE timestamp < ?", (cutoff,)
+        )
+        await self._db.commit()
+        return cursor.rowcount

@@ -5,6 +5,9 @@ Calculates the probability of a token reaching specific market cap targets
 based on its current features and score. Uses base rates from research data
 adjusted by factor scores.
 
+For tokens already at high MC (>200k), uses trajectory data to compute
+continuation probability with relative targets (2x, 5x, 10x from current).
+
 Base rates from research:
     - ~5% graduate to 100k MC
     - ~2% to 300k MC
@@ -78,6 +81,7 @@ class ProbabilityCalculator:
         self,
         score_result: Dict[str, Any],
         current_mc: float = 50000,
+        trajectory_assessment: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """
         Calculate probabilities and expected value for a token.
@@ -87,12 +91,19 @@ class ProbabilityCalculator:
         for targets above the current MC. EV is calculated based on
         realistic upside from the current price.
 
+        For tokens above 200k MC with trajectory data, uses trajectory-based
+        continuation probability instead of static base rates. Shows relative
+        targets: P(2x from here), P(5x from here), P(10x from here).
+
         For tokens above all standard targets (>$5M), extended targets
         (10M, 50M, 100M, 300M) are used to compute meaningful EV.
 
         Args:
             score_result: Output from ScoringEngine.score_token().
             current_mc: Current market cap in USD for EV calculation.
+            trajectory_assessment: Output from TrajectoryAnalyzer.assess_continuation().
+                If provided and current_mc > 200k, trajectory data is used for
+                continuation probability.
 
         Returns:
             Dictionary with probabilities for each target, EV calculation,
@@ -169,6 +180,20 @@ class ProbabilityCalculator:
         if extended_probabilities:
             result["extended_probabilities"] = extended_probabilities
             result["is_mature"] = ev_result.get("is_mature", False)
+
+        # For tokens above 200k MC with trajectory data, add trajectory-based
+        # continuation probabilities (relative targets)
+        if current_mc > 200_000 and trajectory_assessment is not None:
+            relative_targets = trajectory_assessment.get("relative_targets", {})
+            result["trajectory_probabilities"] = {
+                "p_2x": relative_targets.get("2x", 0.0),
+                "p_5x": relative_targets.get("5x", 0.0),
+                "p_10x": relative_targets.get("10x", 0.0),
+            }
+            result["trajectory_phase"] = trajectory_assessment.get("phase", "UNKNOWN")
+            result["trajectory_recommendation"] = trajectory_assessment.get(
+                "recommendation", "AVOID"
+            )
 
         return result
 

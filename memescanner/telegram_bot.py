@@ -123,6 +123,7 @@ class TelegramBot:
         dex_data: Dict[str, Any],
         score_result: Dict[str, Any],
         probability_result: Dict[str, Any],
+        trajectory_data: Optional[Dict[str, Any]] = None,
     ) -> bool:
         """
         Send a formatted token alert.
@@ -132,12 +133,13 @@ class TelegramBot:
             dex_data: DEXScreener trading data.
             score_result: Output from ScoringEngine.
             probability_result: Output from ProbabilityCalculator.
+            trajectory_data: Output from TrajectoryAnalyzer.assess_continuation().
 
         Returns:
             True if alert was sent successfully.
         """
         message = self._format_alert(
-            token_data, dex_data, score_result, probability_result
+            token_data, dex_data, score_result, probability_result, trajectory_data
         )
         success = await self.send_message(message, parse_mode="HTML")
 
@@ -161,6 +163,7 @@ class TelegramBot:
         dex_data: Dict[str, Any],
         score_result: Dict[str, Any],
         probability_result: Dict[str, Any],
+        trajectory_data: Optional[Dict[str, Any]] = None,
     ) -> str:
         """
         Format a token alert message with the exact specified structure.
@@ -170,6 +173,7 @@ class TelegramBot:
             dex_data: DEXScreener trading data.
             score_result: Scoring engine output.
             probability_result: Probability calculator output.
+            trajectory_data: Trajectory assessment output (optional).
 
         Returns:
             Formatted HTML message string.
@@ -262,6 +266,51 @@ class TelegramBot:
         lines.append(f"\u26a0\ufe0f Risk: {risk_level}")
         for factor in risk_factors:
             lines.append(f"\u2022 {factor}")
+
+        # Trajectory section (if available)
+        if trajectory_data and trajectory_data.get("phase") != "UNKNOWN":
+            lines.append("")
+            phase = trajectory_data.get("phase", "UNKNOWN")
+            velocity = trajectory_data.get("velocity", 0)
+            acceleration = trajectory_data.get("acceleration", 0)
+            vol_trend = trajectory_data.get("volume_trend", "stable")
+            time_grad = trajectory_data.get("time_since_graduation_min", 0)
+            relative_targets = trajectory_data.get("relative_targets", {})
+
+            # Phase with velocity
+            vel_sign = "+" if velocity >= 0 else ""
+            lines.append(
+                f"\U0001f4c8 Trajectory: {phase} "
+                f"(velocity: {vel_sign}${velocity:,.0f}/min)"
+            )
+
+            # Acceleration direction
+            if acceleration > 0:
+                accel_desc = "POSITIVE (speeding up)"
+            elif acceleration < 0:
+                accel_desc = "NEGATIVE (slowing down)"
+            else:
+                accel_desc = "FLAT"
+            lines.append(f"\u26a1 Acceleration: {accel_desc}")
+
+            # Relative probability targets
+            p_2x = relative_targets.get("2x", 0)
+            p_5x = relative_targets.get("5x", 0)
+            lines.append(f"\U0001f3af P(2\u00d7 from here): {p_2x:.0f}%")
+            lines.append(f"\U0001f3af P(5\u00d7 from here): {p_5x:.0f}%")
+
+            # Time since graduation
+            lines.append(f"\u23f1 Time since graduation: {time_grad:.0f} min")
+
+            # Volume trend
+            trend_arrows = {
+                "increasing": "\u2191 increasing",
+                "decreasing": "\u2193 decreasing",
+                "stable": "\u2194 stable",
+            }
+            lines.append(
+                f"\U0001f4ca Volume trend: {trend_arrows.get(vol_trend, vol_trend)}"
+            )
 
         lines.append("")
         lines.append(f"\U0001f517 https://dexscreener.com/solana/{mint}")
