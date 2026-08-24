@@ -18,8 +18,26 @@ DB_PATH = "memescanner.db"
 
 
 def get_db():
-    """Get a read-only SQLite connection."""
-    conn = sqlite3.connect(f"file:{DB_PATH}?mode=ro", uri=True)
+    """Get a SQLite connection. Creates DB if it doesn't exist."""
+    import os
+    if not os.path.exists(DB_PATH):
+        # Create empty DB with required tables
+        conn = sqlite3.connect(DB_PATH)
+        conn.execute("""CREATE TABLE IF NOT EXISTS paper_positions (
+            id INTEGER PRIMARY KEY, mint TEXT, symbol TEXT, entry_price REAL,
+            entry_mc REAL, amount_usd REAL, tokens_held REAL, entry_time REAL,
+            status TEXT, exit_price REAL, exit_time REAL, pnl_usd REAL,
+            pnl_pct REAL, exit_reason TEXT, half_sold INTEGER DEFAULT 0,
+            breakeven_stop INTEGER DEFAULT 0)""")
+        conn.execute("""CREATE TABLE IF NOT EXISTS paper_balance (
+            id INTEGER PRIMARY KEY CHECK (id = 1), balance REAL,
+            starting_balance REAL, trade_size REAL)""")
+        conn.execute("INSERT OR IGNORE INTO paper_balance (id, balance, starting_balance, trade_size) VALUES (1, 1000, 1000, 50)")
+        conn.execute("""CREATE TABLE IF NOT EXISTS wave_keywords (
+            keyword TEXT PRIMARY KEY, appearances INTEGER, last_seen REAL, avg_mc REAL)""")
+        conn.commit()
+        conn.close()
+    conn = sqlite3.connect(DB_PATH, timeout=5)
     conn.row_factory = sqlite3.Row
     return conn
 
