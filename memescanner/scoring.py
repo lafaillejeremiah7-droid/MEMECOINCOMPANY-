@@ -152,9 +152,20 @@ class ScoringEngine:
         total_score = sum(c["weighted_score"] for c in components.values())
         total_score = min(100.0, max(0.0, total_score))
 
+        # Build a flat breakdown dict with human-readable keys for display
+        breakdown: Dict[str, float] = {
+            "buy_sell_ratio": components["buy_sell_ratio"]["weighted_score"],
+            "liquidity": components["liquidity"]["weighted_score"],
+            "volume_turnover": components["volume_turnover"]["weighted_score"],
+            "engagement_velocity": components["engagement_velocity"]["weighted_score"],
+            "narrative": components["narrative"]["weighted_score"],
+            "momentum": components["momentum"]["weighted_score"],
+        }
+
         return {
             "total_score": round(total_score, 1),
             "components": components,
+            "breakdown": breakdown,
             "age_hours": age_hours,
             "replies_per_hour": replies_per_hour,
         }

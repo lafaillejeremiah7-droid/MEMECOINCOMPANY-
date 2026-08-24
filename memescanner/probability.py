@@ -68,6 +68,11 @@ class ProbabilityCalculator:
         """
         Calculate probabilities and expected value for a token.
 
+        If the token's current MC already exceeds a target, P(reaching
+        that target) = 1.0 (already there). Probability is only estimated
+        for targets above the current MC. EV is calculated based on
+        realistic upside from the current price.
+
         Args:
             score_result: Output from ScoringEngine.score_token().
             current_mc: Current market cap in USD for EV calculation.
@@ -82,12 +87,25 @@ class ProbabilityCalculator:
         # A score of 100 gives 3x base rate, score of 50 gives 1x, score of 0 gives 0.2x
         score_multiplier = self._get_score_multiplier(total_score)
 
+        # Map target labels to numeric MC values
+        target_mc_values: Dict[str, float] = {
+            "100k": 100_000,
+            "300k": 300_000,
+            "1M": 1_000_000,
+            "5M": 5_000_000,
+        }
+
         probabilities: Dict[str, float] = {}
         for target, base_rate in self.base_rates.items():
-            adjusted_prob = min(1.0, base_rate * score_multiplier)
-            probabilities[target] = round(adjusted_prob * 100, 1)  # As percentage
+            target_value = target_mc_values.get(target, 0)
+            if current_mc >= target_value:
+                # Already above this target - probability is 100%
+                probabilities[target] = 100.0
+            else:
+                adjusted_prob = min(1.0, base_rate * score_multiplier)
+                probabilities[target] = round(adjusted_prob * 100, 1)  # As percentage
 
-        # Calculate EV for the best target
+        # Calculate EV based on realistic upside from current MC
         ev_result = self._calculate_ev(probabilities, current_mc)
 
         # Risk level assessment
@@ -143,9 +161,9 @@ class ProbabilityCalculator:
         EV = P(Nx) * (N-1) * R - P(loss) * 1 * R
         Where R = amount risked, N = multiple achieved.
 
-        Uses the 100k target as the primary EV calculation:
-        - Probability of reaching target gives the upside
-        - Probability of loss (1 - P(100k)) gives the downside
+        Only considers targets that are ABOVE the current MC (realistic
+        upside). If a target is already reached, it contributes nothing
+        to EV since there is no further upside from it.
 
         Args:
             probabilities: Dictionary of target -> probability percentage.
@@ -156,32 +174,59 @@ class ProbabilityCalculator:
         """
         risk_amount = 100.0  # $100 risked
 
-        # Calculate multiple to 100k target
-        if current_mc > 0:
-            multiple_100k = 100_000 / current_mc
-        else:
-            multiple_100k = 2.0
+        # Target MC values
+        target_mc_values = {
+            "100k": 100_000,
+            "300k": 300_000,
+            "1M": 1_000_000,
+            "5M": 5_000_000,
+        }
 
-        multiple_300k = 300_000 / max(current_mc, 1)
-        multiple_1m = 1_000_000 / max(current_mc, 1)
+        # Only calculate EV for targets ABOVE the current MC
+        # (targets already reached have no upside)
+        ev_contributions = []
+        first_unreached_target = None
 
-        # Use weighted EV across multiple targets
-        p_100k = probabilities.get("100k", 0) / 100
-        p_300k = probabilities.get("300k", 0) / 100
-        p_1M = probabilities.get("1M", 0) / 100
+        for target_label, target_mc in target_mc_values.items():
+            if current_mc >= target_mc:
+                # Already above this target, no upside from it
+                continue
 
-        # Expected gains from each target
-        gain_100k = p_100k * (multiple_100k - 1) * risk_amount
-        gain_300k = p_300k * (multiple_300k - 1) * risk_amount
-        gain_1m = p_1M * (multiple_1m - 1) * risk_amount
+            # This target is above current MC - calculate upside
+            multiple = target_mc / max(current_mc, 1)
+            p_target = probabilities.get(target_label, 0) / 100
 
-        # Use the best attainable target for EV
-        # Primary EV based on 100k target (most realistic)
-        p_loss = 1.0 - p_100k
-        ev_primary = gain_100k - (p_loss * risk_amount)
+            # Gain from reaching this target
+            gain = p_target * (multiple - 1) * risk_amount
+            ev_contributions.append(gain)
 
-        # Bonus from higher targets
-        ev_total = ev_primary + (gain_300k * 0.3) + (gain_1m * 0.1)
+            if first_unreached_target is None:
+                first_unreached_target = target_label
+
+        if not ev_contributions:
+            # All targets already reached - minimal further upside expected
+            # Use a small positive EV since the token is already performing
+            ev_total = 0.0
+            ev_positive = False
+            description = "$0.00 per $100 risked (all targets reached)"
+            return {
+                "ev_per_100": 0.0,
+                "ev_positive": False,
+                "description": description,
+            }
+
+        # Primary EV: use the first unreached target for loss calculation
+        p_first = probabilities.get(first_unreached_target, 0) / 100
+        p_loss = 1.0 - p_first
+        loss_component = p_loss * risk_amount
+
+        # Sum gain contributions with weighting for higher targets
+        # Primary target gets full weight, secondary gets 0.3, tertiary gets 0.1
+        weights = [1.0, 0.3, 0.1, 0.05]
+        ev_total = -loss_component
+        for i, gain in enumerate(ev_contributions):
+            weight = weights[i] if i < len(weights) else 0.05
+            ev_total += gain * weight
 
         ev_positive = ev_total > 0
 

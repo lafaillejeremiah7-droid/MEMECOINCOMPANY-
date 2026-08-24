@@ -102,6 +102,7 @@ class NarrativeEngine:
             return {
                 "matched_keywords": [],
                 "best_temperature": "none",
+                "temperature": "none",
                 "category": "none",
                 "score": 0,
                 "description": "no narrative match",
@@ -127,6 +128,7 @@ class NarrativeEngine:
         return {
             "matched_keywords": matched_keywords,
             "best_temperature": best_temp,
+            "temperature": best_temp,
             "category": best_match[1],
             "score": score,
             "description": desc,

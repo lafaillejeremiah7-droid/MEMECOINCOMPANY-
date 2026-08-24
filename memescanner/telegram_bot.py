@@ -209,6 +209,11 @@ class TelegramBot:
         # Narrative
         narrative_comp = components.get("narrative", {})
         narrative_desc = narrative_comp.get("raw_value", "none")
+        narrative_temp = narrative_comp.get("temperature", "none")
+        # Include temperature in the narrative line if not already in description
+        if narrative_temp in ("hot", "neutral", "cold") and narrative_temp not in narrative_desc.lower():
+            temp_labels = {"hot": "HOT \U0001f525", "neutral": "NEUTRAL", "cold": "COLD \U0001f9ca"}
+            narrative_desc = f"{narrative_desc} [{temp_labels.get(narrative_temp, narrative_temp)}]"
 
         # Momentum
         momentum_comp = components.get("momentum", {})

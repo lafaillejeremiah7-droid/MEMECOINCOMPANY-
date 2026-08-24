@@ -202,10 +202,18 @@ class MemeScanner:
         live_tokens = await pump_client.get_currently_live(limit=30)
         graduated_tokens = await pump_client.get_recently_graduated(limit=20)
 
-        all_tokens = live_tokens + graduated_tokens
+        # Deduplicate by mint address (tokens can appear in both lists)
+        seen_in_cycle: Set[str] = set()
+        all_tokens = []
+        for t in live_tokens + graduated_tokens:
+            mint = t.get("mint")
+            if mint and mint not in seen_in_cycle:
+                seen_in_cycle.add(mint)
+                all_tokens.append(t)
+
         new_tokens = [
             t for t in all_tokens
-            if t.get("mint") and t["mint"] not in self._seen_mints
+            if t["mint"] not in self._seen_mints
         ]
 
         if not new_tokens:
