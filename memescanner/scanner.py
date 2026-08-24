@@ -35,6 +35,8 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import httpx
 
+from memescanner.onchain import OnchainAnalyzer, MAX_ONCHAIN_CHECKS_PER_CYCLE
+
 logger = logging.getLogger(__name__)
 
 PUMP_FUN_URL = "https://frontend-api-v3.pump.fun"
@@ -245,9 +247,50 @@ def format_market_cap(mc: float) -> str:
         return f"${mc:.0f}"
 
 
+def format_onchain_line(onchain_data: Optional[Dict[str, Any]]) -> Optional[str]:
+    """
+    Format the on-chain verification line for Telegram message.
+
+    Args:
+        onchain_data: On-chain analysis result from OnchainAnalyzer, or None.
+
+    Returns:
+        Formatted string like '🔒 Dev: X.X% | Mint: ✅ revoked | Freeze: ✅ revoked',
+        or None if no on-chain data available.
+    """
+    if onchain_data is None:
+        return None
+
+    dev_pct = onchain_data.get("dev_holding_pct", 0.0)
+    mint_revoked = onchain_data.get("mint_authority_revoked")
+    freeze_revoked = onchain_data.get("freeze_authority_revoked")
+
+    # Dev holding
+    dev_str = f"Dev: {dev_pct:.1f}%"
+
+    # Mint authority
+    if mint_revoked is True:
+        mint_str = "Mint: \u2705 revoked"
+    elif mint_revoked is False:
+        mint_str = "Mint: \u274c active"
+    else:
+        mint_str = "Mint: \u2753 unknown"
+
+    # Freeze authority
+    if freeze_revoked is True:
+        freeze_str = "Freeze: \u2705 revoked"
+    elif freeze_revoked is False:
+        freeze_str = "Freeze: \u274c active"
+    else:
+        freeze_str = "Freeze: \u2753 unknown"
+
+    return f"\U0001f512 {dev_str} | {mint_str} | {freeze_str}"
+
+
 def format_telegram_message(token: Dict[str, Any], dex_data: Dict[str, Any],
                             p2x: float, p5x: float, p10x: float,
-                            rug_pct: float, age_minutes: float) -> str:
+                            rug_pct: float, age_minutes: float,
+                            onchain_data: Optional[Dict[str, Any]] = None) -> str:
     """
     Format the Telegram alert message in the exact required format.
 
@@ -259,6 +302,7 @@ def format_telegram_message(token: Dict[str, Any], dex_data: Dict[str, Any],
         p10x: P(10x) probability (0.0-1.0 scale).
         rug_pct: Rug percentage (0-50).
         age_minutes: Token age in minutes.
+        onchain_data: Optional on-chain analysis result.
 
     Returns:
         Formatted message string.
@@ -290,11 +334,19 @@ def format_telegram_message(token: Dict[str, Any], dex_data: Dict[str, Any],
         f"\U0001f3b2 P(10\u00d7): {p10x * 100:.0f}%",
         "",
         f"\u26a0\ufe0f Rug: {rug_pct:.0f}%",
+    ]
+
+    # Add on-chain line between rug % and X account line
+    onchain_line = format_onchain_line(onchain_data)
+    if onchain_line:
+        lines.append(onchain_line)
+
+    lines.extend([
         "",
         f"\U0001f4e3 {twitter_handle}",
         "",
         f"\U0001f517 pump.fun/coin/{mint}",
-    ]
+    ])
 
     return "\n".join(lines)
 
@@ -595,9 +647,80 @@ async def run_scan_cycle(alerted_mints: set) -> Dict[str, Any]:
         results["filtered_reasons"].append("No tokens passed rug filter")
         return results
 
-    # Step 6: Score with P(2x) rubric and filter >= 20%
-    scored_tokens = []
+    # Step 6: FILTER 5 - On-chain verification via Helius RPC
+    # Only run for tokens that passed ALL previous filters, max 5 per cycle
+    onchain_filtered = []
+    onchain_analyzer = OnchainAnalyzer()
+    onchain_checks_done = 0
+
     for token, age_min, dex_data, rug_pct in rug_filtered:
+        mint = token.get("mint", "")
+        creator = token.get("creator", "")
+
+        # Rate limit: max 5 on-chain checks per scan cycle
+        if onchain_checks_done >= MAX_ONCHAIN_CHECKS_PER_CYCLE:
+            # Skip on-chain but still pass through (without on-chain data)
+            onchain_filtered.append((token, age_min, dex_data, rug_pct, None))
+            results["filtered_reasons"].append(
+                f"  {token.get('symbol', '???')}: on-chain check skipped (rate limit)"
+            )
+            continue
+
+        # Perform on-chain check
+        onchain_data = None
+        try:
+            if mint and creator:
+                onchain_data = await onchain_analyzer.check_token(mint, creator)
+                onchain_checks_done += 1
+            elif mint:
+                # No creator available, still check mint/freeze authority
+                onchain_data = await onchain_analyzer.check_token(mint, "")
+                onchain_checks_done += 1
+        except Exception as e:
+            logger.warning("On-chain check failed for %s: %s", token.get('symbol', '???'), str(e))
+            # On error, skip on-chain check but still allow token through
+            onchain_filtered.append((token, age_min, dex_data, rug_pct, None))
+            continue
+
+        if onchain_data:
+            # Rejection: dev_holding > 30%
+            dev_pct = onchain_data.get("dev_holding_pct", 0.0)
+            if dev_pct > 30:
+                results["filtered_reasons"].append(
+                    f"  {token.get('symbol', '???')}: dev holding too high ({dev_pct:.1f}%)"
+                )
+                continue
+
+            # Rejection: mint_authority NOT revoked
+            mint_revoked = onchain_data.get("mint_authority_revoked")
+            if mint_revoked is False:
+                results["filtered_reasons"].append(
+                    f"  {token.get('symbol', '???')}: mint authority not revoked"
+                )
+                continue
+
+            # Adjust rug % based on safe_score
+            safe_score = onchain_data.get("safe_score", 50)
+            if safe_score > 70:
+                rug_pct = max(0.0, rug_pct - 10.0)
+            elif safe_score < 30:
+                rug_pct = min(50.0, rug_pct + 15.0)
+
+            onchain_filtered.append((token, age_min, dex_data, rug_pct, onchain_data))
+        else:
+            # No on-chain data available, pass through without it
+            onchain_filtered.append((token, age_min, dex_data, rug_pct, None))
+
+    results["passed_onchain_filter"] = len(onchain_filtered)
+    print(f"  [6] On-chain filter: {len(onchain_filtered)}/{len(rug_filtered)} passed ({onchain_checks_done} checks)")
+
+    if not onchain_filtered:
+        results["filtered_reasons"].append("No tokens passed on-chain filter")
+        return results
+
+    # Step 7: Score with P(2x) rubric and filter >= 20%
+    scored_tokens = []
+    for token, age_min, dex_data, rug_pct, onchain_data in onchain_filtered:
         market_cap = dex_data.get("market_cap", 0)
         buy_sell_ratio = dex_data.get("buy_sell_ratio", 1.0)
         turnover = dex_data.get("volume_to_mcap_ratio", 0)
@@ -611,7 +734,7 @@ async def run_scan_cycle(alerted_mints: set) -> Dict[str, Any]:
         p2x_pct = p2x * 100
 
         if p2x_pct >= 20:
-            scored_tokens.append((token, age_min, dex_data, rug_pct, p2x, p5x, p10x))
+            scored_tokens.append((token, age_min, dex_data, rug_pct, p2x, p5x, p10x, onchain_data))
             print(f"      \u2713 {token.get('symbol', '???')}: P(2x)={p2x_pct:.1f}%")
         else:
             results["filtered_reasons"].append(
@@ -619,19 +742,19 @@ async def run_scan_cycle(alerted_mints: set) -> Dict[str, Any]:
             )
 
     results["passed_p2x_filter"] = len(scored_tokens)
-    print(f"  [6] P(2x) filter (>= 20%): {len(scored_tokens)}/{len(rug_filtered)} passed")
+    print(f"  [7] P(2x) filter (>= 20%): {len(scored_tokens)}/{len(onchain_filtered)} passed")
 
     if not scored_tokens:
         results["filtered_reasons"].append("No tokens with P(2x) >= 20%")
         return results
 
-    # Step 7: Send the TOP signal (highest P(2x))
+    # Step 8: Send the TOP signal (highest P(2x))
     scored_tokens.sort(key=lambda x: x[4], reverse=True)  # Sort by P(2x) descending
     top = scored_tokens[0]
-    token, age_min, dex_data, rug_pct, p2x, p5x, p10x = top
+    token, age_min, dex_data, rug_pct, p2x, p5x, p10x, onchain_data = top
 
-    # Format message
-    message = format_telegram_message(token, dex_data, p2x, p5x, p10x, rug_pct, age_min)
+    # Format message (includes on-chain line if data available)
+    message = format_telegram_message(token, dex_data, p2x, p5x, p10x, rug_pct, age_min, onchain_data)
 
     print(f"\n  \U0001f4e2 ALERTING: ${token.get('symbol', '???')} - P(2x)={p2x*100:.0f}%")
     print(f"  Message:\n{message}\n")
