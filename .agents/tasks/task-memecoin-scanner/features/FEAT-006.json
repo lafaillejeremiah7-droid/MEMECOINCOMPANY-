@@ -2,7 +2,7 @@
   "id": "FEAT-006",
   "type": "feat",
   "description": "Add narrative wave detection + serial deployer filter (+29pp and -50pp edges from backtest research). Creates DeployerTracker and WaveDetector modules with SQLite persistence, integrates into scanner.py pipeline.",
-  "status": "in_progress",
+  "status": "completed",
   "steps": [
     "Create memescanner/deployer_tracker.py with DeployerTracker class using aiosqlite",
     "Create memescanner/wave_detector.py with WaveDetector class using aiosqlite",
@@ -35,5 +35,5 @@
     "python -c 'from memescanner.wave_detector import WaveDetector; print(\"OK\")'"
   ],
   "blocked_reason": null,
-  "findings": null
+  "findings": "All 239 tests pass (192 existing + 47 new). DeployerTracker uses aiosqlite with shared memescanner.db, pre-seeds 4 known serial deployers, normalizes account names to lowercase. WaveDetector maintains in-memory cache refreshed from DB, initial HOT/COLD keywords always active, dynamic keywords decay after 24h. Scanner pipeline updated: serial deployer filter before DEX (saves API calls), wave multiplier after on-chain and before P(2x) cap. Telegram message shows fire/snowflake emoji wave line when keyword matched. HOT takes priority over COLD when both match."
 }
