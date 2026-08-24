@@ -2,7 +2,7 @@
   "id": "FEAT-009",
   "type": "feat",
   "description": "Add celebrity/viral scanner for non-Pump.fun launches - scans DEXScreener token-profiles and token-boosts endpoints to catch celebrity token launches like $TRUMP across all Solana platforms.",
-  "status": "in_progress",
+  "status": "completed",
   "steps": [
     "Create memescanner/celebrity_scanner.py with CelebrityScanner class",
     "Integrate celebrity scanner into memescanner/__main__.py as a separate 30s scan loop",
