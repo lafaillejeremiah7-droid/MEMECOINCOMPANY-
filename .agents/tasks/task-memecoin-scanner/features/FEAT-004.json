@@ -2,7 +2,7 @@
   "id": "FEAT-004",
   "type": "feat",
   "description": "Trajectory analysis module - track graduated tokens over time, calculate velocity/acceleration, determine trajectory phase, compute continuation probability, and integrate into alerts and main loop.",
-  "status": "in_progress",
+  "status": "completed",
   "steps": [
     "Create memescanner/trajectory.py with TrajectoryAnalyzer class implementing velocity, acceleration, phase detection, and continuation probability",
     "Update database.py to add token_snapshots table with all required fields",
@@ -30,5 +30,5 @@
     "python -c 'from memescanner.database import Database; print(\"OK\")'"
   ],
   "blocked_reason": null,
-  "findings": null
+  "findings": "All 143 tests pass (34 new trajectory tests). Trajectory module calculates velocity/acceleration from snapshot pairs. Phase detection uses growth rate thresholds (5%/min=LAUNCHING, 1%/min=PUMPING) with acceleration direction. Continuation probability formula multiplies base (0.6/0.35/0.15) by volume, buy_sell, liquidity, age, distance, and narrative factors. Relative targets (2x/5x/10x) scaled from continuation_prob with phase bonuses. Main loop takes snapshots each cycle and suppresses DUMPING/DEAD alerts regardless of score. Database token_snapshots table has indexes on mint and timestamp for efficient queries."
 }
