@@ -477,6 +477,193 @@ class TestRPCCall:
         assert result is None
 
 
+class TestExtractFundingSource:
+    """Test _extract_funding_source static method."""
+
+    def test_extract_from_system_transfer(self):
+        """Extracts funding source from system program transfer instruction."""
+        tx_data = {
+            "transaction": {
+                "message": {
+                    "instructions": [
+                        {
+                            "parsed": {
+                                "type": "transfer",
+                                "info": {
+                                    "source": "FunderWallet123",
+                                    "destination": "HolderWallet456",
+                                    "lamports": 1000000000,
+                                },
+                            }
+                        }
+                    ],
+                    "accountKeys": [],
+                }
+            },
+            "meta": {"innerInstructions": []},
+        }
+        result = OnchainAnalyzer._extract_funding_source(tx_data, "HolderWallet456")
+        assert result == "FunderWallet123"
+
+    def test_extract_from_inner_instructions(self):
+        """Extracts funding source from inner instructions."""
+        tx_data = {
+            "transaction": {
+                "message": {
+                    "instructions": [],
+                    "accountKeys": [],
+                }
+            },
+            "meta": {
+                "innerInstructions": [
+                    {
+                        "instructions": [
+                            {
+                                "parsed": {
+                                    "type": "transfer",
+                                    "info": {
+                                        "source": "InnerFunder789",
+                                        "destination": "HolderWallet456",
+                                        "lamports": 500000000,
+                                    },
+                                }
+                            }
+                        ]
+                    }
+                ]
+            },
+        }
+        result = OnchainAnalyzer._extract_funding_source(tx_data, "HolderWallet456")
+        assert result == "InnerFunder789"
+
+    def test_fallback_to_account_keys_signer(self):
+        """Falls back to first signer in accountKeys when no transfer found."""
+        tx_data = {
+            "transaction": {
+                "message": {
+                    "instructions": [],
+                    "accountKeys": [
+                        {"pubkey": "SignerWallet999", "signer": True},
+                        {"pubkey": "HolderWallet456", "signer": False},
+                    ],
+                }
+            },
+            "meta": {"innerInstructions": []},
+        }
+        result = OnchainAnalyzer._extract_funding_source(tx_data, "HolderWallet456")
+        assert result == "SignerWallet999"
+
+    def test_returns_empty_on_none_data(self):
+        """Returns empty string when tx_data is None."""
+        result = OnchainAnalyzer._extract_funding_source(None, "HolderWallet456")
+        assert result == ""
+
+    def test_returns_empty_on_no_matching_transfer(self):
+        """Returns empty string when no transfer matches the holder."""
+        tx_data = {
+            "transaction": {
+                "message": {
+                    "instructions": [
+                        {
+                            "parsed": {
+                                "type": "transfer",
+                                "info": {
+                                    "source": "SomeWallet",
+                                    "destination": "OtherWallet",
+                                    "lamports": 1000000000,
+                                },
+                            }
+                        }
+                    ],
+                    "accountKeys": [],
+                }
+            },
+            "meta": {"innerInstructions": []},
+        }
+        result = OnchainAnalyzer._extract_funding_source(tx_data, "HolderWallet456")
+        assert result == ""
+
+
+class TestExtractTokenAmount:
+    """Test _extract_token_amount static method."""
+
+    def test_extract_ui_amount_from_token_transfer(self):
+        """Extracts uiAmount from token program transferChecked instruction."""
+        tx_data = {
+            "transaction": {
+                "message": {
+                    "instructions": [
+                        {
+                            "parsed": {
+                                "type": "transferChecked",
+                                "info": {
+                                    "tokenAmount": {
+                                        "uiAmount": 1500.5,
+                                        "decimals": 6,
+                                        "amount": "1500500000",
+                                    }
+                                },
+                            }
+                        }
+                    ],
+                    "accountKeys": [],
+                }
+            },
+            "meta": {"innerInstructions": []},
+        }
+        result = OnchainAnalyzer._extract_token_amount(tx_data)
+        assert result == 1500.5
+
+    def test_extract_amount_field_fallback(self):
+        """Falls back to amount field when tokenAmount not present."""
+        tx_data = {
+            "transaction": {
+                "message": {
+                    "instructions": [
+                        {
+                            "parsed": {
+                                "type": "transfer",
+                                "info": {
+                                    "amount": "5000",
+                                },
+                            }
+                        }
+                    ],
+                    "accountKeys": [],
+                }
+            },
+            "meta": {"innerInstructions": []},
+        }
+        result = OnchainAnalyzer._extract_token_amount(tx_data)
+        assert result == 5000.0
+
+    def test_returns_zero_on_none(self):
+        """Returns 0.0 when tx_data is None."""
+        result = OnchainAnalyzer._extract_token_amount(None)
+        assert result == 0.0
+
+    def test_returns_zero_on_no_token_transfer(self):
+        """Returns 0.0 when no token transfer found."""
+        tx_data = {
+            "transaction": {
+                "message": {
+                    "instructions": [
+                        {
+                            "parsed": {
+                                "type": "createAccount",
+                                "info": {},
+                            }
+                        }
+                    ],
+                    "accountKeys": [],
+                }
+            },
+            "meta": {"innerInstructions": []},
+        }
+        result = OnchainAnalyzer._extract_token_amount(tx_data)
+        assert result == 0.0
+
+
 class TestGetMintInfo:
     """Test _get_mint_info method."""
 

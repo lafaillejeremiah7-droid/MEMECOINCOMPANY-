@@ -741,8 +741,12 @@ class OnchainAnalyzer:
         Checks top 5 holder wallets for:
         1. Fresh wallets - fewer than 5 total signatures
         2. Same-block buying - 3+ holders have a signature in the same slot
-        3. Common funder - share the same first funding source
+        3. Common funder - 3+ holders share the same SOL funding source
         4. Single-token wallets - only 1-2 unique programs interacted with
+        5. Same-amount buys - 3+ holders bought within 5% of the same amount
+
+        For funding source detection, traces each holder's earliest transactions
+        to find inbound SOL transfers using getTransaction on the oldest signature.
 
         Args:
             client: httpx async client.
@@ -750,13 +754,17 @@ class OnchainAnalyzer:
 
         Returns:
             Dict with fresh_wallets, same_block_buys, common_funder,
-            single_token_wallets, risk, details.
+            single_token_wallets, same_amount_buys, funding_sources,
+            common_funder_address, risk, details.
         """
         result: Dict[str, Any] = {
             "fresh_wallets": 0,
             "same_block_buys": False,
             "common_funder": False,
             "single_token_wallets": 0,
+            "same_amount_buys": False,
+            "funding_sources": [],
+            "common_funder_address": None,
             "risk": "LOW",
             "details": [],
         }
@@ -767,14 +775,14 @@ class OnchainAnalyzer:
         # Only check top 5 holders
         wallets_to_check = holder_owners[:5]
 
-        # Collect signatures for each wallet
+        # Collect signatures for each wallet (limit=5 for funding source detection)
         all_signatures: List[Optional[List[Dict[str, Any]]]] = []
         for wallet in wallets_to_check:
             await asyncio.sleep(RPC_CALL_DELAY)
             sigs = await self._rpc_call(
                 client,
                 "getSignaturesForAddress",
-                [wallet, {"limit": 10}],
+                [wallet, {"limit": 5}],
             )
             if isinstance(sigs, list):
                 all_signatures.append(sigs)
@@ -784,11 +792,11 @@ class OnchainAnalyzer:
         fresh_wallets = 0
         single_token_wallets = 0
         slots: List[int] = []
-        first_sources: List[Optional[str]] = []
+        funding_sources: List[str] = []
+        token_buy_amounts: List[float] = []
 
         for i, sigs in enumerate(all_signatures):
             if sigs is None:
-                first_sources.append(None)
                 continue
 
             # 1. Fresh wallet detection: fewer than 5 total signatures
@@ -804,36 +812,63 @@ class OnchainAnalyzer:
                 if slot is not None:
                     slots.append(int(slot))
 
-            # 3. Common funder: check the oldest (last) signature source
+            # 3. Funding source: get the oldest signature and trace SOL transfer
             # The last signature in the list is the oldest since results come
             # in reverse chronological order
             if sigs:
                 oldest_sig = sigs[-1] if len(sigs) > 0 else None
-                if oldest_sig:
-                    first_sources.append(oldest_sig.get("signature"))
+                if oldest_sig and oldest_sig.get("signature"):
+                    await asyncio.sleep(RPC_CALL_DELAY)
+                    tx_data = await self._rpc_call(
+                        client,
+                        "getTransaction",
+                        [oldest_sig["signature"], {
+                            "encoding": "jsonParsed",
+                            "maxSupportedTransactionVersion": 0,
+                        }],
+                    )
+                    funder = self._extract_funding_source(
+                        tx_data, wallets_to_check[i]
+                    )
+                    if funder:
+                        funding_sources.append(funder)
+                    else:
+                        funding_sources.append("")
                 else:
-                    first_sources.append(None)
+                    funding_sources.append("")
             else:
-                first_sources.append(None)
+                funding_sources.append("")
 
-            # 4. Single-token wallet: check unique programs interacted with
-            # If a wallet has very few signatures and limited program diversity,
-            # it's likely a single-purpose wallet
-            unique_programs: set = set()
-            for sig_info in sigs:
-                # The memo field or err can hint at programs, but signatures
-                # endpoint doesn't return program IDs directly.
-                # Use the number of unique signatures as a proxy: if wallet
-                # has <= 2 total transactions, it's single-purpose.
-                pass
+            # 4. Single-token wallet: if wallet has <= 2 total transactions,
+            # it is likely a single-purpose wallet
             if len(sigs) <= 2:
                 single_token_wallets += 1
                 result["details"].append(
                     f"Holder {i+1} ({wallets_to_check[i][:8]}...) is single-purpose wallet ({len(sigs)} txns)"
                 )
 
+            # 5. Collect token purchase amounts from transaction data for
+            # same-amount detection. Check the most recent (first) signature
+            # for token transfer amounts.
+            if sigs:
+                newest_sig = sigs[0]
+                if newest_sig and newest_sig.get("signature"):
+                    await asyncio.sleep(RPC_CALL_DELAY)
+                    tx_data_newest = await self._rpc_call(
+                        client,
+                        "getTransaction",
+                        [newest_sig["signature"], {
+                            "encoding": "jsonParsed",
+                            "maxSupportedTransactionVersion": 0,
+                        }],
+                    )
+                    amount = self._extract_token_amount(tx_data_newest)
+                    if amount > 0:
+                        token_buy_amounts.append(amount)
+
         result["fresh_wallets"] = fresh_wallets
         result["single_token_wallets"] = single_token_wallets
+        result["funding_sources"] = [s for s in funding_sources if s]
 
         # Same-block detection: 3+ holders have signatures in the same slot
         if slots:
@@ -847,18 +882,47 @@ class OnchainAnalyzer:
                     f"{max_same_slot} holders transacted in the same block"
                 )
 
-        # Common funder: check if multiple wallets share the same first signature
-        # (indicates they were funded from the same source in a batch)
-        valid_sources = [s for s in first_sources if s is not None]
+        # Common funder: check if 3+ holders share the same funding source
+        valid_sources = [s for s in funding_sources if s]
         if len(valid_sources) >= 2:
             source_counts: Dict[str, int] = {}
             for source in valid_sources:
                 source_counts[source] = source_counts.get(source, 0) + 1
-            max_shared = max(source_counts.values()) if source_counts else 0
-            if max_shared >= 2:
-                result["common_funder"] = True
+            if source_counts:
+                max_source = max(source_counts, key=source_counts.get)  # type: ignore[arg-type]
+                max_shared = source_counts[max_source]
+                if max_shared >= 3:
+                    result["common_funder"] = True
+                    result["common_funder_address"] = max_source
+                    result["details"].append(
+                        f"{max_shared} holders funded by same wallet ({max_source[:8]}...)"
+                    )
+                elif max_shared >= 2:
+                    result["common_funder"] = True
+                    result["common_funder_address"] = max_source
+                    result["details"].append(
+                        f"{max_shared} holders share the same funding source ({max_source[:8]}...)"
+                    )
+
+        # Same-amount detection: 3+ holders bought within 5% of the same amount
+        if len(token_buy_amounts) >= 3:
+            sorted_amounts = sorted(token_buy_amounts, reverse=True)
+            best_cluster: List[float] = []
+            for i_amt in range(len(sorted_amounts)):
+                cluster = [sorted_amounts[i_amt]]
+                for j_amt in range(i_amt + 1, len(sorted_amounts)):
+                    reference = sorted_amounts[i_amt]
+                    if reference == 0:
+                        continue
+                    diff_pct = abs(reference - sorted_amounts[j_amt]) / reference
+                    if diff_pct <= 0.05:
+                        cluster.append(sorted_amounts[j_amt])
+                if len(cluster) > len(best_cluster):
+                    best_cluster = cluster
+            if len(best_cluster) >= 3:
+                result["same_amount_buys"] = True
                 result["details"].append(
-                    f"{max_shared} holders share the same funding source"
+                    f"{len(best_cluster)} holders bought near-identical amounts"
                 )
 
         # Determine risk level
@@ -870,11 +934,23 @@ class OnchainAnalyzer:
         if result["same_block_buys"]:
             risk_signals += 2
         if result["common_funder"]:
-            risk_signals += 2
+            # 3+ holders sharing a funder is HIGH risk by itself
+            common_count = 0
+            if valid_sources:
+                source_counts_final: Dict[str, int] = {}
+                for s in valid_sources:
+                    source_counts_final[s] = source_counts_final.get(s, 0) + 1
+                common_count = max(source_counts_final.values()) if source_counts_final else 0
+            if common_count >= 3:
+                risk_signals += 3
+            else:
+                risk_signals += 2
         if single_token_wallets >= 3:
             risk_signals += 2
         elif single_token_wallets >= 2:
             risk_signals += 1
+        if result["same_amount_buys"]:
+            risk_signals += 2
 
         if risk_signals >= 3:
             result["risk"] = "HIGH"
@@ -884,6 +960,124 @@ class OnchainAnalyzer:
             result["risk"] = "LOW"
 
         return result
+
+    @staticmethod
+    def _extract_funding_source(
+        tx_data: Optional[Dict[str, Any]], holder_address: str
+    ) -> str:
+        """
+        Extract the SOL funding source from a parsed transaction.
+
+        Looks for system program transfer instructions where the destination
+        is the holder address, returning the source wallet.
+
+        Args:
+            tx_data: Parsed transaction data from getTransaction.
+            holder_address: The holder wallet address to find funding for.
+
+        Returns:
+            Funding source address, or empty string if not found.
+        """
+        if not tx_data or not isinstance(tx_data, dict):
+            return ""
+        try:
+            transaction = tx_data.get("transaction", {})
+            message = transaction.get("message", {})
+            instructions = message.get("instructions", [])
+            # Also check inner instructions
+            meta = tx_data.get("meta", {})
+            inner_instructions = meta.get("innerInstructions", []) or []
+
+            all_instructions = list(instructions)
+            for inner in inner_instructions:
+                if isinstance(inner, dict):
+                    all_instructions.extend(inner.get("instructions", []))
+
+            for instruction in all_instructions:
+                if not isinstance(instruction, dict):
+                    continue
+                parsed = instruction.get("parsed")
+                if not isinstance(parsed, dict):
+                    continue
+                inst_type = parsed.get("type", "")
+                info = parsed.get("info", {})
+                if not isinstance(info, dict):
+                    continue
+                # System program transfer or transferChecked
+                if inst_type in ("transfer", "transferChecked"):
+                    destination = info.get("destination", "")
+                    source = info.get("source", "")
+                    if destination == holder_address and source:
+                        return source
+            # Fallback: check account keys - first signer that is not the holder
+            account_keys = message.get("accountKeys", [])
+            for key_info in account_keys:
+                if isinstance(key_info, dict):
+                    pubkey = key_info.get("pubkey", "")
+                    signer = key_info.get("signer", False)
+                    if signer and pubkey != holder_address and pubkey:
+                        return pubkey
+                elif isinstance(key_info, str):
+                    if key_info != holder_address and key_info:
+                        return key_info
+        except (KeyError, TypeError, AttributeError):
+            pass
+        return ""
+
+    @staticmethod
+    def _extract_token_amount(tx_data: Optional[Dict[str, Any]]) -> float:
+        """
+        Extract token transfer amount from a parsed transaction.
+
+        Looks for token program transfer/transferChecked instructions and
+        returns the amount of the first token transfer found.
+
+        Args:
+            tx_data: Parsed transaction data from getTransaction.
+
+        Returns:
+            Token amount as float, or 0.0 if not found.
+        """
+        if not tx_data or not isinstance(tx_data, dict):
+            return 0.0
+        try:
+            transaction = tx_data.get("transaction", {})
+            message = transaction.get("message", {})
+            instructions = message.get("instructions", [])
+            meta = tx_data.get("meta", {})
+            inner_instructions = meta.get("innerInstructions", []) or []
+
+            all_instructions = list(instructions)
+            for inner in inner_instructions:
+                if isinstance(inner, dict):
+                    all_instructions.extend(inner.get("instructions", []))
+
+            for instruction in all_instructions:
+                if not isinstance(instruction, dict):
+                    continue
+                parsed = instruction.get("parsed")
+                if not isinstance(parsed, dict):
+                    continue
+                inst_type = parsed.get("type", "")
+                info = parsed.get("info", {})
+                if not isinstance(info, dict):
+                    continue
+                if inst_type in ("transfer", "transferChecked"):
+                    # Token program transfers have tokenAmount or amount
+                    token_amount = info.get("tokenAmount", {})
+                    if isinstance(token_amount, dict):
+                        ui_amount = token_amount.get("uiAmount")
+                        if ui_amount is not None:
+                            return float(ui_amount)
+                    amount = info.get("amount")
+                    if amount is not None:
+                        try:
+                            return float(amount)
+                        except (ValueError, TypeError):
+                            pass
+        except (KeyError, TypeError, AttributeError):
+            pass
+        return 0.0
 
     async def check_token(self, mint: str, creator: str) -> Dict[str, Any]:
         """

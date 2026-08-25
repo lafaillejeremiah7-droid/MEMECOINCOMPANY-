@@ -1181,3 +1181,139 @@ async def test_age_beyond_120_minutes_is_rejected():
     )
     assert result.decision == "REJECTED"
     assert result.reasons == ["AGE_TOO_OLD"]
+
+
+# --- Tests for enhanced holder history analysis (funding sources, same-amount buys) ---
+
+
+@pytest.mark.asyncio
+async def test_forensic_scam_evidence_rejects_token():
+    """Forensic X search finding scam indicators rejects the token."""
+    scam_forensic_x = StubX({
+        "status": "FOUND",
+        "evidence_availability": "AVAILABLE",
+        "scam_warning": True,
+        "result_count": 2,
+        "big_account_mention": False,
+        "evidence": [{"url": "https://x.com/bubblemaps/status/1", "content": "rug pull detected"}],
+    })
+    result = await CommonEvaluator(
+        StubPairClient(), StubOnchain(), scam_forensic_x
+    ).evaluate(candidate(), onchain_budget_available=True)
+    assert result.decision == "REJECTED"
+    # Could be SCAM_EVIDENCE_FOUND or FORENSIC_SCAM_EVIDENCE depending on order
+    assert any(r in ("SCAM_EVIDENCE_FOUND", "FORENSIC_SCAM_EVIDENCE") for r in result.reasons)
+
+
+@pytest.mark.asyncio
+async def test_forensic_search_passes_when_no_scam_found():
+    """Forensic X search with no scam results allows token to qualify."""
+    clean_x = StubX({
+        "status": "X_DATA_NOT_FOUND_OR_NOT_INDEXED",
+        "evidence_availability": "AVAILABLE",
+        "scam_warning": False,
+        "result_count": 10,
+        "big_account_mention": False,
+        "evidence": [],
+    })
+    result = await CommonEvaluator(
+        StubPairClient(), StubOnchain(), clean_x
+    ).evaluate(candidate(), onchain_budget_available=True)
+    assert result.decision == "QUALIFIED"
+
+
+def test_format_signal_includes_bubblemaps_link():
+    """format_signal output includes a Bubblemaps link."""
+    from memescanner.unified_scanner import format_signal, CandidateDecision
+
+    decision = CandidateDecision(
+        candidate=candidate(mint="TestMint123"),
+        decision="QUALIFIED",
+        evidence={
+            "onchain": {
+                "dev_holding_pct": 5.0,
+                "top10_concentration_pct": 20.0,
+                "holder_suspicion": None,
+            },
+            "x": {"status": "FOUND"},
+            "celebrity": {"status": "UNVERIFIED"},
+        },
+        market=valid_pair(),
+        screening_score=70.0,
+        evaluated_age_minutes=45.0,
+    )
+    signal = format_signal(decision)
+    assert "https://app.bubblemaps.io/sol/token/TestMint123" in signal
+
+
+def test_format_signal_includes_holder_funding_sources():
+    """format_signal shows funding sources when holder_suspicion has them."""
+    from memescanner.unified_scanner import format_signal, CandidateDecision
+
+    decision = CandidateDecision(
+        candidate=candidate(mint="TestMint456"),
+        decision="QUALIFIED",
+        evidence={
+            "onchain": {
+                "dev_holding_pct": 5.0,
+                "top10_concentration_pct": 20.0,
+                "holder_suspicion": {
+                    "risk": "MEDIUM",
+                    "fresh_wallets": 2,
+                    "same_block_buys": False,
+                    "common_funder": True,
+                    "single_token_wallets": 1,
+                    "same_amount_buys": True,
+                    "funding_sources": ["FunderWallet111AAA", "FunderWallet222BBB", "FunderWallet333CCC"],
+                    "common_funder_address": "FunderWallet111AAA",
+                    "details": ["2 holders share the same funding source (FunderWa...)"],
+                },
+            },
+            "x": {"status": "FOUND"},
+            "celebrity": {"status": "UNVERIFIED"},
+        },
+        market=valid_pair(),
+        screening_score=70.0,
+        evaluated_age_minutes=45.0,
+    )
+    signal = format_signal(decision)
+    assert "Holder suspicion: MEDIUM" in signal
+    assert "Same-amount buys detected" in signal
+    assert "Common funder: FunderWallet111AAA" in signal
+    assert "Funding sources:" in signal
+
+
+def test_format_signal_no_holder_flags_on_low_risk():
+    """format_signal does not show holder flags when risk is LOW."""
+    from memescanner.unified_scanner import format_signal, CandidateDecision
+
+    decision = CandidateDecision(
+        candidate=candidate(mint="TestMint789"),
+        decision="QUALIFIED",
+        evidence={
+            "onchain": {
+                "dev_holding_pct": 5.0,
+                "top10_concentration_pct": 20.0,
+                "holder_suspicion": {
+                    "risk": "LOW",
+                    "fresh_wallets": 0,
+                    "same_block_buys": False,
+                    "common_funder": False,
+                    "single_token_wallets": 0,
+                    "same_amount_buys": False,
+                    "funding_sources": [],
+                    "common_funder_address": None,
+                    "details": [],
+                },
+            },
+            "x": {"status": "FOUND"},
+            "celebrity": {"status": "UNVERIFIED"},
+        },
+        market=valid_pair(),
+        screening_score=70.0,
+        evaluated_age_minutes=45.0,
+    )
+    signal = format_signal(decision)
+    assert "Holder suspicion" not in signal
+    # Bubblemaps link should always be present
+    assert "bubblemaps.io" in signal
