@@ -634,6 +634,7 @@ class PaperTrader:
         pos["half_sold"] = True
         pos["breakeven_stop"] = True
         pos["amount_usd"] = remaining_amount  # Remaining 20% still riding
+        sold_tokens = pos["tokens_held"] * TAKE_PROFIT_SELL_FRACTION
         pos["tokens_held"] = pos["tokens_held"] * (1.0 - TAKE_PROFIT_SELL_FRACTION)
 
         # Add proceeds from the sold portion back to balance
@@ -656,7 +657,7 @@ class PaperTrader:
                 "VALUES (?, ?, ?, ?, ?, ?, ?, 'partial_closed', ?, ?, ?, ?, ?, 1, 1, ?, ?, ?)",
                 (
                     pos["mint"], pos["symbol"], entry_price, pos.get("entry_mc", 0),
-                    sold_amount, pos["tokens_held"],  # tokens_held already reduced
+                    sold_amount, sold_tokens,  # tokens for the sold 80% portion
                     pos["entry_time"], current_price, time.time(),
                     sold_pnl_usd, pnl_pct, TAKE_PROFIT_REASON,
                     pos.get("take_profit_target", DEFAULT_TAKE_PROFIT_TARGET),
@@ -839,7 +840,6 @@ class PaperTrader:
                     pos_pnl_pct = 0.0
                     pos_pnl_usd = 0.0
                 pnl_sign = "+" if pos_pnl_pct >= 0 else ""
-                usd_sign = "" if pos_pnl_usd < 0 else "$"
                 if pos_pnl_usd < 0:
                     lines.append(f"\u2022 ${pos['symbol']}: {pnl_sign}{pos_pnl_pct:.0f}% (-${abs(pos_pnl_usd):.2f})")
                 else:
