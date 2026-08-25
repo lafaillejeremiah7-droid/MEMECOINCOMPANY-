@@ -68,6 +68,13 @@ async def run():
         print(f"    dangerous: {oc.get('dangerous_capabilities')}")
         print(f"    unsupported: {oc.get('unsupported_extensions')}")
         print(f"    flags: {oc.get('flags', [])[:3]}")
+        suspicion = oc.get("holder_suspicion")
+        if suspicion:
+            print(f"    holder_suspicion: risk={suspicion.get('risk')}, "
+                  f"fresh={suspicion.get('fresh_wallets')}, "
+                  f"same_block={suspicion.get('same_block_buys')}, "
+                  f"common_funder={suspicion.get('common_funder')}, "
+                  f"single_token={suspicion.get('single_token_wallets')}")
         print(f"    Decision: {d.decision} | Reasons: {d.reasons}")
         print()
 
