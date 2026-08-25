@@ -31,7 +31,11 @@ from memescanner.discovery import (
 )
 from memescanner.onchain import OnchainAnalyzer
 from memescanner.outcomes import OutcomeWorker
-from memescanner.paper_trader import MAX_OPEN_POSITIONS, PaperTrader
+from memescanner.paper_trader import (
+    DEFAULT_TAKE_PROFIT_TARGET,
+    MAX_OPEN_POSITIONS,
+    PaperTrader,
+)
 from memescanner.unified_scanner import CommonEvaluator, UnifiedSolanaScanner
 from memescanner.x_search import XSearchClient
 
@@ -88,12 +92,24 @@ class TelegramSender:
 
 
 async def _paper_buyer(
-    trader: PaperTrader, candidate: Any, market: dict[str, Any]
+    trader: PaperTrader,
+    candidate: Any,
+    market: dict[str, Any],
+    take_profit_target: float = DEFAULT_TAKE_PROFIT_TARGET,
 ) -> Any:
     """Open a virtual-only position after an alerted common-pipeline decision."""
     return await trader.buy(
-        {"mint": candidate.mint, "symbol": candidate.symbol or "UNKNOWN"},
-        {"market_cap": market.get("market_cap", 0)},
+        {
+            "mint": candidate.mint,
+            "symbol": candidate.symbol or "UNKNOWN",
+            "take_profit_target": take_profit_target,
+        },
+        # Forward the real price so the position is tracked against a
+        # supply-independent quote rather than market cap.
+        {
+            "market_cap": market.get("market_cap", 0),
+            "price_usd": market.get("price_usd"),
+        },
     )
 
 
@@ -167,6 +183,9 @@ async def main_loop(config: Optional[Config] = None) -> None:
             max_dev_holding_pct=config.filters.max_dev_holding_pct,
             max_top10_concentration_pct=config.filters.max_top10_concentration_pct,
             min_x_mentions=config.filters.min_x_mentions,
+            min_liquidity_to_mcap_ratio=config.filters.min_liquidity_to_mcap_ratio,
+            max_spike_price_change_1h_pct=config.filters.max_spike_price_change_1h_pct,
+            min_spike_volume_to_mcap_ratio=config.filters.min_spike_volume_to_mcap_ratio,
         )
         paper_callback = None
         if config.scanner.enable_paper_trading:
@@ -177,8 +196,8 @@ async def main_loop(config: Optional[Config] = None) -> None:
                 message_sender=sender.send,
             )
             await paper_trader.initialize()
-            paper_callback = lambda candidate, market: _paper_buyer(
-                paper_trader, candidate, market  # type: ignore[arg-type]
+            paper_callback = lambda candidate, market, take_profit_target: _paper_buyer(
+                paper_trader, candidate, market, take_profit_target  # type: ignore[arg-type]
             )
 
         outcome_worker = None

@@ -50,6 +50,14 @@ filters:
   # so 5 results maps to approximately 10-20 real tweets. Bypassed when a
   # celebrity/influencer account posted or evidence shows viral view counts.
   min_x_mentions: 5
+  # Liquidity Pool-Based Price Inflation (LPI) guard: a high market cap held up
+  # by a shallow pool is manufactured price growth, not real demand. Reject when
+  # liquidity_usd / market_cap falls below this ratio.
+  min_liquidity_to_mcap_ratio: 0.08
+  # Second LPI guard: reject a 1h price spike above this percentage when
+  # turnover (volume_to_mcap_ratio) stays below min_spike_volume_to_mcap_ratio.
+  max_spike_price_change_1h_pct: 100
+  min_spike_volume_to_mcap_ratio: 0.5
 
 # Retained for compatibility with `python -m memescanner.main`; these legacy
 # weights are heuristic and are not calibrated predictive probabilities.

@@ -1317,3 +1317,414 @@ def test_format_signal_no_holder_flags_on_low_risk():
     assert "Holder suspicion" not in signal
     # Bubblemaps link should always be present
     assert "bubblemaps.io" in signal
+
+
+
+# --- Tests for Liquidity Pool-Based Price Inflation (LPI) gates ---
+
+
+@pytest.mark.asyncio
+async def test_thin_liquidity_to_mcap_ratio_is_rejected():
+    """A market cap propped up by a shallow pool is the LPI pattern."""
+    pair = valid_pair()
+    pair["liquidity_usd"] = 5_000  # 5% of a $100K market cap
+    result = await CommonEvaluator(StubPairClient(pair), StubOnchain(), StubX()).evaluate(
+        candidate(), onchain_budget_available=True
+    )
+    assert result.decision == "REJECTED"
+    assert result.reasons == ["LIQUIDITY_TO_MCAP_TOO_THIN"]
+
+
+@pytest.mark.asyncio
+async def test_liquidity_to_mcap_ratio_at_threshold_passes():
+    """Exactly 8% liquidity-to-market-cap is acceptable."""
+    pair = valid_pair()
+    pair["liquidity_usd"] = 8_000  # exactly 8% of $100K
+    result = await CommonEvaluator(StubPairClient(pair), StubOnchain(), StubX()).evaluate(
+        candidate(), onchain_budget_available=True
+    )
+    assert result.decision == "QUALIFIED"
+
+
+@pytest.mark.asyncio
+async def test_liquidity_to_mcap_ratio_is_configurable():
+    """Raising the ratio floor rejects a pool that the default accepts."""
+    pair = valid_pair()  # 20% ratio by default
+    result = await CommonEvaluator(
+        StubPairClient(pair), StubOnchain(), StubX(),
+        min_liquidity_to_mcap_ratio=0.5,
+    ).evaluate(candidate(), onchain_budget_available=True)
+    assert result.decision == "REJECTED"
+    assert result.reasons == ["LIQUIDITY_TO_MCAP_TOO_THIN"]
+
+
+@pytest.mark.asyncio
+async def test_zero_market_cap_does_not_raise_on_ratio_check():
+    """The ratio check is skipped rather than dividing by zero."""
+    pair = valid_pair()
+    pair["market_cap"] = 0
+    result = await CommonEvaluator(
+        StubPairClient(pair), StubOnchain(), StubX(), min_market_cap_usd=0.0,
+    ).evaluate(candidate(), onchain_budget_available=True)
+    # No LPI rejection and no ZeroDivisionError; it proceeds past the gate.
+    assert "LIQUIDITY_TO_MCAP_TOO_THIN" not in result.reasons
+
+
+@pytest.mark.asyncio
+async def test_price_spike_without_volume_is_rejected():
+    """A big 1h move unbacked by turnover is manufactured price growth."""
+    pair = valid_pair()
+    pair["price_change_1h"] = 150.0
+    pair["volume_to_mcap_ratio"] = 0.4
+    result = await CommonEvaluator(StubPairClient(pair), StubOnchain(), StubX()).evaluate(
+        candidate(), onchain_budget_available=True
+    )
+    assert result.decision == "REJECTED"
+    assert result.reasons == ["SUSPICIOUS_PRICE_SPIKE_LOW_VOLUME"]
+
+
+@pytest.mark.asyncio
+async def test_price_spike_with_strong_volume_passes():
+    """The same spike is acceptable when turnover confirms it."""
+    pair = valid_pair()
+    pair["price_change_1h"] = 150.0
+    pair["volume_to_mcap_ratio"] = 0.6
+    result = await CommonEvaluator(StubPairClient(pair), StubOnchain(), StubX()).evaluate(
+        candidate(), onchain_budget_available=True
+    )
+    assert result.decision == "QUALIFIED"
+
+
+@pytest.mark.asyncio
+async def test_low_volume_without_price_spike_passes():
+    """Thin turnover alone does not trigger the spike gate."""
+    pair = valid_pair()
+    pair["price_change_1h"] = 100.0  # at the threshold, not above it
+    pair["volume_to_mcap_ratio"] = 0.1
+    result = await CommonEvaluator(StubPairClient(pair), StubOnchain(), StubX()).evaluate(
+        candidate(), onchain_budget_available=True
+    )
+    assert result.decision == "QUALIFIED"
+
+
+@pytest.mark.asyncio
+async def test_spike_thresholds_are_configurable():
+    """Both spike numbers can be tuned from configuration."""
+    pair = valid_pair()
+    pair["price_change_1h"] = 50.0
+    pair["volume_to_mcap_ratio"] = 0.5
+    result = await CommonEvaluator(
+        StubPairClient(pair), StubOnchain(), StubX(),
+        max_spike_price_change_1h_pct=40.0,
+        min_spike_volume_to_mcap_ratio=1.0,
+    ).evaluate(candidate(), onchain_budget_available=True)
+    assert result.decision == "REJECTED"
+    assert result.reasons == ["SUSPICIOUS_PRICE_SPIKE_LOW_VOLUME"]
+
+
+@pytest.mark.asyncio
+async def test_lpi_gates_run_before_onchain_budget_is_spent():
+    """A thin pool is rejected without consuming an on-chain check."""
+    pair = valid_pair()
+    pair["liquidity_usd"] = 5_000
+    result = await CommonEvaluator(
+        StubPairClient(pair), StubOnchain(), StubX()
+    ).evaluate(candidate(), onchain_budget_available=False)
+    assert result.reasons == ["LIQUIDITY_TO_MCAP_TOO_THIN"]
+    assert "onchain" not in result.evidence
+
+
+# --- Tests for the dynamic per-token take-profit target ---
+
+
+def _decision_for_target(market_overrides=None, onchain=None, x_data=None, score=70.0):
+    from memescanner.unified_scanner import CandidateDecision
+
+    market = valid_pair()
+    market.update(market_overrides or {})
+    evidence = {
+        "onchain": onchain if onchain is not None else {
+            "top10_concentration_pct": 20.0,
+            "coordinated_risk": "LOW",
+            "holder_suspicion": {"risk": "LOW"},
+        },
+        "x": x_data if x_data is not None else {"result_count": 5},
+    }
+    return CandidateDecision(
+        candidate(), "QUALIFIED", [], evidence, market, score
+    )
+
+
+def test_take_profit_target_defaults_to_base():
+    """Neutral evidence yields the 2.0x base target."""
+    from memescanner.unified_scanner import compute_take_profit_target
+
+    # 20% liquidity ratio (+0.75) offset by nothing else in valid_pair.
+    decision = _decision_for_target(
+        market_overrides={"liquidity_usd": 11_000, "volume_to_mcap_ratio": 1.0}
+    )
+    assert compute_take_profit_target(decision) == 2.0
+
+
+def test_take_profit_target_rewards_deep_liquidity():
+    """A 20%+ liquidity ratio adds 0.75 to the target."""
+    from memescanner.unified_scanner import compute_take_profit_target
+
+    decision = _decision_for_target(
+        market_overrides={"liquidity_usd": 20_000, "volume_to_mcap_ratio": 1.0}
+    )
+    assert compute_take_profit_target(decision) == 2.75
+
+
+def test_take_profit_target_rewards_moderate_liquidity():
+    """A 12-20% liquidity ratio adds 0.25."""
+    from memescanner.unified_scanner import compute_take_profit_target
+
+    decision = _decision_for_target(
+        market_overrides={"liquidity_usd": 13_000, "volume_to_mcap_ratio": 1.0}
+    )
+    assert compute_take_profit_target(decision) == 2.25
+
+
+def test_take_profit_target_penalizes_thin_liquidity():
+    """Below a 10% liquidity ratio the target drops by 0.5."""
+    from memescanner.unified_scanner import compute_take_profit_target
+
+    decision = _decision_for_target(
+        market_overrides={"liquidity_usd": 9_000, "volume_to_mcap_ratio": 1.0}
+    )
+    assert compute_take_profit_target(decision) == 1.5
+
+
+def test_take_profit_target_rewards_wide_holder_distribution():
+    """Top-10 concentration under 15% adds 0.5."""
+    from memescanner.unified_scanner import compute_take_profit_target
+
+    decision = _decision_for_target(
+        market_overrides={"liquidity_usd": 11_000, "volume_to_mcap_ratio": 1.0},
+        onchain={
+            "top10_concentration_pct": 10.0,
+            "coordinated_risk": "LOW",
+            "holder_suspicion": {"risk": "LOW"},
+        },
+    )
+    assert compute_take_profit_target(decision) == 2.5
+
+
+def test_take_profit_target_penalizes_concentration():
+    """Top-10 concentration at or above 25% subtracts 0.5."""
+    from memescanner.unified_scanner import compute_take_profit_target
+
+    decision = _decision_for_target(
+        market_overrides={"liquidity_usd": 11_000, "volume_to_mcap_ratio": 1.0},
+        onchain={
+            "top10_concentration_pct": 25.0,
+            "coordinated_risk": "LOW",
+            "holder_suspicion": {"risk": "LOW"},
+        },
+    )
+    assert compute_take_profit_target(decision) == 1.5
+
+
+def test_take_profit_target_skips_unknown_concentration():
+    """A None concentration contributes nothing rather than penalizing."""
+    from memescanner.unified_scanner import compute_take_profit_target
+
+    decision = _decision_for_target(
+        market_overrides={"liquidity_usd": 11_000, "volume_to_mcap_ratio": 1.0},
+        onchain={
+            "top10_concentration_pct": None,
+            "coordinated_risk": "LOW",
+            "holder_suspicion": {"risk": "LOW"},
+        },
+    )
+    assert compute_take_profit_target(decision) == 2.0
+
+
+def test_take_profit_target_penalizes_medium_coordination_and_suspicion():
+    """MEDIUM coordinated risk and MEDIUM holder suspicion each subtract 0.5."""
+    from memescanner.unified_scanner import compute_take_profit_target
+
+    decision = _decision_for_target(
+        market_overrides={"liquidity_usd": 20_000, "volume_to_mcap_ratio": 1.0},
+        onchain={
+            "top10_concentration_pct": 20.0,
+            "coordinated_risk": "MEDIUM",
+            "holder_suspicion": {"risk": "MEDIUM"},
+        },
+    )
+    # 2.0 + 0.75 - 0.5 - 0.5 = 1.75
+    assert compute_take_profit_target(decision) == 1.75
+
+
+def test_take_profit_target_rewards_x_mentions():
+    """20+ X mentions add 0.5; 10-19 add 0.25."""
+    from memescanner.unified_scanner import compute_take_profit_target
+
+    high = _decision_for_target(
+        market_overrides={"liquidity_usd": 11_000, "volume_to_mcap_ratio": 1.0},
+        x_data={"result_count": 25},
+    )
+    mid = _decision_for_target(
+        market_overrides={"liquidity_usd": 11_000, "volume_to_mcap_ratio": 1.0},
+        x_data={"result_count": 12},
+    )
+    assert compute_take_profit_target(high) == 2.5
+    assert compute_take_profit_target(mid) == 2.25
+
+
+def test_take_profit_target_rewards_turnover_and_score():
+    """High turnover adds 0.5 and a screening score of 80+ adds 0.25."""
+    from memescanner.unified_scanner import compute_take_profit_target
+
+    decision = _decision_for_target(
+        market_overrides={"liquidity_usd": 11_000, "volume_to_mcap_ratio": 2.0},
+        score=85.0,
+    )
+    assert compute_take_profit_target(decision) == 2.75
+
+
+def test_take_profit_target_penalizes_low_turnover():
+    """Turnover below 0.5 subtracts 0.25."""
+    from memescanner.unified_scanner import compute_take_profit_target
+
+    decision = _decision_for_target(
+        market_overrides={"liquidity_usd": 11_000, "volume_to_mcap_ratio": 0.2}
+    )
+    assert compute_take_profit_target(decision) == 1.75
+
+
+def test_take_profit_target_clamped_to_maximum():
+    """Stacked positive signals cannot exceed 4.0x."""
+    from memescanner.unified_scanner import compute_take_profit_target
+
+    decision = _decision_for_target(
+        market_overrides={"liquidity_usd": 25_000, "volume_to_mcap_ratio": 2.5},
+        onchain={
+            "top10_concentration_pct": 10.0,
+            "coordinated_risk": "LOW",
+            "holder_suspicion": {"risk": "LOW"},
+        },
+        x_data={"result_count": 25},
+        score=85.0,
+    )
+    # 2.0 + 0.75 + 0.5 + 0.5 + 0.5 + 0.25 = 4.5, clamped
+    assert compute_take_profit_target(decision) == 4.0
+
+
+def test_take_profit_target_clamped_to_minimum():
+    """Stacked negative signals cannot fall below 1.5x."""
+    from memescanner.unified_scanner import compute_take_profit_target
+
+    decision = _decision_for_target(
+        market_overrides={"liquidity_usd": 9_000, "volume_to_mcap_ratio": 0.2},
+        onchain={
+            "top10_concentration_pct": 30.0,
+            "coordinated_risk": "MEDIUM",
+            "holder_suspicion": {"risk": "MEDIUM"},
+        },
+        x_data={"result_count": 1},
+        score=50.0,
+    )
+    assert compute_take_profit_target(decision) == 1.5
+
+
+def test_take_profit_target_tolerates_missing_evidence():
+    """A decision with no market or evidence still yields a usable target."""
+    from memescanner.unified_scanner import CandidateDecision, compute_take_profit_target
+
+    decision = CandidateDecision(candidate(), "QUALIFIED")
+    # No market, no evidence: only the low-turnover penalty applies.
+    assert compute_take_profit_target(decision) == 1.75
+
+
+@pytest.mark.asyncio
+async def test_qualified_decision_carries_take_profit_target():
+    """evaluate() stores the computed target on the qualified decision."""
+    result = await CommonEvaluator(
+        StubPairClient(valid_pair()), StubOnchain(), StubX()
+    ).evaluate(candidate(), onchain_budget_available=True)
+    assert result.decision == "QUALIFIED"
+    assert 1.5 <= result.take_profit_target <= 4.0
+    from memescanner.unified_scanner import compute_take_profit_target
+    assert result.take_profit_target == compute_take_profit_target(result)
+
+
+@pytest.mark.asyncio
+async def test_rejected_decision_keeps_default_target():
+    """Rejected candidates retain the 2.0x dataclass default."""
+    pair = valid_pair()
+    pair["market_cap"] = 30_000
+    result = await CommonEvaluator(StubPairClient(pair), StubOnchain(), StubX()).evaluate(
+        candidate(), onchain_budget_available=True
+    )
+    assert result.decision == "REJECTED"
+    assert result.take_profit_target == 2.0
+
+
+def test_format_signal_includes_take_profit_target():
+    """The alert surfaces the target with an explicit non-prediction caveat."""
+    from memescanner.unified_scanner import format_signal, CandidateDecision
+
+    decision = CandidateDecision(
+        candidate(), "QUALIFIED", [],
+        {"onchain": {"dev_holding_pct": 5.0, "top10_concentration_pct": 20.0},
+         "x": {"status": "FOUND"},
+         "celebrity": {"status": "UNVERIFIED"}},
+        market=valid_pair(),
+        screening_score=70.0,
+        evaluated_age_minutes=45.0,
+    )
+    decision.take_profit_target = 2.75
+    signal = format_signal(decision)
+    assert "Suggested take-profit target: 2.75x (dynamic, not a prediction)" in signal
+
+
+@pytest.mark.asyncio
+async def test_run_cycle_passes_take_profit_target_to_paper_buyer(tmp_path):
+    """The paper trader receives the per-token target after a durable alert."""
+    db = Database(str(tmp_path / "target.db"))
+    await db.initialize()
+    paper = AsyncMock(return_value=None)
+    scanner = UnifiedSolanaScanner(
+        DiscoveryCoordinator([StaticSource("source", [candidate()])]),
+        CommonEvaluator(StubPairClient(), StubOnchain(), StubX()),
+        db, AsyncMock(return_value=True), paper_buyer=paper,
+    )
+    result = await scanner.run_cycle()
+    await db.close()
+
+    assert paper.await_count == 1
+    args = paper.await_args[0]
+    assert args[0] is result["alerted"].candidate
+    assert args[2] == result["alerted"].take_profit_target
+    assert 1.5 <= args[2] <= 4.0
+
+
+@pytest.mark.asyncio
+async def test_main_paper_buyer_forwards_target_to_trader():
+    """__main__._paper_buyer puts the target into token_data for buy()."""
+    from memescanner.__main__ import _paper_buyer
+
+    trader = AsyncMock()
+    await _paper_buyer(trader, candidate(), {"market_cap": 100_000}, 2.75)
+
+    token_data, dex_data = trader.buy.await_args[0]
+    assert token_data["take_profit_target"] == 2.75
+    assert token_data["mint"] == "Mint111"
+    assert dex_data["market_cap"] == 100_000
+
+
+@pytest.mark.asyncio
+async def test_main_paper_buyer_forwards_real_price():
+    """The live price is forwarded so tracking is supply-independent."""
+    from memescanner.__main__ import _paper_buyer
+
+    trader = AsyncMock()
+    await _paper_buyer(
+        trader, candidate(), {"market_cap": 100_000, "price_usd": 0.001}, 2.0
+    )
+
+    _, dex_data = trader.buy.await_args[0]
+    assert dex_data["price_usd"] == 0.001
+    assert dex_data["market_cap"] == 100_000

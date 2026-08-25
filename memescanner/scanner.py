@@ -534,7 +534,17 @@ async def fetch_dex_data(mint: str) -> Optional[Dict[str, Any]]:
             liquidity_usd = liquidity.get("usd", 0) or 0
             volume_to_mcap = volume_24h / max(market_cap, 1)
 
+            # priceUsd is a string in the raw pair payload. It is the only
+            # supply-independent live quote: marketCap/fdv move whenever
+            # reported supply changes (burns, unlocks, pool migrations), so
+            # position tracking must not use them as a price proxy.
+            try:
+                price_usd = float(best_pair.get("priceUsd") or 0)
+            except (TypeError, ValueError):
+                price_usd = 0.0
+
             return {
+                "price_usd": price_usd,
                 "market_cap": market_cap,
                 "fdv": best_pair.get("fdv", 0),
                 "liquidity_usd": liquidity_usd,

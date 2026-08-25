@@ -26,7 +26,14 @@ from memescanner.x_search import XSearchClient
 logger = logging.getLogger(__name__)
 
 AlertSender = Callable[[str], Awaitable[bool]]
-PaperBuyer = Callable[[NormalizedCandidate, Dict[str, Any]], Awaitable[Any]]
+# (candidate, market, take_profit_target) -> awaitable
+PaperBuyer = Callable[[NormalizedCandidate, Dict[str, Any], float], Awaitable[Any]]
+
+# Bounds for the dynamic per-token take-profit multiple. These size an exit
+# heuristically from observed evidence; they are not return predictions.
+TAKE_PROFIT_TARGET_BASE = 2.0
+TAKE_PROFIT_TARGET_MIN = 1.5
+TAKE_PROFIT_TARGET_MAX = 4.0
 
 # Indicators in X evidence content that suggest viral reach (high views/impressions).
 _VIRAL_INDICATORS = (
@@ -57,6 +64,7 @@ class CandidateDecision:
     alerted: bool = False
     evaluated_at: Optional[str] = None
     evaluated_age_minutes: Optional[float] = None
+    take_profit_target: float = 2.0
 
 
 def celebrity_mint_evidence(x_data: Dict[str, Any], mint: str) -> Dict[str, Any]:
@@ -96,6 +104,72 @@ def celebrity_mint_evidence(x_data: Dict[str, Any], mint: str) -> Dict[str, Any]
     }
 
 
+def compute_take_profit_target(decision: CandidateDecision) -> float:
+    """
+    Derive a per-token take-profit multiple from evidence already on the decision.
+
+    This is a heuristic sizing aid, not a price prediction: deeper liquidity,
+    wider holder distribution, and volume-confirmed turnover earn a higher
+    target, while thin pools, concentration, and coordination flags pull it down.
+
+    Args:
+        decision: An evaluated candidate decision with market and evidence data.
+
+    Returns:
+        Take-profit multiple clamped to [1.5, 4.0] and rounded to 2 decimals.
+    """
+    market = decision.market or {}
+    onchain = decision.evidence.get("onchain") or {}
+    x_data = decision.evidence.get("x") or {}
+
+    target = TAKE_PROFIT_TARGET_BASE
+
+    # Liquidity depth relative to market cap: the inverse of the LPI pattern.
+    market_cap = float(market.get("market_cap") or 0)
+    if market_cap > 0:
+        liquidity_to_mcap = float(market.get("liquidity_usd") or 0) / market_cap
+        if liquidity_to_mcap >= 0.20:
+            target += 0.75
+        elif liquidity_to_mcap >= 0.12:
+            target += 0.25
+        elif liquidity_to_mcap < 0.10:
+            target -= 0.5
+
+    concentration = onchain.get("top10_concentration_pct")
+    if concentration is not None:
+        if concentration < 15:
+            target += 0.5
+        elif concentration >= 25:
+            target -= 0.5
+
+    if onchain.get("coordinated_risk") == "MEDIUM":
+        target -= 0.5
+
+    holder_suspicion = onchain.get("holder_suspicion") or {}
+    if holder_suspicion.get("risk") == "MEDIUM":
+        target -= 0.5
+
+    x_result_count = int(x_data.get("result_count") or 0)
+    if x_result_count >= 20:
+        target += 0.5
+    elif x_result_count >= 10:
+        target += 0.25
+
+    volume_to_mcap_ratio = float(market.get("volume_to_mcap_ratio") or 0)
+    if volume_to_mcap_ratio >= 2.0:
+        target += 0.5
+    elif volume_to_mcap_ratio < 0.5:
+        target -= 0.25
+
+    if decision.screening_score >= 80:
+        target += 0.25
+
+    clamped = max(
+        TAKE_PROFIT_TARGET_MIN, min(TAKE_PROFIT_TARGET_MAX, target)
+    )
+    return round(clamped, 2)
+
+
 class CommonEvaluator:
     """Applies identical age, market, OSINT, holder, rug, and chain gates."""
 
@@ -114,6 +188,9 @@ class CommonEvaluator:
         max_dev_holding_pct: float = 30.0,
         max_top10_concentration_pct: float = 30.0,
         min_x_mentions: int = 5,
+        min_liquidity_to_mcap_ratio: float = 0.08,
+        max_spike_price_change_1h_pct: float = 100.0,
+        min_spike_volume_to_mcap_ratio: float = 0.5,
     ) -> None:
         self.pair_client = pair_client
         self.onchain = onchain
@@ -127,6 +204,9 @@ class CommonEvaluator:
         self.max_dev_holding_pct = max_dev_holding_pct
         self.max_top10_concentration_pct = max_top10_concentration_pct
         self.min_x_mentions = min_x_mentions
+        self.min_liquidity_to_mcap_ratio = min_liquidity_to_mcap_ratio
+        self.max_spike_price_change_1h_pct = max_spike_price_change_1h_pct
+        self.min_spike_volume_to_mcap_ratio = min_spike_volume_to_mcap_ratio
 
     async def evaluate(
         self, candidate: NormalizedCandidate, *, onchain_budget_available: bool
@@ -177,6 +257,30 @@ class CommonEvaluator:
         volume_24h = float(market.get("volume_24h") or 0)
         if volume_24h < self.min_volume_24h_usd:
             return CandidateDecision(candidate, "REJECTED", ["VOLUME_24H_BELOW_MINIMUM"], market=market)
+
+        # A high market cap sustained by very thin liquidity is the documented
+        # Liquidity Pool-Based Price Inflation (LPI) pattern: small trades in a
+        # shallow pool manufacture price growth, so the market cap reflects pool
+        # depth rather than real demand and cannot be exited at quoted prices.
+        if market_cap > 0:
+            liquidity_to_mcap = liquidity / market_cap
+            if liquidity_to_mcap < self.min_liquidity_to_mcap_ratio:
+                return CandidateDecision(
+                    candidate, "REJECTED", ["LIQUIDITY_TO_MCAP_TOO_THIN"], market=market
+                )
+
+        # Same LPI family seen from the price side: a large 1h move that is not
+        # backed by proportional turnover is price growth manufactured in a
+        # shallow pool, not volume-confirmed demand.
+        price_change_1h = float(market.get("price_change_1h") or 0)
+        volume_to_mcap_ratio = float(market.get("volume_to_mcap_ratio") or 0)
+        if (
+            price_change_1h > self.max_spike_price_change_1h_pct
+            and volume_to_mcap_ratio < self.min_spike_volume_to_mcap_ratio
+        ):
+            return CandidateDecision(
+                candidate, "REJECTED", ["SUSPICIOUS_PRICE_SPIKE_LOW_VOLUME"], market=market
+            )
 
         if not onchain_budget_available:
             return CandidateDecision(
@@ -264,7 +368,7 @@ class CommonEvaluator:
         # Paid boosts, narrative names, deployer identity, and celebrity context
         # deliberately contribute zero points.
         score = min(100.0, 35.0 + min(liquidity / 1000.0, 30.0) + min(ratio * 5.0, 25.0))
-        return CandidateDecision(
+        qualified = CandidateDecision(
             candidate,
             "QUALIFIED",
             [],
@@ -274,6 +378,8 @@ class CommonEvaluator:
             evaluated_at=datetime.now(timezone.utc).isoformat(),
             evaluated_age_minutes=age,
         )
+        qualified.take_profit_target = compute_take_profit_target(qualified)
+        return qualified
 
     async def _forensic_x_search(self, mint: str) -> Dict[str, Any]:
         """
@@ -384,6 +490,8 @@ def format_signal(decision: CandidateDecision) -> str:
         f"Creator holding: {dev_text}",
         f"Top-10 concentration: {top10_text}",
     ] + (holder_flags_lines if holder_flags_lines else []) + [
+        f"Suggested take-profit target: {decision.take_profit_target:.2f}x "
+        "(dynamic, not a prediction)",
         f"Bubblemaps: {bubblemaps_link}",
         f"Sources: {sources}",
         f"Paid boost metadata: {'present (not scored)' if candidate.paid_boost else 'none'}",
@@ -553,7 +661,11 @@ class UnifiedSolanaScanner:
                 )
                 if winner.alerted and self.paper_buyer is not None:
                     try:
-                        await self.paper_buyer(winner.candidate, winner.market or {})
+                        await self.paper_buyer(
+                            winner.candidate,
+                            winner.market or {},
+                            winner.take_profit_target,
+                        )
                     except Exception as exc:
                         logger.warning(
                             "Virtual paper action failed after durable alert for %s: %s",
