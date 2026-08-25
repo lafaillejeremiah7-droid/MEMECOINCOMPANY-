@@ -14,8 +14,8 @@ Tables:
 
 import json
 import logging
-from datetime import datetime
-from typing import Any, Dict, List, Optional
+from datetime import datetime, timezone
+from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 import aiosqlite
 
@@ -55,6 +55,8 @@ class Database:
         """
         self._db = await aiosqlite.connect(self.db_path)
         self._db.row_factory = aiosqlite.Row
+        await self._db.execute("PRAGMA journal_mode=WAL")
+        await self._db.execute("PRAGMA busy_timeout=5000")
         await self._create_tables()
         logger.info("Database initialized at %s", self.db_path)
 
@@ -145,6 +147,95 @@ class Database:
                 PRIMARY KEY (chain_id, mint)
             );
 
+            CREATE TABLE IF NOT EXISTS cohort_candidates (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                chain_id TEXT NOT NULL,
+                mint TEXT NOT NULL,
+                first_discovered_at TEXT NOT NULL,
+                first_discovered_epoch REAL NOT NULL,
+                first_cycle_id INTEGER NOT NULL,
+                candidate_json TEXT NOT NULL,
+                sources_json TEXT NOT NULL,
+                policy_version TEXT NOT NULL,
+                feature_schema_version TEXT NOT NULL,
+                first_evaluated_at TEXT,
+                first_evaluated_epoch REAL,
+                initial_decision TEXT,
+                initial_screening_score REAL,
+                initial_features_json TEXT,
+                created_at TEXT NOT NULL,
+                UNIQUE(chain_id, mint)
+            );
+
+            CREATE TABLE IF NOT EXISTS outcome_jobs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                candidate_id INTEGER NOT NULL,
+                horizon_seconds INTEGER NOT NULL,
+                target_at REAL NOT NULL,
+                window_seconds INTEGER NOT NULL,
+                status TEXT NOT NULL DEFAULT 'PENDING',
+                attempt_count INTEGER NOT NULL DEFAULT 0,
+                next_attempt_at REAL NOT NULL,
+                lease_owner TEXT,
+                lease_until REAL,
+                last_error_code TEXT,
+                completed_at TEXT,
+                UNIQUE(candidate_id, horizon_seconds)
+            );
+
+            CREATE TABLE IF NOT EXISTS market_observations (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                candidate_id INTEGER NOT NULL,
+                horizon_seconds INTEGER NOT NULL,
+                target_at REAL NOT NULL,
+                captured_at TEXT NOT NULL,
+                captured_epoch REAL NOT NULL,
+                lag_seconds REAL NOT NULL,
+                provider TEXT NOT NULL,
+                pair_address TEXT,
+                price_usd REAL,
+                market_cap REAL,
+                liquidity_usd REAL,
+                status TEXT NOT NULL,
+                error_code TEXT
+            );
+
+            CREATE TABLE IF NOT EXISTS candidate_outcomes (
+                candidate_id INTEGER NOT NULL,
+                horizon_seconds INTEGER NOT NULL,
+                definition_version TEXT NOT NULL,
+                baseline_observation_id INTEGER NOT NULL,
+                terminal_observation_id INTEGER NOT NULL,
+                price_return_pct REAL NOT NULL,
+                event_2x INTEGER NOT NULL,
+                computed_at TEXT NOT NULL,
+                PRIMARY KEY (candidate_id, horizon_seconds, definition_version)
+            );
+
+            CREATE TABLE IF NOT EXISTS calibration_runs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                created_at TEXT NOT NULL,
+                as_of_epoch REAL NOT NULL,
+                horizon_seconds INTEGER NOT NULL,
+                policy_version TEXT NOT NULL,
+                feature_schema_version TEXT NOT NULL,
+                definition_version TEXT NOT NULL,
+                status TEXT NOT NULL,
+                report_json TEXT NOT NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_cohort_first_discovered
+                ON cohort_candidates(first_discovered_epoch);
+            CREATE INDEX IF NOT EXISTS idx_outcome_jobs_due
+                ON outcome_jobs(status, next_attempt_at, target_at);
+            CREATE INDEX IF NOT EXISTS idx_market_observations_candidate
+                ON market_observations(candidate_id, horizon_seconds, captured_epoch);
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_market_observations_capture
+                ON market_observations(candidate_id, horizon_seconds)
+                WHERE status = 'CAPTURED';
+            CREATE INDEX IF NOT EXISTS idx_candidate_outcomes_horizon
+                ON candidate_outcomes(horizon_seconds, definition_version);
+
             CREATE INDEX IF NOT EXISTS idx_tokens_alerted
                 ON tokens(alerted);
             CREATE INDEX IF NOT EXISTS idx_tokens_first_seen
@@ -173,6 +264,15 @@ class Database:
         await self._ensure_column("candidate_observations", "market_json", "TEXT")
         await self._ensure_column("candidate_observations", "screening_score", "REAL")
         await self._ensure_column("candidate_observations", "candidate_json", "TEXT")
+        await self._ensure_column("candidate_observations", "cycle_id", "INTEGER")
+        await self._ensure_column("candidate_observations", "candidate_id", "INTEGER")
+        await self._ensure_column("candidate_observations", "policy_version", "TEXT")
+        await self._ensure_column(
+            "candidate_observations", "feature_schema_version", "TEXT"
+        )
+        await self._ensure_column(
+            "cohort_candidates", "first_evaluated_epoch", "REAL"
+        )
         await self._db.commit()
 
     async def _ensure_column(self, table: str, column: str, declaration: str) -> None:
@@ -193,6 +293,95 @@ class Database:
             logger.info("Database connection closed")
 
     # --- Discovery observation operations ---
+
+    async def record_discovery_batch(
+        self,
+        source_status: Dict[str, str],
+        candidates: Iterable[Dict[str, Any]],
+        horizons: Dict[int, int],
+        *,
+        policy_version: str,
+        feature_schema_version: str,
+        discovered_at: Optional[float] = None,
+    ) -> Tuple[int, Dict[Tuple[str, str], int]]:
+        """Atomically enroll every discovered identity before downstream filtering.
+
+        The first-seen cohort is insert-only. Repeated discovery never changes
+        its clock or creates duplicate outcome jobs, which prevents alert/filter
+        selection from defining the calibration denominator.
+        """
+        assert self._db is not None
+        candidate_rows = list(candidates)
+        timestamp = discovered_at if discovered_at is not None else datetime.now(
+            timezone.utc
+        ).timestamp()
+        observed_at = datetime.fromtimestamp(timestamp, timezone.utc).isoformat()
+        identities: Dict[Tuple[str, str], int] = {}
+        await self._db.execute("BEGIN IMMEDIATE")
+        try:
+            cursor = await self._db.execute(
+                """INSERT INTO discovery_cycles
+                   (observed_at, source_status_json, candidate_count)
+                   VALUES (?, ?, ?)""",
+                (
+                    observed_at,
+                    json.dumps(source_status, sort_keys=True),
+                    len(candidate_rows),
+                ),
+            )
+            cycle_id = int(cursor.lastrowid)
+            for candidate in candidate_rows:
+                chain_id = str(candidate["chain_id"]).lower()
+                mint = str(candidate["mint"])
+                await self._db.execute(
+                    """INSERT OR IGNORE INTO cohort_candidates (
+                           chain_id, mint, first_discovered_at,
+                           first_discovered_epoch, first_cycle_id, candidate_json,
+                           sources_json, policy_version, feature_schema_version,
+                           created_at
+                       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (
+                        chain_id,
+                        mint,
+                        observed_at,
+                        timestamp,
+                        cycle_id,
+                        json.dumps(candidate, sort_keys=True),
+                        json.dumps(sorted(candidate.get("sources", []))),
+                        policy_version,
+                        feature_schema_version,
+                        observed_at,
+                    ),
+                )
+                async with self._db.execute(
+                    """SELECT id, first_discovered_epoch FROM cohort_candidates
+                       WHERE chain_id = ? AND mint = ?""",
+                    (chain_id, mint),
+                ) as row_cursor:
+                    row = await row_cursor.fetchone()
+                candidate_id = int(row["id"])
+                identities[(chain_id, mint)] = candidate_id
+                first_seen = float(row["first_discovered_epoch"])
+                for horizon_seconds, window_seconds in horizons.items():
+                    target_at = first_seen + int(horizon_seconds)
+                    await self._db.execute(
+                        """INSERT OR IGNORE INTO outcome_jobs (
+                               candidate_id, horizon_seconds, target_at,
+                               window_seconds, status, next_attempt_at
+                           ) VALUES (?, ?, ?, ?, 'PENDING', ?)""",
+                        (
+                            candidate_id,
+                            int(horizon_seconds),
+                            target_at,
+                            int(window_seconds),
+                            target_at,
+                        ),
+                    )
+            await self._db.commit()
+            return cycle_id, identities
+        except Exception:
+            await self._db.rollback()
+            raise
 
     async def record_discovery_cycle(
         self, source_status: Dict[str, str], candidate_count: int
@@ -220,12 +409,13 @@ class Database:
                 chain_id, mint, observed_at, name, symbol, candidate_json,
                 pair_created_at, age_minutes, age_provenance, sources_json, boost_json,
                 evidence_json, market_json, screening_score, decision,
-                reasons_json, alerted, outcome_identity
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                reasons_json, alerted, outcome_identity, cycle_id, candidate_id,
+                policy_version, feature_schema_version
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 observation["chain_id"], observation["mint"],
-                observation.get("observed_at", datetime.utcnow().isoformat()),
+                observation.get("observed_at", datetime.now(timezone.utc).isoformat()),
                 observation.get("name"), observation.get("symbol"),
                 json.dumps(observation.get("candidate", {}), sort_keys=True),
                 observation.get("pair_created_at"), observation.get("age_minutes"),
@@ -240,8 +430,47 @@ class Database:
                 int(bool(observation.get("alerted", False))),
                 observation.get("outcome_identity")
                 or f"{observation['chain_id']}:{observation['mint']}",
+                observation.get("cycle_id"), observation.get("candidate_id"),
+                observation.get("policy_version"),
+                observation.get("feature_schema_version"),
             ),
         )
+        candidate_id = observation.get("candidate_id")
+        cycle_id = observation.get("cycle_id")
+        if candidate_id is not None and cycle_id is not None:
+            observed_at = observation.get(
+                "observed_at", datetime.now(timezone.utc).isoformat()
+            )
+            try:
+                observed_epoch = datetime.fromisoformat(
+                    str(observed_at).replace("Z", "+00:00")
+                ).timestamp()
+            except (TypeError, ValueError):
+                observed_epoch = None
+            # Freeze the first discovery cycle exactly as observed, including
+            # DEFERRED/missing evidence. Later rediscovery can never backfill a
+            # predictor after an outcome has occurred.
+            await self._db.execute(
+                """UPDATE cohort_candidates
+                   SET first_evaluated_at = ?, first_evaluated_epoch = ?,
+                       initial_decision = ?, initial_screening_score = ?,
+                       initial_features_json = ?
+                   WHERE id = ? AND first_cycle_id = ?
+                     AND first_evaluated_at IS NULL""",
+                (
+                    observed_at,
+                    observed_epoch,
+                    observation.get("decision"),
+                    observation.get("screening_score"),
+                    json.dumps({
+                        "market": observation.get("market", {}),
+                        "evidence": observation.get("evidence", {}),
+                        "reasons": observation.get("reasons", []),
+                    }, sort_keys=True),
+                    candidate_id,
+                    cycle_id,
+                ),
+            )
         await self._db.commit()
 
     async def try_claim_candidate_alert(self, chain_id: str, mint: str) -> bool:
@@ -313,6 +542,309 @@ class Database:
         query += " ORDER BY observed_at"
         async with self._db.execute(query, tuple(params)) as cursor:
             return [dict(row) for row in await cursor.fetchall()]
+
+    # --- Prospective outcome operations ---
+
+    async def claim_due_outcome_jobs(
+        self,
+        *,
+        now_epoch: float,
+        limit: int,
+        worker_id: str,
+        lease_seconds: int = 60,
+        horizon_seconds: Optional[int] = None,
+        candidate_ids: Optional[Sequence[int]] = None,
+    ) -> List[Dict[str, Any]]:
+        """Lease due fixed-horizon jobs and explicitly expire missed windows."""
+        assert self._db is not None
+        await self._db.execute("BEGIN IMMEDIATE")
+        try:
+            horizon_clause = " AND horizon_seconds = ?" if horizon_seconds is not None else ""
+            horizon_params: Tuple[Any, ...] = (
+                (int(horizon_seconds),) if horizon_seconds is not None else ()
+            )
+            normalized_candidate_ids = [int(value) for value in (candidate_ids or [])]
+            candidate_placeholders = ",".join("?" for _ in normalized_candidate_ids)
+            update_candidate_clause = (
+                f" AND candidate_id IN ({candidate_placeholders})"
+                if normalized_candidate_ids else ""
+            )
+            select_candidate_clause = (
+                f" AND j.candidate_id IN ({candidate_placeholders})"
+                if normalized_candidate_ids else ""
+            )
+            candidate_params: Tuple[Any, ...] = tuple(normalized_candidate_ids)
+            await self._db.execute(
+                f"""UPDATE outcome_jobs
+                    SET status = 'MISSED_WINDOW', completed_at = ?,
+                        last_error_code = 'MISSED_WINDOW', lease_owner = NULL,
+                        lease_until = NULL
+                    WHERE status IN ('PENDING', 'RETRYING', 'IN_PROGRESS')
+                      AND target_at + window_seconds < ?{horizon_clause}{update_candidate_clause}""",
+                (
+                    datetime.fromtimestamp(now_epoch, timezone.utc).isoformat(),
+                    now_epoch,
+                    *horizon_params,
+                    *candidate_params,
+                ),
+            )
+            async with self._db.execute(
+                f"""SELECT j.*, c.chain_id, c.mint
+                    FROM outcome_jobs j
+                    JOIN cohort_candidates c ON c.id = j.candidate_id
+                    WHERE j.target_at <= ?
+                      AND j.target_at + j.window_seconds >= ?
+                      AND j.next_attempt_at <= ?
+                      AND (
+                          j.status IN ('PENDING', 'RETRYING')
+                          OR (j.status = 'IN_PROGRESS' AND j.lease_until < ?)
+                      ){horizon_clause}{select_candidate_clause}
+                    ORDER BY j.horizon_seconds ASC, j.target_at ASC, j.id ASC
+                    LIMIT ?""",
+                (
+                    now_epoch, now_epoch, now_epoch, now_epoch,
+                    *horizon_params, *candidate_params, int(limit),
+                ),
+            ) as cursor:
+                rows = [dict(row) for row in await cursor.fetchall()]
+            for row in rows:
+                await self._db.execute(
+                    """UPDATE outcome_jobs
+                       SET status = 'IN_PROGRESS', attempt_count = attempt_count + 1,
+                           lease_owner = ?, lease_until = ?
+                       WHERE id = ?""",
+                    (worker_id, now_epoch + lease_seconds, row["id"]),
+                )
+            await self._db.commit()
+            return rows
+        except Exception:
+            await self._db.rollback()
+            raise
+
+    async def complete_outcome_job(
+        self,
+        job: Dict[str, Any],
+        market: Dict[str, Any],
+        *,
+        captured_epoch: float,
+        definition_version: str,
+        worker_id: str,
+    ) -> bool:
+        """CAS-complete one owned lease, rejecting stale or late responses."""
+        assert self._db is not None
+        price = market.get("price_usd")
+        if price is None or float(price) <= 0:
+            raise ValueError("captured market evidence requires a positive USD price")
+        captured_at = datetime.fromtimestamp(captured_epoch, timezone.utc).isoformat()
+        expires_at = float(job["target_at"]) + int(job["window_seconds"])
+        await self._db.execute("BEGIN IMMEDIATE")
+        try:
+            if captured_epoch > expires_at:
+                cursor = await self._db.execute(
+                    """UPDATE outcome_jobs
+                       SET status = 'MISSED_WINDOW', completed_at = ?,
+                           last_error_code = 'RESPONSE_OUTSIDE_CAPTURE_WINDOW',
+                           lease_owner = NULL, lease_until = NULL
+                       WHERE id = ? AND status = 'IN_PROGRESS'
+                         AND lease_owner = ?""",
+                    (captured_at, job["id"], worker_id),
+                )
+                if cursor.rowcount == 1:
+                    await self._db.execute(
+                        """INSERT INTO market_observations (
+                               candidate_id, horizon_seconds, target_at,
+                               captured_at, captured_epoch, lag_seconds,
+                               provider, status, error_code
+                           ) VALUES (?, ?, ?, ?, ?, ?, ?,
+                                     'OUTSIDE_CAPTURE_WINDOW',
+                                     'RESPONSE_OUTSIDE_CAPTURE_WINDOW')""",
+                        (
+                            job["candidate_id"], job["horizon_seconds"],
+                            job["target_at"], captured_at, captured_epoch,
+                            captured_epoch - float(job["target_at"]),
+                            market.get("provider", "dexscreener"),
+                        ),
+                    )
+                await self._db.commit()
+                return False
+
+            cursor = await self._db.execute(
+                """UPDATE outcome_jobs
+                   SET status = 'CAPTURED', completed_at = ?,
+                       last_error_code = NULL, lease_owner = NULL,
+                       lease_until = NULL
+                   WHERE id = ? AND status = 'IN_PROGRESS'
+                     AND lease_owner = ? AND lease_until >= ?""",
+                (captured_at, job["id"], worker_id, captured_epoch),
+            )
+            if cursor.rowcount != 1:
+                await self._db.rollback()
+                return False
+            observation_cursor = await self._db.execute(
+                """INSERT INTO market_observations (
+                       candidate_id, horizon_seconds, target_at, captured_at,
+                       captured_epoch, lag_seconds, provider, pair_address,
+                       price_usd, market_cap, liquidity_usd, status
+                   ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'CAPTURED')""",
+                (
+                    job["candidate_id"], job["horizon_seconds"], job["target_at"],
+                    captured_at, captured_epoch,
+                    captured_epoch - float(job["target_at"]),
+                    market.get("provider", "dexscreener"),
+                    market.get("pair_address"), float(price),
+                    market.get("market_cap"), market.get("liquidity_usd"),
+                ),
+            )
+            observation_id = int(observation_cursor.lastrowid)
+            if int(job["horizon_seconds"]) > 0:
+                async with self._db.execute(
+                    """SELECT id, price_usd FROM market_observations
+                       WHERE candidate_id = ? AND horizon_seconds = 0
+                         AND status = 'CAPTURED'
+                       ORDER BY captured_epoch ASC LIMIT 1""",
+                    (job["candidate_id"],),
+                ) as cursor2:
+                    baseline = await cursor2.fetchone()
+                if baseline is not None and float(baseline["price_usd"]) > 0:
+                    return_pct = (
+                        (float(price) / float(baseline["price_usd"])) - 1.0
+                    ) * 100.0
+                    await self._db.execute(
+                        """INSERT OR IGNORE INTO candidate_outcomes (
+                               candidate_id, horizon_seconds, definition_version,
+                               baseline_observation_id, terminal_observation_id,
+                               price_return_pct, event_2x, computed_at
+                           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                        (
+                            job["candidate_id"], job["horizon_seconds"],
+                            definition_version, baseline["id"], observation_id,
+                            return_pct, int(return_pct >= 100.0), captured_at,
+                        ),
+                    )
+            await self._db.commit()
+            return True
+        except Exception:
+            await self._db.rollback()
+            raise
+
+    async def retry_outcome_job(
+        self,
+        job: Dict[str, Any],
+        *,
+        now_epoch: float,
+        error_code: str,
+        retry_delay_seconds: int,
+        worker_id: str,
+    ) -> bool:
+        """CAS-retry an owned lease or persist terminal missingness once."""
+        assert self._db is not None
+        expires_at = float(job["target_at"]) + int(job["window_seconds"])
+        terminal = now_epoch + retry_delay_seconds > expires_at
+        status = "NO_DATA_WITHIN_WINDOW" if terminal else "RETRYING"
+        completed_at = (
+            datetime.fromtimestamp(now_epoch, timezone.utc).isoformat()
+            if terminal else None
+        )
+        await self._db.execute("BEGIN IMMEDIATE")
+        try:
+            cursor = await self._db.execute(
+                """UPDATE outcome_jobs
+                   SET status = ?, next_attempt_at = ?, last_error_code = ?,
+                       completed_at = ?, lease_owner = NULL, lease_until = NULL
+                   WHERE id = ? AND status = 'IN_PROGRESS'
+                     AND lease_owner = ?""",
+                (
+                    status,
+                    min(now_epoch + retry_delay_seconds, expires_at),
+                    error_code,
+                    completed_at,
+                    job["id"],
+                    worker_id,
+                ),
+            )
+            if cursor.rowcount != 1:
+                await self._db.rollback()
+                return False
+            if terminal:
+                await self._db.execute(
+                    """INSERT INTO market_observations (
+                           candidate_id, horizon_seconds, target_at, captured_at,
+                           captured_epoch, lag_seconds, provider, status, error_code
+                       ) VALUES (?, ?, ?, ?, ?, ?, 'dexscreener', ?, ?)""",
+                    (
+                        job["candidate_id"], job["horizon_seconds"],
+                        job["target_at"], completed_at, now_epoch,
+                        now_epoch - float(job["target_at"]), status, error_code,
+                    ),
+                )
+            await self._db.commit()
+            return True
+        except Exception:
+            await self._db.rollback()
+            raise
+
+    async def get_calibration_dataset(
+        self,
+        *,
+        horizon_seconds: int,
+        as_of_epoch: float,
+        definition_version: str,
+        policy_version: str,
+        feature_schema_version: str,
+    ) -> List[Dict[str, Any]]:
+        """Return one canonical row per due identity, including missing outcomes."""
+        assert self._db is not None
+        async with self._db.execute(
+            """SELECT
+                   c.id AS candidate_id, c.first_discovered_epoch,
+                   c.initial_decision, c.initial_screening_score,
+                   c.first_evaluated_at, c.first_evaluated_epoch,
+                   o.price_return_pct, o.event_2x,
+                   j.status AS outcome_job_status
+               FROM cohort_candidates c
+               JOIN outcome_jobs j
+                 ON j.candidate_id = c.id AND j.horizon_seconds = ?
+               LEFT JOIN candidate_outcomes o
+                 ON o.candidate_id = c.id AND o.horizon_seconds = ?
+                AND o.definition_version = ?
+               WHERE c.first_discovered_epoch + ? <= ?
+                 AND c.policy_version = ?
+                 AND c.feature_schema_version = ?
+               ORDER BY c.first_discovered_epoch ASC, c.id ASC""",
+            (
+                horizon_seconds, horizon_seconds, definition_version,
+                horizon_seconds, as_of_epoch, policy_version,
+                feature_schema_version,
+            ),
+        ) as cursor:
+            return [dict(row) for row in await cursor.fetchall()]
+
+    async def save_calibration_run(
+        self,
+        *,
+        as_of_epoch: float,
+        horizon_seconds: int,
+        policy_version: str,
+        feature_schema_version: str,
+        definition_version: str,
+        status: str,
+        report: Dict[str, Any],
+    ) -> int:
+        """Persist an immutable, read-only calibration eligibility report."""
+        assert self._db is not None
+        cursor = await self._db.execute(
+            """INSERT INTO calibration_runs (
+                   created_at, as_of_epoch, horizon_seconds, policy_version,
+                   feature_schema_version, definition_version, status, report_json
+               ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                datetime.now(timezone.utc).isoformat(), as_of_epoch,
+                horizon_seconds, policy_version, feature_schema_version,
+                definition_version, status, json.dumps(report, sort_keys=True),
+            ),
+        )
+        await self._db.commit()
+        return int(cursor.lastrowid)
 
     # --- Token Operations ---
 

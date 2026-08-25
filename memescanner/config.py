@@ -90,6 +90,35 @@ class AdaptationConfig:
 
 
 @dataclass
+class CalibrationConfig:
+    """Prospective outcome collection and conservative reporting gates."""
+
+    collect_outcomes: bool = True
+    horizon_windows_seconds: Dict[int, int] = field(default_factory=lambda: {
+        0: 120,
+        3600: 300,
+        21600: 900,
+        86400: 3600,
+    })
+    max_jobs_per_pass: int = 30
+    max_outcome_concurrency: int = 5
+    outcome_poll_seconds: float = 2.0
+    retry_delay_seconds: int = 15
+    report_interval_seconds: int = 86400
+    policy_version: str = "unified-safety-v1"
+    feature_schema_version: str = "screening-rank-v1"
+    definition_version: str = "price-return-2x-v1"
+    purge_gap_seconds: int = 86400
+    min_capture_coverage: float = 0.90
+    min_feature_coverage: float = 0.90
+    min_train_samples: int = 500
+    min_holdout_samples: int = 500
+    min_holdout_class_count: int = 50
+    min_score_band_samples: int = 100
+    min_reportable_score_bands: int = 2
+
+
+@dataclass
 class DatabaseConfig:
     """Database configuration."""
 
@@ -124,6 +153,7 @@ class Config:
     filters: FiltersConfig = field(default_factory=FiltersConfig)
     scoring: ScoringWeights = field(default_factory=ScoringWeights)
     adaptation: AdaptationConfig = field(default_factory=AdaptationConfig)
+    calibration: CalibrationConfig = field(default_factory=CalibrationConfig)
     database: DatabaseConfig = field(default_factory=DatabaseConfig)
     logging: LoggingConfig = field(default_factory=LoggingConfig)
 
@@ -176,6 +206,7 @@ class Config:
         filters_data = data.get("filters", {})
         scoring_data = data.get("scoring", {}).get("weights", {})
         adaptation_data = data.get("adaptation", {})
+        calibration_data = data.get("calibration", {})
         database_data = data.get("database", {})
         logging_data = data.get("logging", {})
 
@@ -232,6 +263,55 @@ class Config:
                 ),
                 reweight_day=adaptation_data.get("reweight_day", "sunday"),
             ),
+            calibration=CalibrationConfig(
+                collect_outcomes=calibration_data.get("collect_outcomes", True),
+                horizon_windows_seconds={
+                    int(key): int(value) for key, value in calibration_data.get(
+                        "horizon_windows_seconds",
+                        {0: 120, 3600: 300, 21600: 900, 86400: 3600},
+                    ).items()
+                },
+                max_jobs_per_pass=calibration_data.get("max_jobs_per_pass", 30),
+                max_outcome_concurrency=calibration_data.get(
+                    "max_outcome_concurrency", 5
+                ),
+                outcome_poll_seconds=calibration_data.get(
+                    "outcome_poll_seconds", 2.0
+                ),
+                retry_delay_seconds=calibration_data.get("retry_delay_seconds", 15),
+                report_interval_seconds=calibration_data.get(
+                    "report_interval_seconds", 86400
+                ),
+                policy_version=calibration_data.get(
+                    "policy_version", "unified-safety-v1"
+                ),
+                feature_schema_version=calibration_data.get(
+                    "feature_schema_version", "screening-rank-v1"
+                ),
+                definition_version=calibration_data.get(
+                    "definition_version", "price-return-2x-v1"
+                ),
+                purge_gap_seconds=calibration_data.get("purge_gap_seconds", 86400),
+                min_capture_coverage=calibration_data.get(
+                    "min_capture_coverage", 0.90
+                ),
+                min_feature_coverage=calibration_data.get(
+                    "min_feature_coverage", 0.90
+                ),
+                min_train_samples=calibration_data.get("min_train_samples", 500),
+                min_holdout_samples=calibration_data.get(
+                    "min_holdout_samples", 500
+                ),
+                min_holdout_class_count=calibration_data.get(
+                    "min_holdout_class_count", 50
+                ),
+                min_score_band_samples=calibration_data.get(
+                    "min_score_band_samples", 100
+                ),
+                min_reportable_score_bands=calibration_data.get(
+                    "min_reportable_score_bands", 2
+                ),
+            ),
             database=DatabaseConfig(
                 path=database_data.get("path", "memescanner.db"),
             ),
@@ -268,6 +348,11 @@ class Config:
         paper = os.getenv("MEMESCANNER_ENABLE_PAPER_TRADING")
         if paper is not None:
             self.scanner.enable_paper_trading = paper.lower() in {"1", "true", "yes", "on"}
+        collect_outcomes = os.getenv("MEMESCANNER_COLLECT_OUTCOMES")
+        if collect_outcomes is not None:
+            self.calibration.collect_outcomes = collect_outcomes.lower() in {
+                "1", "true", "yes", "on"
+            }
         return self
 
     def setup_logging(self) -> None:

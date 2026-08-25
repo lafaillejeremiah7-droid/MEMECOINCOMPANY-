@@ -4,3 +4,16 @@ __pycache__/
 config.yaml
 memescanner.log
 .pytest_cache/
+
+# Local credentials and private key material.
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+secrets*.yaml
+secrets*.yml
+credentials*.json
+service-account*.json

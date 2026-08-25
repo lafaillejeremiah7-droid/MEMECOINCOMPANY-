@@ -50,10 +50,40 @@ scoring:
     momentum: 0.05
 
 adaptation:
+  # Legacy compatibility only. The unified runtime never auto-reweights signals.
   track_outcomes: true
   outcome_check_intervals_hours: [1, 6, 24]
   min_samples_for_reweight: 50
   reweight_day: "sunday"
+
+# Prospective research collection is observation-only and enabled by default.
+# It never changes signals, paper positions, real risk, or execution behavior.
+calibration:
+  collect_outcomes: true  # MEMESCANNER_COLLECT_OUTCOMES
+  # Keys are fixed horizons in seconds; values are maximum capture windows.
+  horizon_windows_seconds:
+    0: 120
+    3600: 300
+    21600: 900
+    86400: 3600
+  max_jobs_per_pass: 30
+  max_outcome_concurrency: 5
+  outcome_poll_seconds: 2
+  retry_delay_seconds: 15
+  report_interval_seconds: 86400
+  policy_version: "unified-safety-v1"
+  feature_schema_version: "screening-rank-v1"
+  definition_version: "price-return-2x-v1"
+  # Conservative chronological holdout gates. Until every gate passes, reports
+  # say INSUFFICIENT_DATA_FOR_CALIBRATION and emit no probability claims.
+  purge_gap_seconds: 86400
+  min_capture_coverage: 0.90
+  min_feature_coverage: 0.90
+  min_train_samples: 500
+  min_holdout_samples: 500
+  min_holdout_class_count: 50
+  min_score_band_samples: 100
+  min_reportable_score_bands: 2
 
 database:
   path: "memescanner.db"

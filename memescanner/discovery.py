@@ -11,7 +11,7 @@ import asyncio
 import logging
 import time
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
 from typing import Any, Dict, Iterable, List, Optional, Protocol, Set, Tuple
 from urllib.parse import urlparse
@@ -418,9 +418,19 @@ class DexScreenerPairClient:
         base_token = pair.get("baseToken") or {}
         quote_token = pair.get("quoteToken") or {}
         candidate_token = base_token if base_token.get("address") == mint else quote_token
+        captured_epoch = time.time()
         return {
             "chain_id": SOLANA_CHAIN_ID,
+            "provider": "dexscreener",
+            "captured_at": datetime.fromtimestamp(
+                captured_epoch, timezone.utc
+            ).isoformat(),
+            "captured_at_epoch": captured_epoch,
             "pair_address": pair.get("pairAddress"),
+            "price_usd": (
+                float(pair["priceUsd"])
+                if pair.get("priceUsd") not in (None, "") else None
+            ),
             "pair_created_at": _timestamp_seconds(pair.get("pairCreatedAt")),
             "market_cap": market_cap,
             "liquidity_usd": float((pair.get("liquidity") or {}).get("usd") or 0),

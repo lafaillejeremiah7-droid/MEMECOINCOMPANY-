@@ -271,6 +271,9 @@ class UnifiedSolanaScanner:
         alert_sender: AlertSender,
         *,
         paper_buyer: Optional[PaperBuyer] = None,
+        cohort_horizons: Optional[Dict[int, int]] = None,
+        policy_version: str = "unified-safety-v1",
+        feature_schema_version: str = "screening-rank-v1",
         max_onchain_checks: int = MAX_ONCHAIN_CHECKS_PER_CYCLE,
         max_market_checks: int = 40,
     ) -> None:
@@ -279,6 +282,11 @@ class UnifiedSolanaScanner:
         self.database = database
         self.alert_sender = alert_sender
         self.paper_buyer = paper_buyer
+        self.cohort_horizons = cohort_horizons or {
+            0: 120, 3600: 300, 21600: 900, 86400: 3600
+        }
+        self.policy_version = policy_version
+        self.feature_schema_version = feature_schema_version
         self.max_onchain_checks = max_onchain_checks
         self.max_market_checks = max_market_checks
         self._rotation_offset = 0
@@ -292,8 +300,12 @@ class UnifiedSolanaScanner:
             )
             for source in self.discovery.sources
         }
-        await self.database.record_discovery_cycle(
-            source_status, len(discovery_result.candidates)
+        cycle_id, cohort_ids = await self.database.record_discovery_batch(
+            source_status,
+            [self._cohort_candidate(candidate) for candidate in discovery_result.candidates],
+            self.cohort_horizons,
+            policy_version=self.policy_version,
+            feature_schema_version=self.feature_schema_version,
         )
         candidates = discovery_result.candidates
         if candidates:
@@ -359,7 +371,14 @@ class UnifiedSolanaScanner:
         # rows or silently expire into a duplicate alert.
         for decision in decisions:
             await self.database.record_candidate_observation(
-                self._observation(decision, discovery_result.source_failures)
+                self._observation(
+                    decision,
+                    discovery_result.source_failures,
+                    cycle_id=cycle_id,
+                    candidate_id=cohort_ids.get(decision.candidate.identity),
+                    policy_version=self.policy_version,
+                    feature_schema_version=self.feature_schema_version,
+                )
             )
 
         if winner is not None and winner_claimed:
@@ -369,7 +388,14 @@ class UnifiedSolanaScanner:
                 winner.decision = "ALERT_DELIVERY_UNCERTAIN"
                 winner.reasons.append(f"ALERT_SENDER_EXCEPTION:{type(exc).__name__}")
                 await self.database.record_candidate_observation(
-                    self._observation(winner, discovery_result.source_failures)
+                    self._observation(
+                        winner,
+                        discovery_result.source_failures,
+                        cycle_id=cycle_id,
+                        candidate_id=cohort_ids.get(winner.candidate.identity),
+                        policy_version=self.policy_version,
+                        feature_schema_version=self.feature_schema_version,
+                    )
                 )
                 logger.exception(
                     "Alert delivery state is uncertain for %s; pending claim retained",
@@ -383,7 +409,14 @@ class UnifiedSolanaScanner:
                 else:
                     await self.database.complete_candidate_alert(*winner.candidate.identity)
                 await self.database.record_candidate_observation(
-                    self._observation(winner, discovery_result.source_failures)
+                    self._observation(
+                        winner,
+                        discovery_result.source_failures,
+                        cycle_id=cycle_id,
+                        candidate_id=cohort_ids.get(winner.candidate.identity),
+                        policy_version=self.policy_version,
+                        feature_schema_version=self.feature_schema_version,
+                    )
                 )
                 if winner.alerted and self.paper_buyer is not None:
                     try:
@@ -402,8 +435,34 @@ class UnifiedSolanaScanner:
         }
 
     @staticmethod
+    def _cohort_candidate(candidate: NormalizedCandidate) -> Dict[str, Any]:
+        """Serialize immutable first-discovery identity/provenance safely."""
+        return {
+            "chain_id": candidate.chain_id.lower(),
+            "mint": candidate.mint,
+            "name": candidate.name,
+            "symbol": candidate.symbol,
+            "description": candidate.description,
+            "pair_created_at": candidate.pair_created_at,
+            "age_provenance": candidate.age_provenance,
+            "social_links": sorted(candidate.social_links),
+            "sources": sorted(candidate.sources),
+            "paid_boost": candidate.paid_boost,
+            "boost_amount": candidate.boost_amount,
+            "boost_total_amount": candidate.boost_total_amount,
+            "creator": candidate.creator,
+            "source_metadata": candidate.source_metadata,
+        }
+
+    @staticmethod
     def _observation(
-        decision: CandidateDecision, source_failures: Optional[Dict[str, str]] = None
+        decision: CandidateDecision,
+        source_failures: Optional[Dict[str, str]] = None,
+        *,
+        cycle_id: Optional[int] = None,
+        candidate_id: Optional[int] = None,
+        policy_version: str = "unified-safety-v1",
+        feature_schema_version: str = "screening-rank-v1",
     ) -> Dict[str, Any]:
         candidate = decision.candidate
         market = dict(decision.market or {})
@@ -414,6 +473,10 @@ class UnifiedSolanaScanner:
         return {
             "chain_id": candidate.chain_id,
             "mint": candidate.mint,
+            "cycle_id": cycle_id,
+            "candidate_id": candidate_id,
+            "policy_version": policy_version,
+            "feature_schema_version": feature_schema_version,
             "observed_at": datetime.now(timezone.utc).isoformat(),
             "name": candidate.name,
             "symbol": candidate.symbol,

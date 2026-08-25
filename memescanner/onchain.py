@@ -104,7 +104,9 @@ class OnchainAnalyzer:
 
             return data.get("result")
         except Exception as e:
-            logger.warning("RPC call %s failed: %s", method, str(e))
+            # Never include the request URL in logs: Helius API keys may be
+            # embedded in its query string.
+            logger.warning("RPC call %s failed: %s", method, type(e).__name__)
             return None
 
     async def _get_token_largest_accounts(
