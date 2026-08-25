@@ -230,6 +230,25 @@ class OnchainAnalyzer:
                 "transferhook", "transferhookextension",
                 "transferfeeconfig", "transferfeeconfigextension",
             }
+            # Harmless metadata/informational extensions that do not affect
+            # token safety or holder control and should not block verification.
+            safe_informational_extensions = {
+                "metadatapointer", "metadatapointerextension",
+                "tokenmetadata", "tokenmetadataextension",
+                "grouppointer", "grouppointerextension",
+                "groupmemberpointer", "groupmemberpointerextension",
+                "tokengroup", "tokengroupextension",
+                "tokengroupmember", "tokengroupmemberextension",
+                "interesttokens", "interesttokensextension",
+                "interestbearingconfig", "interestbearingconfigextension",
+                "cpiguard", "cpiguardextension",
+                "memoTransfer", "memotransfer", "memotransferextension",
+                "immutableowner", "immutableownerextension",
+                "confidentialtransfers", "confidentialtransfersextension",
+                "confidentialtransfermint", "confidentialtransfermintextension",
+                "confidentialtransferaccount", "confidentialtransferaccountextension",
+                "confidentialtransferfeeconfig", "confidentialtransferfeeconfigextension",
+            }
             if info["mint_authority_revoked"] is False:
                 dangerous.append("ACTIVE_MINT_AUTHORITY")
             if info["freeze_authority_revoked"] is False:
@@ -243,7 +262,8 @@ class OnchainAnalyzer:
                     extension.get("extension") or extension.get("type") or ""
                 ).lower().replace("_", "").replace("-", "")
                 if extension_type not in known_extensions:
-                    unsupported.append(extension_type or "UNNAMED_EXTENSION")
+                    if extension_type not in safe_informational_extensions:
+                        unsupported.append(extension_type or "UNNAMED_EXTENSION")
                     continue
                 state = extension.get("state") or extension
                 if extension_type in {"defaultaccountstate", "defaultaccountstateextension"}:
