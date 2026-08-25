@@ -101,10 +101,21 @@ class RecoveryChecker:
     make a HOLD/DCA/SELL decision.
     """
 
-    def __init__(self):
-        """Initialize the RecoveryChecker with an XSearchClient and OnchainAnalyzer."""
-        self._x_client = XSearchClient()
-        self._onchain_analyzer = OnchainAnalyzer()
+    def __init__(
+        self,
+        onchain_analyzer: Optional[OnchainAnalyzer] = None,
+        x_client: Optional[XSearchClient] = None,
+    ):
+        """Initialize the RecoveryChecker with an XSearchClient and OnchainAnalyzer.
+
+        Args:
+            onchain_analyzer: Optional pre-configured OnchainAnalyzer instance.
+                Falls back to a default (env-based) instance if not provided.
+            x_client: Optional pre-configured XSearchClient instance.
+                Falls back to a default (env-based) instance if not provided.
+        """
+        self._x_client = x_client or XSearchClient()
+        self._onchain_analyzer = onchain_analyzer or OnchainAnalyzer()
 
     async def check_recovery(self, mint: str, symbol: str) -> Dict[str, Any]:
         """

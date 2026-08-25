@@ -59,6 +59,8 @@ class PaperTrader:
         trade_size: float = 50.0,
         db_path: Optional[str] = None,
         message_sender: Optional[Callable[[str], Awaitable[bool]]] = None,
+        onchain_analyzer: Optional["OnchainAnalyzer"] = None,
+        x_client: Optional["XSearchClient"] = None,
     ):
         """
         Initialize the paper trader.
@@ -66,11 +68,17 @@ class PaperTrader:
         Args:
             starting_balance: Starting virtual balance (default $1,000).
             trade_size: Fixed trade size (default $50).
+            db_path: Path to the sqlite database file.
+            message_sender: Async callable for sending Telegram messages.
+            onchain_analyzer: Optional pre-configured OnchainAnalyzer for recovery checks.
+            x_client: Optional pre-configured XSearchClient for recovery checks.
         """
         self.starting_balance = starting_balance
         self.trade_size = trade_size
         self.db_path = db_path or DB_PATH
         self._message_sender = message_sender
+        self._onchain_analyzer = onchain_analyzer
+        self._x_client = x_client
         self.balance = starting_balance
         self.positions: List[Dict[str, Any]] = []
         self.closed_trades: List[Dict[str, Any]] = []
@@ -209,7 +217,8 @@ class PaperTrader:
         self.closed_trades = []
         async with self._db.execute(
             "SELECT id, mint, symbol, entry_price, exit_price, pnl_usd, pnl_pct, "
-            "entry_time, exit_time, exit_reason FROM paper_positions WHERE status = 'closed'"
+            "entry_time, exit_time, exit_reason FROM paper_positions "
+            "WHERE status IN ('closed', 'partial_closed')"
         ) as cursor:
             async for row in cursor:
                 self.closed_trades.append({
@@ -362,7 +371,10 @@ class PaperTrader:
 
         closed_this_cycle = []
         positions_to_remove = []
-        recovery_checker = RecoveryChecker()
+        recovery_checker = RecoveryChecker(
+            onchain_analyzer=self._onchain_analyzer,
+            x_client=self._x_client,
+        )
 
         for i, pos in enumerate(self.positions):
             mint = pos["mint"]
@@ -407,8 +419,11 @@ class PaperTrader:
                         # Position remains open with the remaining 20% riding
                         continue
 
-                    # Check trailing stop: after +100% taken, if price drops to entry
-                    if pos["breakeven_stop"] and current_price <= entry_price:
+                    # Check trailing stop: after +100% taken, if price drops to entry.
+                    # Use the original (pre-DCA) entry so the stop protects
+                    # actual breakeven rather than the lowered cost basis.
+                    trailing_stop_price = pos.get("original_entry_price") or entry_price
+                    if pos["breakeven_stop"] and current_price <= trailing_stop_price:
                         closed = await self._close_position(
                             pos, current_price, "Trailing stop (back to entry)"
                         )
@@ -619,6 +634,7 @@ class PaperTrader:
         pos["half_sold"] = True
         pos["breakeven_stop"] = True
         pos["amount_usd"] = remaining_amount  # Remaining 20% still riding
+        sold_tokens = pos["tokens_held"] * TAKE_PROFIT_SELL_FRACTION
         pos["tokens_held"] = pos["tokens_held"] * (1.0 - TAKE_PROFIT_SELL_FRACTION)
 
         # Add proceeds from the sold portion back to balance
@@ -631,6 +647,23 @@ class PaperTrader:
                 "UPDATE paper_positions SET half_sold = 1, breakeven_stop = 1, "
                 "amount_usd = ?, tokens_held = ? WHERE id = ?",
                 (pos["amount_usd"], pos["tokens_held"], pos.get("id")),
+            )
+            # Persist the partial close as a separate row so it survives restart.
+            await self._db.execute(
+                "INSERT INTO paper_positions (mint, symbol, entry_price, entry_mc, "
+                "amount_usd, tokens_held, entry_time, status, exit_price, exit_time, "
+                "pnl_usd, pnl_pct, exit_reason, half_sold, breakeven_stop, "
+                "take_profit_target, price_basis, original_entry_price) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, 'partial_closed', ?, ?, ?, ?, ?, 1, 1, ?, ?, ?)",
+                (
+                    pos["mint"], pos["symbol"], entry_price, pos.get("entry_mc", 0),
+                    sold_amount, sold_tokens,  # tokens for the sold 80% portion
+                    pos["entry_time"], current_price, time.time(),
+                    sold_pnl_usd, pnl_pct, TAKE_PROFIT_REASON,
+                    pos.get("take_profit_target", DEFAULT_TAKE_PROFIT_TARGET),
+                    pos.get("price_basis", PRICE_BASIS_MARKET_CAP),
+                    pos.get("original_entry_price", entry_price),
+                ),
             )
             await self._db.commit()
             await self._save_balance()
@@ -765,7 +798,15 @@ class PaperTrader:
             await self.initialize()
 
         total_invested = sum(p["amount_usd"] for p in self.positions)
-        total_unrealized = sum(p.get("unrealized_pnl", 0.0) for p in self.positions)
+
+        # Compute unrealized P&L freshly from current_price vs entry_price
+        # rather than relying on the possibly-stale unrealized_pnl field.
+        total_unrealized = 0.0
+        for p in self.positions:
+            ep = p["entry_price"]
+            cp = p.get("current_price", ep)
+            if ep > 0:
+                total_unrealized += p["amount_usd"] * ((cp - ep) / ep)
         unrealized_pct = (total_unrealized / total_invested * 100) if total_invested > 0 else 0.0
 
         unrealized_sign = "+" if total_unrealized >= 0 else ""
@@ -780,10 +821,13 @@ class PaperTrader:
         ]
 
         if self.positions:
-            # Sort by P&L descending
+            # Sort by P&L descending (compute fresh to avoid stale field)
             sorted_positions = sorted(
                 self.positions,
-                key=lambda p: p.get("unrealized_pnl", 0.0),
+                key=lambda p: (
+                    p["amount_usd"] * ((p.get("current_price", p["entry_price"]) - p["entry_price"]) / p["entry_price"])
+                    if p["entry_price"] > 0 else 0.0
+                ),
                 reverse=True,
             )
             for pos in sorted_positions:
@@ -791,11 +835,11 @@ class PaperTrader:
                 current_price = pos.get("current_price", entry_price)
                 if entry_price > 0:
                     pos_pnl_pct = ((current_price - entry_price) / entry_price) * 100
+                    pos_pnl_usd = pos["amount_usd"] * (pos_pnl_pct / 100)
                 else:
                     pos_pnl_pct = 0.0
-                pos_pnl_usd = pos.get("unrealized_pnl", 0.0)
+                    pos_pnl_usd = 0.0
                 pnl_sign = "+" if pos_pnl_pct >= 0 else ""
-                usd_sign = "" if pos_pnl_usd < 0 else "$"
                 if pos_pnl_usd < 0:
                     lines.append(f"\u2022 ${pos['symbol']}: {pnl_sign}{pos_pnl_pct:.0f}% (-${abs(pos_pnl_usd):.2f})")
                 else:

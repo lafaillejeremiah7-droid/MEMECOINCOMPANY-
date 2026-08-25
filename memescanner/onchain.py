@@ -741,7 +741,7 @@ class OnchainAnalyzer:
         Checks top 5 holder wallets for:
         1. Fresh wallets - fewer than 5 total signatures
         2. Same-block buying - 3+ holders have a signature in the same slot
-        3. Common funder - 3+ holders share the same SOL funding source
+        3. Common funder - 2+ holders share the same SOL funding source
         4. Single-token wallets - only 1-2 unique programs interacted with
         5. Same-amount buys - 3+ holders bought within 5% of the same amount
 
@@ -882,7 +882,7 @@ class OnchainAnalyzer:
                     f"{max_same_slot} holders transacted in the same block"
                 )
 
-        # Common funder: check if 3+ holders share the same funding source
+        # Common funder: check if 2+ holders share the same funding source
         valid_sources = [s for s in funding_sources if s]
         if len(valid_sources) >= 2:
             source_counts: Dict[str, int] = {}
