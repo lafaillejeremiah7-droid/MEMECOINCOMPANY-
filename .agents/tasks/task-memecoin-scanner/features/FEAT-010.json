@@ -2,7 +2,7 @@
   "id": "FEAT-010",
   "type": "feat",
   "description": "Calibrate filter defaults: extend max age to 120 min, add $50K market cap floor, add $25K volume floor, tighten top-10 concentration to 20%, add min 5 X mentions requirement with celebrity/viral exception.",
-  "status": "in_progress",
+  "status": "completed",
   "steps": [
     "Update memescanner/config.py: add min_market_cap_usd, min_volume_24h_usd, min_x_mentions to FiltersConfig; update ScannerConfig max_candidate_age_minutes default to 120",
     "Update memescanner/unified_scanner.py CommonEvaluator: add market cap floor check, volume floor check, update top10 default to 20%, add X mention count gate with celebrity/viral bypass",
@@ -26,5 +26,6 @@
     "python -m pytest tests/ -v",
     "python -c 'from memescanner.config import Config; c = Config(); assert c.scanner.max_candidate_age_minutes == 120; assert c.filters.min_market_cap_usd == 50000.0; assert c.filters.min_volume_24h_usd == 25000.0; assert c.filters.max_top10_concentration_pct == 20.0; assert c.filters.min_x_mentions == 5; print(\"OK\")'"
   ],
-  "blocked_reason": null
+  "blocked_reason": null,
+  "findings": "All 519 tests pass (509 existing + 10 new). Updated StubX in tests to include result_count: 10 so existing tests pass with the new min_x_mentions gate. The top10_concentration_pct check uses strict greater-than (>), so 20.0 at the boundary still qualifies. The _evidence_has_viral_indicators helper checks for common view/impression keywords in evidence content. The __main__.py was updated to pass all new filter config values to CommonEvaluator."
 }
