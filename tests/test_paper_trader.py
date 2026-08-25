@@ -5,12 +5,13 @@ Tests for the paper trading module.
 import asyncio
 import os
 import time
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 import pytest_asyncio
 
 from memescanner.paper_trader import (
+    DEFAULT_TAKE_PROFIT_TARGET,
     PaperTrader,
     MAX_OPEN_POSITIONS,
     TAKE_PROFIT_PCT,
@@ -296,7 +297,7 @@ class TestPaperTraderCheckPositions:
 
     @pytest.mark.asyncio
     async def test_take_profit_triggers(self, patch_db_path, mock_telegram, mock_fetch_dex):
-        """Test take profit triggers at +100% (sells half)."""
+        """Test take profit triggers at the 2x default target (sells 80%)."""
         pt = PaperTrader(starting_balance=1000.0, trade_size=50.0)
         await pt.initialize()
 
@@ -310,19 +311,19 @@ class TestPaperTraderCheckPositions:
         closed = await pt.check_positions()
 
         assert len(closed) == 1
-        assert closed[0]["reason"] == "Take profit (2x)"
+        assert closed[0]["reason"] == "Take profit (target)"
         assert closed[0]["pnl_pct"] == pytest.approx(100.0, abs=0.1)
-        # Sold half: $25 position with 100% gain = $25 profit, returned $50
-        assert closed[0]["pnl_usd"] == pytest.approx(25.0, abs=0.1)
+        # Sold 80%: $40 of the position with 100% gain = $40 profit, returned $80
+        assert closed[0]["pnl_usd"] == pytest.approx(40.0, abs=0.1)
 
-        # Position should still be open with half the size
+        # Position should still be open with the remaining 20%
         assert len(pt.positions) == 1
         assert pt.positions[0]["half_sold"] is True
         assert pt.positions[0]["breakeven_stop"] is True
-        assert pt.positions[0]["amount_usd"] == pytest.approx(25.0, abs=0.1)
+        assert pt.positions[0]["amount_usd"] == pytest.approx(10.0, abs=0.1)
 
-        # Balance: 950 + 50 (half returned with profit) = 1000
-        assert pt.balance == pytest.approx(1000.0, abs=0.1)
+        # Balance: 950 + 80 (80% returned with profit) = 1030
+        assert pt.balance == pytest.approx(1030.0, abs=0.1)
 
         await pt.close()
 
@@ -465,7 +466,7 @@ class TestPaperTraderSummary:
             "pnl_pct": 100.0,
             "entry_time": time.time() - 3600,
             "exit_time": time.time(),
-            "reason": "Take profit (2x)",
+            "reason": "Take profit (target)",
             "hold_time": 3600,
         })
 
@@ -642,17 +643,17 @@ class TestPaperTraderEdgeCases:
         await pt.buy({"mint": "m1", "symbol": "T1"}, {"market_cap": 100000})
         assert pt.balance == 950.0
 
-        # Take profit at 2x (MC 200k) - sells half
+        # Take profit at the 2x target (MC 200k) - sells 80%
         mock_fetch_dex.return_value = {"market_cap": 200000}
         await pt.check_positions()
-        # Sold half ($25) with 100% gain = $50 returned to balance
-        assert pt.balance == pytest.approx(1000.0, abs=0.1)
+        # Sold 80% ($40) with 100% gain = $80 returned to balance
+        assert pt.balance == pytest.approx(1030.0, abs=0.1)
 
-        # Trailing stop at entry (MC 100k) - sells remainder
+        # Trailing stop at entry (MC 100k) - sells the remaining 20%
         mock_fetch_dex.return_value = {"market_cap": 100000}
         await pt.check_positions()
-        # Remaining $25 at 0% P&L = $25 returned
-        assert pt.balance == pytest.approx(1025.0, abs=0.1)
+        # Remaining $10 at 0% P&L = $10 returned
+        assert pt.balance == pytest.approx(1040.0, abs=0.1)
         assert len(pt.positions) == 0
 
         await pt.close()
@@ -1004,3 +1005,725 @@ class TestPaperTraderRecoveryChecker:
         assert pt2.positions[0]["dca_done"] is True
         assert pt2.positions[0]["amount_usd"] == pytest.approx(75.0, abs=0.1)
         await pt2.close()
+
+
+
+class TestPaperTraderPartialTakeProfit:
+    """Test that take profit sells 80% and leaves 20% riding."""
+
+    @pytest.mark.asyncio
+    async def test_take_profit_sells_eighty_percent_of_tokens(
+        self, patch_db_path, mock_telegram, mock_fetch_dex
+    ):
+        """Token count is reduced to the remaining 20%, matching the USD split."""
+        pt = PaperTrader(starting_balance=1000.0, trade_size=50.0)
+        await pt.initialize()
+
+        await pt.buy({"mint": "abc123", "symbol": "TEST"}, {"market_cap": 100000})
+        original_tokens = pt.positions[0]["tokens_held"]
+
+        mock_fetch_dex.return_value = {"market_cap": 200000}
+        await pt.check_positions()
+
+        assert pt.positions[0]["tokens_held"] == pytest.approx(
+            original_tokens * 0.2, rel=1e-6
+        )
+        await pt.close()
+
+    @pytest.mark.asyncio
+    async def test_take_profit_message_uses_eighty_percent_wording(
+        self, patch_db_path, mock_telegram, mock_fetch_dex
+    ):
+        """The partial-sell alert reports 80% sold and 20% still riding."""
+        pt = PaperTrader(starting_balance=1000.0, trade_size=50.0)
+        await pt.initialize()
+
+        await pt.buy({"mint": "abc123", "symbol": "TEST"}, {"market_cap": 100000})
+        mock_fetch_dex.return_value = {"market_cap": 200000}
+        await pt.check_positions()
+
+        message = mock_telegram.call_args[0][0]
+        assert "PAPER SELL (80%): $TEST" in message
+        assert "on 80% sold" in message
+        assert "Take profit (target) \u2014 remaining 20% rides with trailing stop" in message
+        # Old wording must be gone
+        assert "50%" not in message
+        assert "on half sold" not in message
+        await pt.close()
+
+    @pytest.mark.asyncio
+    async def test_trailing_stop_message_references_remaining_twenty_percent(
+        self, patch_db_path, mock_telegram, mock_fetch_dex
+    ):
+        """The final exit alert attributes P&L to the remaining 20%."""
+        pt = PaperTrader(starting_balance=1000.0, trade_size=50.0)
+        await pt.initialize()
+
+        await pt.buy({"mint": "abc123", "symbol": "TEST"}, {"market_cap": 100000})
+        mock_fetch_dex.return_value = {"market_cap": 200000}
+        await pt.check_positions()
+        mock_fetch_dex.return_value = {"market_cap": 100000}
+        await pt.check_positions()
+
+        message = mock_telegram.call_args[0][0]
+        assert "PAPER SELL (remaining): $TEST" in message
+        assert "on remaining 20%" in message
+        assert "on remaining position" not in message
+        await pt.close()
+
+
+class TestPaperTraderDynamicTakeProfitTarget:
+    """Test the per-token take-profit target."""
+
+    @pytest.mark.asyncio
+    async def test_buy_records_supplied_target(
+        self, patch_db_path, mock_telegram, mock_fetch_dex
+    ):
+        """A target passed in token_data lands on the in-memory position."""
+        pt = PaperTrader(starting_balance=1000.0, trade_size=50.0)
+        await pt.initialize()
+
+        await pt.buy(
+            {"mint": "abc123", "symbol": "TEST", "take_profit_target": 2.75},
+            {"market_cap": 100000},
+        )
+
+        assert pt.positions[0]["take_profit_target"] == pytest.approx(2.75)
+        await pt.close()
+
+    @pytest.mark.asyncio
+    async def test_buy_defaults_target_when_absent(
+        self, patch_db_path, mock_telegram, mock_fetch_dex
+    ):
+        """Omitting the target falls back to the 2.0x default."""
+        pt = PaperTrader(starting_balance=1000.0, trade_size=50.0)
+        await pt.initialize()
+
+        await pt.buy({"mint": "abc123", "symbol": "TEST"}, {"market_cap": 100000})
+
+        assert pt.positions[0]["take_profit_target"] == pytest.approx(
+            DEFAULT_TAKE_PROFIT_TARGET
+        )
+        await pt.close()
+
+    @pytest.mark.asyncio
+    async def test_buy_message_includes_target(
+        self, patch_db_path, mock_telegram, mock_fetch_dex
+    ):
+        """The buy alert states the target and the 80% sell plan."""
+        pt = PaperTrader(starting_balance=1000.0, trade_size=50.0)
+        await pt.initialize()
+
+        await pt.buy(
+            {"mint": "abc123", "symbol": "TEST", "take_profit_target": 2.75},
+            {"market_cap": 100000},
+        )
+
+        message = mock_telegram.call_args[0][0]
+        assert "Target: 2.75x (sell 80%)" in message
+        await pt.close()
+
+    @pytest.mark.asyncio
+    async def test_higher_target_does_not_trigger_at_two_x(
+        self, patch_db_path, mock_telegram, mock_fetch_dex
+    ):
+        """A 3x target must not take profit at +100%."""
+        pt = PaperTrader(starting_balance=1000.0, trade_size=50.0)
+        await pt.initialize()
+
+        await pt.buy(
+            {"mint": "abc123", "symbol": "TEST", "take_profit_target": 3.0},
+            {"market_cap": 100000},
+        )
+
+        mock_fetch_dex.return_value = {"market_cap": 200000}  # +100%
+        closed = await pt.check_positions()
+
+        assert closed == []
+        assert pt.positions[0]["half_sold"] is False
+        await pt.close()
+
+    @pytest.mark.asyncio
+    async def test_higher_target_triggers_at_its_own_multiple(
+        self, patch_db_path, mock_telegram, mock_fetch_dex
+    ):
+        """A 3x target takes profit at +200%."""
+        pt = PaperTrader(starting_balance=1000.0, trade_size=50.0)
+        await pt.initialize()
+
+        await pt.buy(
+            {"mint": "abc123", "symbol": "TEST", "take_profit_target": 3.0},
+            {"market_cap": 100000},
+        )
+
+        mock_fetch_dex.return_value = {"market_cap": 300000}  # +200%
+        closed = await pt.check_positions()
+
+        assert len(closed) == 1
+        assert closed[0]["pnl_pct"] == pytest.approx(200.0, abs=0.1)
+        # 80% of $50 = $40 sold at +200% = $80 profit
+        assert closed[0]["pnl_usd"] == pytest.approx(80.0, abs=0.1)
+        assert pt.positions[0]["half_sold"] is True
+        await pt.close()
+
+    @pytest.mark.asyncio
+    async def test_lower_target_triggers_earlier(
+        self, patch_db_path, mock_telegram, mock_fetch_dex
+    ):
+        """A 1.5x target takes profit at +50%."""
+        pt = PaperTrader(starting_balance=1000.0, trade_size=50.0)
+        await pt.initialize()
+
+        await pt.buy(
+            {"mint": "abc123", "symbol": "TEST", "take_profit_target": 1.5},
+            {"market_cap": 100000},
+        )
+
+        mock_fetch_dex.return_value = {"market_cap": 150000}  # +50%
+        closed = await pt.check_positions()
+
+        assert len(closed) == 1
+        assert closed[0]["pnl_pct"] == pytest.approx(50.0, abs=0.1)
+        await pt.close()
+
+    @pytest.mark.asyncio
+    async def test_target_persists_across_restart(
+        self, patch_db_path, mock_telegram, mock_fetch_dex
+    ):
+        """The stored target is reloaded with the open position."""
+        pt1 = PaperTrader(starting_balance=1000.0, trade_size=50.0)
+        await pt1.initialize()
+        await pt1.buy(
+            {"mint": "abc123", "symbol": "TEST", "take_profit_target": 3.25},
+            {"market_cap": 100000},
+        )
+        await pt1.close()
+
+        pt2 = PaperTrader(starting_balance=1000.0, trade_size=50.0)
+        await pt2.initialize()
+        assert len(pt2.positions) == 1
+        assert pt2.positions[0]["take_profit_target"] == pytest.approx(3.25)
+        await pt2.close()
+
+    @pytest.mark.asyncio
+    async def test_missing_target_falls_back_to_global_threshold(
+        self, patch_db_path, mock_telegram, mock_fetch_dex
+    ):
+        """A position with no stored target uses TAKE_PROFIT_PCT."""
+        pt = PaperTrader(starting_balance=1000.0, trade_size=50.0)
+        await pt.initialize()
+
+        await pt.buy({"mint": "abc123", "symbol": "TEST"}, {"market_cap": 100000})
+        # Simulate a legacy row that predates the column.
+        pt.positions[0].pop("take_profit_target")
+
+        mock_fetch_dex.return_value = {"market_cap": 200000}  # +100%
+        closed = await pt.check_positions()
+
+        assert len(closed) == 1
+        assert closed[0]["pnl_pct"] == pytest.approx(TAKE_PROFIT_PCT, abs=0.1)
+        await pt.close()
+
+    @pytest.mark.asyncio
+    async def test_invalid_target_falls_back_to_global_threshold(
+        self, patch_db_path, mock_telegram, mock_fetch_dex
+    ):
+        """A non-numeric stored target cannot disable the take profit."""
+        pt = PaperTrader(starting_balance=1000.0, trade_size=50.0)
+        await pt.initialize()
+
+        await pt.buy({"mint": "abc123", "symbol": "TEST"}, {"market_cap": 100000})
+        pt.positions[0]["take_profit_target"] = "not-a-number"
+
+        mock_fetch_dex.return_value = {"market_cap": 200000}  # +100%
+        closed = await pt.check_positions()
+
+        assert len(closed) == 1
+        await pt.close()
+
+    @pytest.mark.asyncio
+    async def test_non_positive_supplied_target_defaults(
+        self, patch_db_path, mock_telegram, mock_fetch_dex
+    ):
+        """A zero or negative target is normalized to the default at buy time."""
+        pt = PaperTrader(starting_balance=1000.0, trade_size=50.0)
+        await pt.initialize()
+
+        await pt.buy(
+            {"mint": "abc123", "symbol": "TEST", "take_profit_target": 0},
+            {"market_cap": 100000},
+        )
+
+        assert pt.positions[0]["take_profit_target"] == pytest.approx(
+            DEFAULT_TAKE_PROFIT_TARGET
+        )
+        await pt.close()
+
+    @pytest.mark.asyncio
+    async def test_legacy_database_without_target_column_is_migrated(
+        self, patch_db_path, mock_telegram, mock_fetch_dex
+    ):
+        """An older paper_positions table gains the column without data loss."""
+        import aiosqlite
+
+        db = await aiosqlite.connect(TEST_DB_PATH)
+        await db.execute("""
+            CREATE TABLE paper_positions (
+                id INTEGER PRIMARY KEY,
+                mint TEXT,
+                symbol TEXT,
+                entry_price REAL,
+                entry_mc REAL,
+                amount_usd REAL,
+                tokens_held REAL,
+                entry_time REAL,
+                status TEXT,
+                exit_price REAL,
+                exit_time REAL,
+                pnl_usd REAL,
+                pnl_pct REAL,
+                exit_reason TEXT,
+                half_sold INTEGER DEFAULT 0,
+                breakeven_stop INTEGER DEFAULT 0
+            )
+        """)
+        await db.execute(
+            "INSERT INTO paper_positions (mint, symbol, entry_price, entry_mc, "
+            "amount_usd, tokens_held, entry_time, status, half_sold, breakeven_stop) "
+            "VALUES ('legacy', 'OLD', 100000, 100000, 50, 0.0005, ?, 'open', 0, 0)",
+            (time.time(),),
+        )
+        await db.commit()
+        await db.close()
+
+        pt = PaperTrader(starting_balance=1000.0, trade_size=50.0)
+        await pt.initialize()
+
+        assert len(pt.positions) == 1
+        assert pt.positions[0]["symbol"] == "OLD"
+        # Legacy rows adopt the column default rather than losing take profit.
+        assert pt.positions[0]["take_profit_target"] == pytest.approx(
+            DEFAULT_TAKE_PROFIT_TARGET
+        )
+        await pt.close()
+
+
+
+class TestPaperTraderPriceTracking:
+    """Test that positions track real USD price, not supply-dependent market cap."""
+
+    @pytest.mark.asyncio
+    async def test_buy_prefers_real_price_over_market_cap(
+        self, patch_db_path, mock_telegram, mock_fetch_dex
+    ):
+        """When price_usd is present it becomes the tracked entry quote."""
+        pt = PaperTrader(starting_balance=1000.0, trade_size=50.0)
+        await pt.initialize()
+
+        await pt.buy(
+            {"mint": "abc123", "symbol": "TEST"},
+            {"market_cap": 100000, "price_usd": 0.001},
+        )
+
+        assert pt.positions[0]["entry_price"] == pytest.approx(0.001)
+        assert pt.positions[0]["price_basis"] == "price_usd"
+        # Market cap is still recorded for display purposes.
+        assert pt.positions[0]["entry_mc"] == 100000
+        # Token quantity reflects the real price, not the market cap.
+        assert pt.positions[0]["tokens_held"] == pytest.approx(50000.0)
+        await pt.close()
+
+    @pytest.mark.asyncio
+    async def test_buy_falls_back_to_market_cap(
+        self, patch_db_path, mock_telegram, mock_fetch_dex
+    ):
+        """Without price_usd the legacy market-cap basis is used."""
+        pt = PaperTrader(starting_balance=1000.0, trade_size=50.0)
+        await pt.initialize()
+
+        await pt.buy({"mint": "abc123", "symbol": "TEST"}, {"market_cap": 100000})
+
+        assert pt.positions[0]["entry_price"] == 100000
+        assert pt.positions[0]["price_basis"] == "market_cap"
+        await pt.close()
+
+    @pytest.mark.asyncio
+    async def test_supply_change_does_not_fabricate_pnl(
+        self, patch_db_path, mock_telegram, mock_fetch_dex
+    ):
+        """A market-cap move with a flat price must not register P&L.
+
+        This is the core live-tracking bug: a token burn halves reported market
+        cap while the price is unchanged. Tracking market cap read that as -50%
+        and tripped the stop loss on a position that had not moved.
+        """
+        pt = PaperTrader(starting_balance=1000.0, trade_size=50.0)
+        await pt.initialize()
+
+        await pt.buy(
+            {"mint": "abc123", "symbol": "TEST"},
+            {"market_cap": 100000, "price_usd": 0.001},
+        )
+
+        # Supply halves: market cap halves, price is flat.
+        mock_fetch_dex.return_value = {"market_cap": 50000, "price_usd": 0.001}
+        with patch(
+            "memescanner.paper_trader.RecoveryChecker.check_recovery",
+            new_callable=AsyncMock,
+        ) as mock_recovery:
+            closed = await pt.check_positions()
+
+        assert closed == []
+        assert len(pt.positions) == 1
+        assert pt.positions[0]["unrealized_pnl"] == pytest.approx(0.0, abs=1e-9)
+        # The stop loss must not have been considered at all.
+        mock_recovery.assert_not_called()
+        await pt.close()
+
+    @pytest.mark.asyncio
+    async def test_real_price_move_is_tracked(
+        self, patch_db_path, mock_telegram, mock_fetch_dex
+    ):
+        """A genuine price double triggers take profit even if market cap lags."""
+        pt = PaperTrader(starting_balance=1000.0, trade_size=50.0)
+        await pt.initialize()
+
+        await pt.buy(
+            {"mint": "abc123", "symbol": "TEST"},
+            {"market_cap": 100000, "price_usd": 0.001},
+        )
+
+        # Price doubles; market cap is stale/unchanged.
+        mock_fetch_dex.return_value = {"market_cap": 100000, "price_usd": 0.002}
+        closed = await pt.check_positions()
+
+        assert len(closed) == 1
+        assert closed[0]["pnl_pct"] == pytest.approx(100.0, abs=0.1)
+        await pt.close()
+
+    @pytest.mark.asyncio
+    async def test_missing_basis_leaves_position_untouched(
+        self, patch_db_path, mock_telegram, mock_fetch_dex
+    ):
+        """A price-tracked position is never re-based onto market cap.
+
+        Comparing a unit price entry against a market-cap quote would read as a
+        ~-100% move and instantly trip the stop loss.
+        """
+        pt = PaperTrader(starting_balance=1000.0, trade_size=50.0)
+        await pt.initialize()
+
+        await pt.buy(
+            {"mint": "abc123", "symbol": "TEST"},
+            {"market_cap": 100000, "price_usd": 0.001},
+        )
+
+        # price_usd missing this cycle; only market cap came back.
+        mock_fetch_dex.return_value = {"market_cap": 100000}
+        with patch(
+            "memescanner.paper_trader.RecoveryChecker.check_recovery",
+            new_callable=AsyncMock,
+        ) as mock_recovery:
+            closed = await pt.check_positions()
+
+        assert closed == []
+        assert len(pt.positions) == 1
+        assert pt.positions[0]["current_price"] == pytest.approx(0.001)
+        mock_recovery.assert_not_called()
+        await pt.close()
+
+    @pytest.mark.asyncio
+    async def test_zero_price_is_not_treated_as_a_quote(
+        self, patch_db_path, mock_telegram, mock_fetch_dex
+    ):
+        """A zero/absent price is ignored rather than read as a total loss."""
+        pt = PaperTrader(starting_balance=1000.0, trade_size=50.0)
+        await pt.initialize()
+
+        await pt.buy(
+            {"mint": "abc123", "symbol": "TEST"},
+            {"market_cap": 100000, "price_usd": 0.001},
+        )
+
+        mock_fetch_dex.return_value = {"price_usd": 0}
+        closed = await pt.check_positions()
+
+        assert closed == []
+        assert len(pt.positions) == 1
+        await pt.close()
+
+    @pytest.mark.asyncio
+    async def test_price_basis_persists_across_restart(
+        self, patch_db_path, mock_telegram, mock_fetch_dex
+    ):
+        """The basis is reloaded so tracking stays consistent after a restart."""
+        pt1 = PaperTrader(starting_balance=1000.0, trade_size=50.0)
+        await pt1.initialize()
+        await pt1.buy(
+            {"mint": "abc123", "symbol": "TEST"},
+            {"market_cap": 100000, "price_usd": 0.001},
+        )
+        await pt1.close()
+
+        pt2 = PaperTrader(starting_balance=1000.0, trade_size=50.0)
+        await pt2.initialize()
+        assert pt2.positions[0]["price_basis"] == "price_usd"
+        assert pt2.positions[0]["entry_price"] == pytest.approx(0.001)
+        assert pt2.positions[0]["original_entry_price"] == pytest.approx(0.001)
+        await pt2.close()
+
+    @pytest.mark.asyncio
+    async def test_legacy_rows_keep_market_cap_basis(
+        self, patch_db_path, mock_telegram, mock_fetch_dex
+    ):
+        """Positions opened before the fix keep their self-consistent basis."""
+        import aiosqlite
+
+        db = await aiosqlite.connect(TEST_DB_PATH)
+        await db.execute("""
+            CREATE TABLE paper_positions (
+                id INTEGER PRIMARY KEY, mint TEXT, symbol TEXT, entry_price REAL,
+                entry_mc REAL, amount_usd REAL, tokens_held REAL, entry_time REAL,
+                status TEXT, exit_price REAL, exit_time REAL, pnl_usd REAL,
+                pnl_pct REAL, exit_reason TEXT, half_sold INTEGER DEFAULT 0,
+                breakeven_stop INTEGER DEFAULT 0
+            )
+        """)
+        await db.execute(
+            "INSERT INTO paper_positions (mint, symbol, entry_price, entry_mc, "
+            "amount_usd, tokens_held, entry_time, status, half_sold, breakeven_stop) "
+            "VALUES ('legacy', 'OLD', 100000, 100000, 50, 0.0005, ?, 'open', 0, 0)",
+            (time.time(),),
+        )
+        await db.commit()
+        await db.close()
+
+        pt = PaperTrader(starting_balance=1000.0, trade_size=50.0)
+        await pt.initialize()
+        assert pt.positions[0]["price_basis"] == "market_cap"
+        assert pt.positions[0]["original_entry_price"] == 100000
+
+        # Legacy position still tracks correctly against market cap.
+        mock_fetch_dex.return_value = {"market_cap": 200000}
+        closed = await pt.check_positions()
+        assert len(closed) == 1
+        assert closed[0]["pnl_pct"] == pytest.approx(100.0, abs=0.1)
+        await pt.close()
+
+
+class TestPaperTraderDcaCostBasis:
+    """Test that averaging down produces correct P&L."""
+
+    DCA_RECOVERY = {
+        "recovery_probability": 0.50,
+        "decision": "DCA",
+        "reason": "Strong signals",
+        "signals": {
+            "bs_ratio": 2.0, "avg_buy_size": 200.0, "avg_sell_size": 100.0,
+            "volume_trend": "increasing", "x_buzz": 5, "x_scam_warning": False,
+            "liquidity": 20000.0, "momentum_1h": 15.0,
+        },
+    }
+
+    @pytest.mark.asyncio
+    async def test_dca_rebases_entry_to_weighted_average(
+        self, patch_db_path, mock_telegram, mock_fetch_dex
+    ):
+        """Averaging down lowers the cost basis and preserves the first fill."""
+        pt = PaperTrader(starting_balance=1000.0, trade_size=50.0)
+        await pt.initialize()
+
+        await pt.buy(
+            {"mint": "abc123", "symbol": "TEST"},
+            {"market_cap": 100000, "price_usd": 0.001},
+        )
+
+        mock_fetch_dex.return_value = {"market_cap": 50000, "price_usd": 0.0005}
+        with patch(
+            "memescanner.paper_trader.RecoveryChecker.check_recovery",
+            new_callable=AsyncMock, return_value=self.DCA_RECOVERY,
+        ):
+            await pt.check_positions()
+
+        pos = pt.positions[0]
+        assert pos["dca_done"] is True
+        assert pos["amount_usd"] == pytest.approx(75.0, abs=0.1)
+        # 50000 tokens at 0.001 + 50000 at 0.0005 = 100000 tokens for $75
+        assert pos["tokens_held"] == pytest.approx(100000.0, rel=1e-6)
+        assert pos["entry_price"] == pytest.approx(0.00075, rel=1e-6)
+        # The first fill is preserved for the hard-stop rule.
+        assert pos["original_entry_price"] == pytest.approx(0.001)
+        await pt.close()
+
+    @pytest.mark.asyncio
+    async def test_recovery_after_dca_reports_a_gain(
+        self, patch_db_path, mock_telegram, mock_fetch_dex
+    ):
+        """A DCA'd position back at the original entry is genuinely up.
+
+        Before the fix, P&L was measured only from the original entry, so this
+        position reported $0 despite the added tranche having doubled.
+        """
+        pt = PaperTrader(starting_balance=1000.0, trade_size=50.0)
+        await pt.initialize()
+
+        await pt.buy(
+            {"mint": "abc123", "symbol": "TEST"},
+            {"market_cap": 100000, "price_usd": 0.001},
+        )
+        mock_fetch_dex.return_value = {"market_cap": 50000, "price_usd": 0.0005}
+        with patch(
+            "memescanner.paper_trader.RecoveryChecker.check_recovery",
+            new_callable=AsyncMock, return_value=self.DCA_RECOVERY,
+        ):
+            await pt.check_positions()
+
+        # Price returns to the original entry.
+        mock_fetch_dex.return_value = {"market_cap": 100000, "price_usd": 0.001}
+        await pt.check_positions()
+
+        pos = pt.positions[0]
+        # 100000 tokens now worth $100 against a $75 cost basis = +$25.
+        assert pos["unrealized_pnl"] == pytest.approx(25.0, abs=0.1)
+        await pt.close()
+
+    @pytest.mark.asyncio
+    async def test_hard_stop_after_dca_uses_original_entry(
+        self, patch_db_path, mock_telegram, mock_fetch_dex
+    ):
+        """The -70% hard stop stays anchored to the first fill after a DCA."""
+        pt = PaperTrader(starting_balance=1000.0, trade_size=50.0)
+        await pt.initialize()
+
+        await pt.buy(
+            {"mint": "abc123", "symbol": "TEST"},
+            {"market_cap": 100000, "price_usd": 0.001},
+        )
+        mock_fetch_dex.return_value = {"market_cap": 50000, "price_usd": 0.0005}
+        with patch(
+            "memescanner.paper_trader.RecoveryChecker.check_recovery",
+            new_callable=AsyncMock, return_value=self.DCA_RECOVERY,
+        ):
+            await pt.check_positions()
+
+        # -60% from the averaged basis, but only -60% from original: no stop yet.
+        mock_fetch_dex.return_value = {"price_usd": 0.00035, "market_cap": 35000}
+        assert await pt.check_positions() == []
+        assert len(pt.positions) == 1
+
+        # -70% from the original entry: hard stop fires.
+        mock_fetch_dex.return_value = {"price_usd": 0.0003, "market_cap": 30000}
+        closed = await pt.check_positions()
+        assert len(closed) == 1
+        assert "Hard stop (-70%" in closed[0]["reason"]
+        await pt.close()
+
+
+class TestQuoteHelpers:
+    """Test the quote-resolution helpers directly."""
+
+    def test_resolve_quote_prefers_price(self):
+        from memescanner.paper_trader import _resolve_quote
+
+        assert _resolve_quote({"price_usd": 0.5, "market_cap": 100}) == (0.5, "price_usd")
+
+    def test_resolve_quote_falls_back(self):
+        from memescanner.paper_trader import _resolve_quote
+
+        assert _resolve_quote({"market_cap": 100}) == (100.0, "market_cap")
+        assert _resolve_quote({"price_usd": 0, "market_cap": 100}) == (100.0, "market_cap")
+
+    def test_resolve_quote_handles_no_data(self):
+        from memescanner.paper_trader import _resolve_quote
+
+        assert _resolve_quote({}) == (0.0, "market_cap")
+        assert _resolve_quote({"price_usd": None, "market_cap": None}) == (0.0, "market_cap")
+
+    def test_resolve_quote_accepts_string_price(self):
+        """DEXScreener returns priceUsd as a string."""
+        from memescanner.paper_trader import _resolve_quote
+
+        assert _resolve_quote({"price_usd": "0.0025"}) == (0.0025, "price_usd")
+
+    def test_current_quote_respects_basis(self):
+        from memescanner.paper_trader import _current_quote
+
+        pos = {"price_basis": "price_usd"}
+        assert _current_quote(pos, {"price_usd": 0.5, "market_cap": 100}) == 0.5
+        # Basis absent: no cross-denomination fallback.
+        assert _current_quote(pos, {"market_cap": 100}) is None
+        assert _current_quote(pos, None) is None
+
+    def test_current_quote_defaults_to_market_cap(self):
+        from memescanner.paper_trader import _current_quote
+
+        assert _current_quote({}, {"market_cap": 100, "price_usd": 0.5}) == 100.0
+
+
+
+class TestFetchDexDataPrice:
+    """Test that the position-tracking fetcher surfaces the real price."""
+
+    @pytest.mark.asyncio
+    async def test_fetch_dex_data_returns_price_usd(self):
+        """priceUsd is parsed from the raw pair payload for position tracking."""
+        from memescanner.scanner import fetch_dex_data
+
+        payload = {
+            "pairs": [{
+                "chainId": "solana",
+                "priceUsd": "0.00012345",
+                "marketCap": 123456,
+                "fdv": 123456,
+                "liquidity": {"usd": 20000},
+                "volume": {"h24": 50000},
+                "txns": {"h24": {"buys": 100, "sells": 50}},
+                "priceChange": {"h1": 5.0, "h24": 20.0},
+            }]
+        }
+        response = MagicMock()
+        response.raise_for_status = MagicMock()
+        response.json = MagicMock(return_value=payload)
+
+        client = AsyncMock()
+        client.get = AsyncMock(return_value=response)
+        client.__aenter__ = AsyncMock(return_value=client)
+        client.__aexit__ = AsyncMock(return_value=False)
+
+        with patch("memescanner.scanner.httpx.AsyncClient", return_value=client):
+            result = await fetch_dex_data("Mint111")
+
+        assert result is not None
+        assert result["price_usd"] == pytest.approx(0.00012345)
+        assert result["market_cap"] == 123456
+
+    @pytest.mark.asyncio
+    async def test_fetch_dex_data_tolerates_missing_price(self):
+        """A malformed or absent priceUsd degrades to 0 without raising."""
+        from memescanner.scanner import fetch_dex_data
+
+        payload = {
+            "pairs": [{
+                "chainId": "solana",
+                "priceUsd": None,
+                "marketCap": 5000,
+                "liquidity": {"usd": 1000},
+                "volume": {"h24": 100},
+                "txns": {"h24": {"buys": 1, "sells": 1}},
+                "priceChange": {},
+            }]
+        }
+        response = MagicMock()
+        response.raise_for_status = MagicMock()
+        response.json = MagicMock(return_value=payload)
+
+        client = AsyncMock()
+        client.get = AsyncMock(return_value=response)
+        client.__aenter__ = AsyncMock(return_value=client)
+        client.__aexit__ = AsyncMock(return_value=False)
+
+        with patch("memescanner.scanner.httpx.AsyncClient", return_value=client):
+            result = await fetch_dex_data("Mint111")
+
+        assert result["price_usd"] == 0.0
+        assert result["market_cap"] == 5000

@@ -74,6 +74,11 @@ class FiltersConfig:
     max_dev_holding_pct: float = 30.0
     max_top10_concentration_pct: float = 30.0
     min_x_mentions: int = 5
+    # Liquidity Pool-Based Price Inflation guards: reject market caps that are
+    # not backed by pool depth, and 1h spikes not backed by turnover.
+    min_liquidity_to_mcap_ratio: float = 0.08
+    max_spike_price_change_1h_pct: float = 100.0
+    min_spike_volume_to_mcap_ratio: float = 0.5
 
 
 @dataclass
@@ -259,6 +264,15 @@ class Config:
                 max_dev_holding_pct=filters_data.get("max_dev_holding_pct", 30.0),
                 max_top10_concentration_pct=filters_data.get("max_top10_concentration_pct", 30.0),
                 min_x_mentions=filters_data.get("min_x_mentions", 5),
+                min_liquidity_to_mcap_ratio=filters_data.get(
+                    "min_liquidity_to_mcap_ratio", 0.08
+                ),
+                max_spike_price_change_1h_pct=filters_data.get(
+                    "max_spike_price_change_1h_pct", 100.0
+                ),
+                min_spike_volume_to_mcap_ratio=filters_data.get(
+                    "min_spike_volume_to_mcap_ratio", 0.5
+                ),
             ),
             scoring=ScoringWeights(
                 buy_sell_ratio=scoring_data.get("buy_sell_ratio", 0.25),

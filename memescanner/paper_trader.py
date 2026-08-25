@@ -21,8 +21,19 @@ logger = logging.getLogger(__name__)
 MAX_OPEN_POSITIONS = 3
 DB_PATH = "memescanner.db"
 
-# Take profit at +100% (2x), stop loss at -50%
+# Fallback take profit at +100% (2x) when a position has no valid dynamic
+# target stored. Kept for backward compatibility with existing importers.
 TAKE_PROFIT_PCT = 100.0
+# Default per-token take-profit multiple used when none was supplied at buy time.
+DEFAULT_TAKE_PROFIT_TARGET = 2.0
+# Fraction of the position sold when the take-profit target is hit; the
+# remaining 20% keeps riding behind a breakeven trailing stop.
+TAKE_PROFIT_SELL_FRACTION = 0.8
+TAKE_PROFIT_REASON = "Take profit (target)"
+# How a position's entry_price is denominated. The value doubles as the
+# dex_data key to read, which guarantees every comparison is like-for-like.
+PRICE_BASIS_PRICE_USD = "price_usd"
+PRICE_BASIS_MARKET_CAP = "market_cap"
 STOP_LOSS_PCT = -50.0
 # Tightened hard stop after recovery check HOLD decision
 HARD_STOP_PCT = -70.0
@@ -100,7 +111,10 @@ class PaperTrader:
                 half_sold INTEGER DEFAULT 0,
                 breakeven_stop INTEGER DEFAULT 0,
                 recovery_checked INTEGER DEFAULT 0,
-                dca_done INTEGER DEFAULT 0
+                dca_done INTEGER DEFAULT 0,
+                take_profit_target REAL DEFAULT 2.0,
+                price_basis TEXT DEFAULT 'market_cap',
+                original_entry_price REAL
             )
         """)
 
@@ -114,19 +128,25 @@ class PaperTrader:
             )
         """)
 
-        # Migration: add recovery_checked and dca_done columns if missing
-        try:
-            await self._db.execute(
-                "ALTER TABLE paper_positions ADD COLUMN recovery_checked INTEGER DEFAULT 0"
-            )
-        except Exception:
-            pass  # Column already exists
-        try:
-            await self._db.execute(
-                "ALTER TABLE paper_positions ADD COLUMN dca_done INTEGER DEFAULT 0"
-            )
-        except Exception:
-            pass  # Column already exists
+        # Additive migrations so databases created by older versions keep working.
+        # Guarded by PRAGMA table_info rather than a swallowed exception, so a
+        # genuine ALTER failure is not mistaken for "column already exists".
+        async with self._db.execute("PRAGMA table_info(paper_positions)") as cursor:
+            existing_columns = {row[1] async for row in cursor}
+        for column, definition in (
+            ("recovery_checked", "INTEGER DEFAULT 0"),
+            ("dca_done", "INTEGER DEFAULT 0"),
+            ("take_profit_target", "REAL DEFAULT 2.0"),
+            # Existing rows were tracked against market cap; defaulting to that
+            # keeps their P&L self-consistent instead of silently switching
+            # denominators mid-position.
+            ("price_basis", "TEXT DEFAULT 'market_cap'"),
+            ("original_entry_price", "REAL"),
+        ):
+            if column not in existing_columns:
+                await self._db.execute(
+                    f"ALTER TABLE paper_positions ADD COLUMN {column} {definition}"
+                )
 
         await self._db.commit()
 
@@ -159,7 +179,8 @@ class PaperTrader:
         self.positions = []
         async with self._db.execute(
             "SELECT id, mint, symbol, entry_price, entry_mc, amount_usd, tokens_held, "
-            "entry_time, half_sold, breakeven_stop, recovery_checked, dca_done "
+            "entry_time, half_sold, breakeven_stop, recovery_checked, dca_done, "
+            "take_profit_target, price_basis, original_entry_price "
             "FROM paper_positions WHERE status = 'open'"
         ) as cursor:
             async for row in cursor:
@@ -178,6 +199,10 @@ class PaperTrader:
                     "breakeven_stop": bool(row[9]),
                     "recovery_checked": bool(row[10]),
                     "dca_done": bool(row[11]),
+                    "take_profit_target": _coerce_take_profit_target(row[12]),
+                    "price_basis": row[13] or PRICE_BASIS_MARKET_CAP,
+                    # Rows predating the column fall back to the stored entry.
+                    "original_entry_price": row[14] if row[14] else row[3],
                 })
 
         # Load closed trades for today's summary
@@ -236,6 +261,9 @@ class PaperTrader:
 
         mint = token_data.get("mint", "")
         symbol = token_data.get("symbol", "???")
+        take_profit_target = _coerce_take_profit_target(
+            token_data.get("take_profit_target", DEFAULT_TAKE_PROFIT_TARGET)
+        )
 
         # Don't buy same token twice
         for pos in self.positions:
@@ -243,12 +271,14 @@ class PaperTrader:
                 logger.info("Paper trader: already holding %s", symbol)
                 return None
 
-        # Get current price from dex_data
+        # Get current quote from dex_data.
         market_cap = dex_data.get("market_cap", 0) or 0
-        # DEXScreener provides priceUsd as string in raw pair data, but our fetch_dex_data
-        # returns market_cap. We estimate price from MC/supply or use MC as reference.
-        # For paper trading we track by market_cap ratio for P&L calculation.
-        entry_price = market_cap  # Track MC as "price" proxy for percentage changes
+        # Track the real USD price when available. Market cap is only a
+        # fallback: DEXScreener's marketCap falls back to fdv and both scale
+        # with reported circulating supply, so a burn, unlock, or pool
+        # migration moves market cap while the price is flat. Tracking market
+        # cap therefore fabricates P&L and can trip stops on a supply event.
+        entry_price, price_basis = _resolve_quote(dex_data)
 
         if entry_price <= 0:
             logger.warning("Paper trader: invalid entry price for %s", symbol)
@@ -276,15 +306,22 @@ class PaperTrader:
             "breakeven_stop": False,
             "recovery_checked": False,
             "dca_done": False,
+            "take_profit_target": take_profit_target,
+            "price_basis": price_basis,
+            # Stop-loss rules stay anchored to the first fill even after a DCA
+            # shifts the average cost basis.
+            "original_entry_price": entry_price,
         }
 
         # Save to DB
         if self._db:
             cursor = await self._db.execute(
                 "INSERT INTO paper_positions (mint, symbol, entry_price, entry_mc, amount_usd, "
-                "tokens_held, entry_time, status, half_sold, breakeven_stop, recovery_checked, dca_done) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, 'open', 0, 0, 0, 0)",
-                (mint, symbol, entry_price, market_cap, self.trade_size, tokens_held, entry_time),
+                "tokens_held, entry_time, status, half_sold, breakeven_stop, recovery_checked, "
+                "dca_done, take_profit_target, price_basis, original_entry_price) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, 'open', 0, 0, 0, 0, ?, ?, ?)",
+                (mint, symbol, entry_price, market_cap, self.trade_size, tokens_held,
+                 entry_time, take_profit_target, price_basis, entry_price),
             )
             position["id"] = cursor.lastrowid
             await self._db.commit()
@@ -297,6 +334,7 @@ class PaperTrader:
         msg = (
             f"\U0001f4dd PAPER BUY: ${symbol}\n"
             f"\U0001f4b5 Bought ${self.trade_size:.0f} at MC {mc_str}\n"
+            f"\U0001f3af Target: {take_profit_target:.2f}x (sell 80%)\n"
             f"\U0001f4b0 Balance: ${self.balance:.0f} remaining\n"
             f"\U0001f4ca Open positions: {len(self.positions)}/{MAX_OPEN_POSITIONS}"
         )
@@ -329,14 +367,15 @@ class PaperTrader:
         for i, pos in enumerate(self.positions):
             mint = pos["mint"]
 
-            # Fetch current price from DEXScreener
+            # Fetch current quote from DEXScreener
             try:
                 dex_data = await fetch_dex_data(mint)
-                if dex_data and dex_data.get("market_cap"):
-                    current_price = dex_data["market_cap"]
+                current_price = _current_quote(pos, dex_data)
+                if current_price is not None:
                     pos["current_price"] = current_price
 
-                    # Calculate unrealized P&L
+                    # Calculate unrealized P&L against the average cost basis,
+                    # which a DCA shifts below the first fill.
                     entry_price = pos["entry_price"]
                     if entry_price > 0:
                         pnl_pct = ((current_price - entry_price) / entry_price) * 100
@@ -346,12 +385,26 @@ class PaperTrader:
                         pnl_pct = 0.0
                         pnl_usd = 0.0
 
-                    # Check take profit: +100% (2x) - sell half
-                    if pnl_pct >= TAKE_PROFIT_PCT and not pos["half_sold"]:
+                    # Stop-loss rules stay anchored to the first fill so a DCA
+                    # cannot quietly loosen or tighten the documented -50%/-70%
+                    # thresholds.
+                    original_entry = pos.get("original_entry_price") or entry_price
+                    if original_entry > 0:
+                        stop_pnl_pct = (
+                            (current_price - original_entry) / original_entry
+                        ) * 100
+                    else:
+                        stop_pnl_pct = pnl_pct
+
+                    # Check take profit against this position's own target.
+                    # A 2.75x target triggers at +175%; a missing or invalid
+                    # stored target falls back to the global TAKE_PROFIT_PCT.
+                    take_profit_trigger_pct = _take_profit_trigger_pct(pos)
+                    if pnl_pct >= take_profit_trigger_pct and not pos["half_sold"]:
                         closed = await self._take_profit(pos, current_price, pnl_pct)
                         if closed:
                             closed_this_cycle.append(closed)
-                        # Position remains open with reduced size (half sold)
+                        # Position remains open with the remaining 20% riding
                         continue
 
                     # Check trailing stop: after +100% taken, if price drops to entry
@@ -365,7 +418,7 @@ class PaperTrader:
 
                     # Check hard stop (-70%) for positions that passed recovery check
                     if pos.get("recovery_checked") and not pos.get("breakeven_stop"):
-                        if pnl_pct <= HARD_STOP_PCT:
+                        if stop_pnl_pct <= HARD_STOP_PCT:
                             closed = await self._close_position(
                                 pos, current_price, "Hard stop (-70% after recovery hold)"
                             )
@@ -374,11 +427,11 @@ class PaperTrader:
                             continue
 
                     # Smart stop loss: when position hits -50%
-                    if pnl_pct <= STOP_LOSS_PCT:
+                    if stop_pnl_pct <= STOP_LOSS_PCT:
                         # Only check recovery once per position
                         if not pos.get("recovery_checked"):
                             result = await self._handle_recovery_check(
-                                pos, current_price, pnl_pct, recovery_checker
+                                pos, current_price, stop_pnl_pct, recovery_checker
                             )
                             if result == "CLOSED":
                                 positions_to_remove.append(i)
@@ -511,11 +564,20 @@ class PaperTrader:
         pos["tokens_held"] += additional_tokens
         pos["dca_done"] = True
 
+        # Re-base entry_price to the weighted-average cost per token. Without
+        # this the added dollars are priced as if they were bought at the
+        # original entry, so a position that averages down and recovers reports
+        # a loss it did not take. The original entry is preserved separately for
+        # the -70% hard stop.
+        if pos["tokens_held"] > 0:
+            pos["entry_price"] = pos["amount_usd"] / pos["tokens_held"]
+
         # Update DB
         if self._db:
             await self._db.execute(
-                "UPDATE paper_positions SET amount_usd = ?, tokens_held = ?, dca_done = 1 WHERE id = ?",
-                (pos["amount_usd"], pos["tokens_held"], pos.get("id")),
+                "UPDATE paper_positions SET amount_usd = ?, tokens_held = ?, "
+                "entry_price = ?, dca_done = 1 WHERE id = ?",
+                (pos["amount_usd"], pos["tokens_held"], pos["entry_price"], pos.get("id")),
             )
             await self._db.commit()
             await self._save_balance()
@@ -535,7 +597,9 @@ class PaperTrader:
 
     async def _take_profit(self, pos: Dict[str, Any], current_price: float, pnl_pct: float) -> Optional[Dict[str, Any]]:
         """
-        Execute take profit: sell half at +100%, move stop to breakeven.
+        Execute take profit: sell 80% at the position target, move stop to breakeven.
+
+        The remaining 20% keeps riding behind a breakeven trailing stop.
 
         Args:
             pos: Position dict.
@@ -543,20 +607,22 @@ class PaperTrader:
             pnl_pct: Current P&L percentage.
 
         Returns:
-            Closed trade record for the half that was sold, or None.
+            Closed trade record for the portion that was sold, or None.
         """
         entry_price = pos["entry_price"]
-        half_amount = pos["amount_usd"] / 2
-        half_pnl_usd = half_amount * (pnl_pct / 100)
+        sold_amount = pos["amount_usd"] * TAKE_PROFIT_SELL_FRACTION
+        remaining_amount = pos["amount_usd"] - sold_amount
+        sold_pnl_usd = sold_amount * (pnl_pct / 100)
 
-        # Mark half sold and breakeven stop
+        # half_sold/breakeven_stop are legacy column names that now mean
+        # "partial profit taken" and "trailing stop armed" respectively.
         pos["half_sold"] = True
         pos["breakeven_stop"] = True
-        pos["amount_usd"] = half_amount  # Remaining half
-        pos["tokens_held"] = pos["tokens_held"] / 2
+        pos["amount_usd"] = remaining_amount  # Remaining 20% still riding
+        pos["tokens_held"] = pos["tokens_held"] * (1.0 - TAKE_PROFIT_SELL_FRACTION)
 
-        # Add profit from sold half back to balance
-        realized = half_amount + half_pnl_usd
+        # Add proceeds from the sold portion back to balance
+        realized = sold_amount + sold_pnl_usd
         self.balance += realized
 
         # Update DB
@@ -579,27 +645,30 @@ class PaperTrader:
             "symbol": pos["symbol"],
             "entry_price": entry_price,
             "exit_price": current_price,
-            "pnl_usd": half_pnl_usd,
+            "pnl_usd": sold_pnl_usd,
             "pnl_pct": pnl_pct,
             "entry_time": pos["entry_time"],
             "exit_time": time.time(),
-            "reason": "Take profit (2x)",
+            "reason": TAKE_PROFIT_REASON,
             "hold_time": hold_seconds,
         }
         self.closed_trades.append(closed_trade)
 
         # Send Telegram
-        pnl_sign = "+" if half_pnl_usd >= 0 else ""
+        pnl_sign = "+" if sold_pnl_usd >= 0 else ""
         msg = (
-            f"\U0001f4ca PAPER SELL (50%): ${pos['symbol']}\n"
-            f"\U0001f4c8 P&L: {pnl_sign}${half_pnl_usd:.2f} (+{pnl_pct:.0f}%) on half sold\n"
+            f"\U0001f4ca PAPER SELL (80%): ${pos['symbol']}\n"
+            f"\U0001f4c8 P&L: {pnl_sign}${sold_pnl_usd:.2f} (+{pnl_pct:.0f}%) on 80% sold\n"
             f"\u23f1 Held: {hold_str}\n"
-            f"\U0001f3af Reason: Take profit (2x) — remaining 50% still open with trailing stop\n"
+            f"\U0001f3af Reason: {TAKE_PROFIT_REASON} — remaining 20% rides with trailing stop\n"
             f"\U0001f4b0 Balance: ${self.balance:.0f}"
         )
         await self._notify(msg)
 
-        logger.info("Paper TP: $%s +%.0f%% ($%.2f profit on half)", pos["symbol"], pnl_pct, half_pnl_usd)
+        logger.info(
+            "Paper TP: $%s +%.0f%% ($%.2f profit on 80%% sold)",
+            pos["symbol"], pnl_pct, sold_pnl_usd,
+        )
         return closed_trade
 
     async def _close_position(self, pos: Dict[str, Any], current_price: float, reason: str) -> Dict[str, Any]:
@@ -662,10 +731,10 @@ class PaperTrader:
 
         # Differentiate message format based on sell reason
         if "Trailing stop" in reason:
-            # This is the remaining half after take profit
+            # This is the remaining 20% left riding after the take profit
             msg = (
                 f"\U0001f4ca PAPER SELL (remaining): ${pos['symbol']}\n"
-                f"\U0001f4c8 P&L: {pnl_sign}${pnl_usd:.2f} ({pnl_pct_sign}{pnl_pct:.0f}%) on remaining position\n"
+                f"\U0001f4c8 P&L: {pnl_sign}${pnl_usd:.2f} ({pnl_pct_sign}{pnl_pct:.0f}%) on remaining 20%\n"
                 f"\u23f1 Held: {hold_str}\n"
                 f"\U0001f3af Reason: {reason}\n"
                 f"\U0001f4b0 Balance: ${self.balance:.0f}"
@@ -817,6 +886,105 @@ class PaperTrader:
         if self._db:
             await self._db.close()
             self._db = None
+
+
+def _resolve_quote(dex_data: Dict[str, Any]) -> tuple:
+    """
+    Pick the quote to track a position against, preferring real USD price.
+
+    Args:
+        dex_data: DEXScreener-derived dict, ideally carrying price_usd.
+
+    Returns:
+        (quote, price_basis). Falls back to market cap when no usable price is
+        present, so older data sources keep working.
+    """
+    price_usd = _positive_float(dex_data.get("price_usd"))
+    if price_usd is not None:
+        return price_usd, PRICE_BASIS_PRICE_USD
+    market_cap = _positive_float(dex_data.get("market_cap"))
+    if market_cap is not None:
+        return market_cap, PRICE_BASIS_MARKET_CAP
+    return 0.0, PRICE_BASIS_MARKET_CAP
+
+
+def _positive_float(value: Any) -> Optional[float]:
+    """Return value as a positive float, or None if absent/invalid/non-positive."""
+    if value is None:
+        return None
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    return number if number > 0 else None
+
+
+def _current_quote(pos: Dict[str, Any], dex_data: Optional[Dict[str, Any]]) -> Optional[float]:
+    """
+    Read the live quote for a position in the same denomination as its entry.
+
+    Mixing denominations would be catastrophic: comparing a $0.00004 unit price
+    against a $100,000 entry market cap reads as a -100% move and would
+    instantly trip the stop loss. When the position's own basis is unavailable
+    this cycle, the position is left untouched rather than re-based.
+
+    Args:
+        pos: Position dict carrying a price_basis.
+        dex_data: Fresh DEXScreener data, or None.
+
+    Returns:
+        The current quote, or None when it cannot be read on the same basis.
+    """
+    if not dex_data:
+        return None
+    basis = pos.get("price_basis") or PRICE_BASIS_MARKET_CAP
+    return _positive_float(dex_data.get(basis))
+
+
+def _take_profit_trigger_pct(pos: Dict[str, Any]) -> float:
+    """
+    Resolve the P&L percentage at which a position takes profit.
+
+    Args:
+        pos: Position dict, optionally carrying a take_profit_target multiple.
+
+    Returns:
+        Trigger threshold as a percentage gain, e.g. 175.0 for a 2.75x target.
+        Falls back to TAKE_PROFIT_PCT when no valid target is stored.
+    """
+    raw = pos.get("take_profit_target")
+    if raw is None:
+        return TAKE_PROFIT_PCT
+    try:
+        target = float(raw)
+    except (TypeError, ValueError):
+        return TAKE_PROFIT_PCT
+    if target <= 1.0:
+        return TAKE_PROFIT_PCT
+    return (target - 1.0) * 100
+
+
+def _coerce_take_profit_target(value: Any) -> float:
+    """
+    Normalize a stored take-profit multiple, falling back to the default.
+
+    Rows written before the column existed, or holding NULL/non-numeric/
+    non-positive values, fall back to DEFAULT_TAKE_PROFIT_TARGET so a corrupt
+    value can never disable the take profit entirely.
+
+    Args:
+        value: Raw value read from the database or caller input.
+
+    Returns:
+        A usable positive take-profit multiple.
+    """
+    try:
+        target = float(value)
+    except (TypeError, ValueError):
+        return DEFAULT_TAKE_PROFIT_TARGET
+    if target <= 0:
+        return DEFAULT_TAKE_PROFIT_TARGET
+    return target
 
 
 def _format_hold_time(seconds: float) -> str:
