@@ -1,0 +1,28 @@
+{
+  "id": "FEAT-008",
+  "type": "feat",
+  "description": "Add paper trading mode with virtual P&L tracking - PaperTrader class with SQLite persistence, position management (buy/sell/TP/SL/trailing stop), integration into main loop with 5-min price checks, hourly portfolio updates, and daily summaries.",
+  "status": "completed",
+  "steps": [
+    "Create memescanner/paper_trader.py with PaperTrader class implementing all position management logic",
+    "Update memescanner/__main__.py to integrate paper trader into the main loop with proper timing",
+    "Create tests/test_paper_trader.py with comprehensive tests",
+    "Run tests and verify build"
+  ],
+  "acceptance_criteria": [
+    "PaperTrader class has __init__(starting_balance=1000, trade_size=50), balance, positions, closed_trades",
+    "buy() opens a position if balance allows, max 20 open positions",
+    "check_positions() updates prices via DEXScreener, triggers TP at +100%, SL at -50%, trailing stop",
+    "At +100% sell half, move stop to breakeven; if price drops to entry after TP sell remainder",
+    "get_portfolio_summary() returns formatted portfolio string",
+    "get_daily_summary() returns daily P&L summary string",
+    "SQLite paper_positions table persists all positions across restarts",
+    "Main loop integrates: buy on signal, check positions every 5min, hourly portfolio update, daily summary at midnight ET",
+    "Telegram messages match exact formats specified in requirements",
+    "All tests pass"
+  ],
+  "verification": [
+    "python -m pytest tests/test_paper_trader.py -v",
+    "python -m pytest tests/ -v"
+  ]
+}

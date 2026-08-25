@@ -1,0 +1,36 @@
+{
+  "id": "FEAT-005",
+  "type": "feat",
+  "description": "Add on-chain verification via Helius RPC - dev holding %, mint/freeze authority checks, top10 concentration, safe score calculation, and integrate into scanner pipeline.",
+  "status": "completed",
+  "steps": [
+    "Create memescanner/onchain.py with OnchainAnalyzer class using Helius RPC",
+    "Integrate on-chain check into scanner.py after rug filter and before P(2x) filter",
+    "Add rejection criteria: dev_holding > 30% or mint_authority not revoked",
+    "Update rug estimation with safe_score adjustment",
+    "Add on-chain info line to Telegram message format",
+    "Add rate limit protection: max 5 on-chain checks per cycle",
+    "Create tests/test_onchain.py with comprehensive tests",
+    "Run tests and verify build"
+  ],
+  "acceptance_criteria": [
+    "OnchainAnalyzer.check_token returns dev_holding_pct, top10_concentration_pct, mint_authority_revoked, freeze_authority_revoked, lp_locked, safe_score, flags",
+    "Safe score calculation follows exact rubric (start at 50, modifiers as specified)",
+    "Uses httpx async with 8s timeout and 0.3s delay between RPC calls",
+    "Partial data returned on RPC failure",
+    "Scanner rejects tokens with dev_holding > 30%",
+    "Scanner rejects tokens with mint_authority NOT revoked",
+    "Safe score adjusts rug %: >70 reduces by 10pp, <30 increases by 15pp",
+    "Telegram message includes on-chain line between rug % and X account line",
+    "Maximum 5 on-chain checks per scan cycle",
+    "On-chain errors skip check but still allow alert without on-chain line",
+    "All existing tests still pass"
+  ],
+  "verification": [
+    "python -m pytest tests/ -v",
+    "python -c 'from memescanner.onchain import OnchainAnalyzer; print(\"OK\")'",
+    "python -c 'from memescanner.scanner import run_scan_cycle; print(\"OK\")'"
+  ],
+  "blocked_reason": null,
+  "findings": "All 192 tests pass (49 new on-chain tests + 143 existing). OnchainAnalyzer class uses Helius RPC with 8s timeout and 0.3s delay between calls. Safe score starts at 50 with modifiers for mint/freeze authority, dev holding, top10 concentration, and LP lock. Scanner pipeline now: Fetch -> Twitter -> Age -> DEX -> Rug -> On-chain -> P(2x) -> Alert. On-chain rejection: dev > 30% or mint authority not revoked. Safe score > 70 reduces rug by 10pp, < 30 increases by 15pp. Max 5 on-chain checks per cycle for rate limiting. On-chain errors gracefully skip the check and still allow alerts without the on-chain Telegram line."
+}

@@ -1,0 +1,36 @@
+{
+  "id": "FEAT-007",
+  "type": "feat",
+  "description": "Add coordinated buy detection to OnchainAnalyzer + Tavily X search integration with new XSearchClient module. Integrate both into scanner.py pipeline.",
+  "status": "completed",
+  "steps": [
+    "Add detect_coordinated_buys method to OnchainAnalyzer in onchain.py",
+    "Integrate coordinated buys into check_token method and safe_score",
+    "Create memescanner/x_search.py with XSearchClient class",
+    "Update scanner.py pipeline to include coordinated buy rejection and X search integration",
+    "Update format_telegram_message to include X search info",
+    "Create tests for coordinated buys and X search",
+    "Run all tests and verify build"
+  ],
+  "acceptance_criteria": [
+    "detect_coordinated_buys returns has_bundled_pattern, cluster_count, cluster_pct_of_supply, coordinated_risk",
+    "3-4 clustered wallets = MEDIUM risk, 5+ = HIGH risk, >20% supply = HIGH regardless",
+    "HIGH risk: safe_score -= 25, MEDIUM risk: safe_score -= 10",
+    "Scanner rejects tokens with coordinated_risk == HIGH",
+    "XSearchClient searches Tavily with include_domains x.com",
+    "X search returns status, result_count, accounts, scam_warning, big_account_mention, has_buzz, top_snippet",
+    "scam_warning + MEDIUM+ coordinated_risk = REJECT",
+    "big_account_mention boosts P(2x) by x1.3",
+    "has_buzz boosts P(2x) by x1.15",
+    "X info displayed in Telegram message",
+    "X_DATA_NOT_FOUND is not treated as scam signal",
+    "All 239 existing tests still pass"
+  ],
+  "verification": [
+    "python -m pytest tests/ -v",
+    "python -c 'from memescanner.onchain import OnchainAnalyzer; print(\"OK\")'",
+    "python -c 'from memescanner.x_search import XSearchClient; print(\"OK\")'"
+  ],
+  "blocked_reason": null,
+  "findings": "All 290 tests pass (239 existing + 51 new). detect_coordinated_buys reuses existing largest_accounts data from check_token to avoid duplicate RPC calls. Cluster detection uses 5% tolerance on raw integer amounts, excluding holder #1 (LP). XSearchClient uses httpx with 15s timeout. Scanner pipeline: Fetch -> Twitter -> Serial Deployer -> Age -> DEX -> Rug -> On-chain (incl. coordinated buys) -> X Search -> Wave -> P(2x) -> Alert. Coordinated HIGH = reject. Scam warning + MEDIUM+ coordinated = reject. big_account_mention boosts P(2x) x1.3, has_buzz boosts x1.15. X_DATA_NOT_FOUND is NOT treated as scam."
+}

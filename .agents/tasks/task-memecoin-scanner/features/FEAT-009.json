@@ -1,0 +1,29 @@
+{
+  "id": "FEAT-009",
+  "type": "feat",
+  "description": "Add celebrity/viral scanner for non-Pump.fun launches - scans DEXScreener token-profiles and token-boosts endpoints to catch celebrity token launches like $TRUMP across all Solana platforms.",
+  "status": "completed",
+  "steps": [
+    "Create memescanner/celebrity_scanner.py with CelebrityScanner class",
+    "Integrate celebrity scanner into memescanner/__main__.py as a separate 30s scan loop",
+    "Create tests/test_celebrity_scanner.py with comprehensive tests",
+    "Run tests and verify build"
+  ],
+  "acceptance_criteria": [
+    "CelebrityScanner scans token-profiles/latest/v1 and token-boosts/top/v1 endpoints",
+    "Filters for Solana tokens with Twitter/X links",
+    "Celebrity keyword detection: trump, elon, musk, kanye, drake, biden, obama, zuckerberg, bezos",
+    "Viral detection via Tavily X search (10+ results = VIRAL)",
+    "Real vs fake celebrity detection based on X link account matching",
+    "Override normal filters for celebrity launches (still check liquidity > $10k and buys > 0)",
+    "Rate limiting: max 3 DEXScreener calls, max 2 Tavily searches per cycle",
+    "Alert format matches specification with star emoji and celebrity info",
+    "Integration into __main__.py with 30s interval sharing alerted_mints and paper_trader",
+    "Tracks seen tokens to avoid re-scanning",
+    "All tests pass"
+  ],
+  "verification": [
+    "python -m pytest tests/test_celebrity_scanner.py -v",
+    "python -m pytest tests/ -v"
+  ]
+}

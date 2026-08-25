@@ -1,0 +1,34 @@
+{
+  "id": "FEAT-004",
+  "type": "feat",
+  "description": "Trajectory analysis module - track graduated tokens over time, calculate velocity/acceleration, determine trajectory phase, compute continuation probability, and integrate into alerts and main loop.",
+  "status": "completed",
+  "steps": [
+    "Create memescanner/trajectory.py with TrajectoryAnalyzer class implementing velocity, acceleration, phase detection, and continuation probability",
+    "Update database.py to add token_snapshots table with all required fields",
+    "Update probability.py to use trajectory data for tokens above 200k MC",
+    "Update telegram_bot.py to include trajectory info in alerts",
+    "Update main.py to integrate trajectory analysis into scan loop",
+    "Create tests/test_trajectory.py with comprehensive tests",
+    "Run tests and verify build"
+  ],
+  "acceptance_criteria": [
+    "TrajectoryAnalyzer calculates mc_velocity, mc_acceleration, volume_velocity, holder_velocity",
+    "Phase detection correctly identifies LAUNCHING, PUMPING, PEAKING, DUMPING, DEAD",
+    "assess_continuation returns all required fields including continuation_probability, projected MCs, recommendation",
+    "Continuation probability formula uses all specified factors (velocity, acceleration, volume, buy_sell, liquidity, age, distance_from_high)",
+    "Database has token_snapshots table with all required columns",
+    "Probability calculator uses trajectory for tokens above 200k MC and shows relative targets (2x, 5x, 10x)",
+    "Telegram alert includes trajectory phase, velocity, acceleration, P(2x), P(5x), time since graduation, volume trend",
+    "Main loop takes snapshots for graduated tokens and suppresses DUMPING/DEAD alerts",
+    "HIGH PRIORITY marking for LAUNCHING phase with score > 50",
+    "All existing tests still pass"
+  ],
+  "verification": [
+    "python -m pytest tests/ -v",
+    "python -c 'from memescanner.trajectory import TrajectoryAnalyzer; print(\"OK\")'",
+    "python -c 'from memescanner.database import Database; print(\"OK\")'"
+  ],
+  "blocked_reason": null,
+  "findings": "All 143 tests pass (34 new trajectory tests). Trajectory module calculates velocity/acceleration from snapshot pairs. Phase detection uses growth rate thresholds (5%/min=LAUNCHING, 1%/min=PUMPING) with acceleration direction. Continuation probability formula multiplies base (0.6/0.35/0.15) by volume, buy_sell, liquidity, age, distance, and narrative factors. Relative targets (2x/5x/10x) scaled from continuation_prob with phase bonuses. Main loop takes snapshots each cycle and suppresses DUMPING/DEAD alerts regardless of score. Database token_snapshots table has indexes on mint and timestamp for efficient queries."
+}
