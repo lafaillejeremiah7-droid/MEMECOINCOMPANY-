@@ -241,6 +241,14 @@ class CommonEvaluator:
         if x_data.get("scam_warning"):
             return CandidateDecision(candidate, "REJECTED", ["SCAM_EVIDENCE_FOUND"], evidence, market)
 
+        # Forensic X search: check Bubblemaps/InsightX reports for scam warnings
+        forensic_scam = await self._forensic_x_search(candidate.mint)
+        evidence["forensic"] = forensic_scam
+        if forensic_scam.get("scam_detected"):
+            return CandidateDecision(
+                candidate, "REJECTED", ["FORENSIC_SCAM_EVIDENCE"], evidence, market
+            )
+
         # X mention count gate: require minimum mentions unless a celebrity or
         # high-profile account posted about it, or evidence suggests viral reach.
         x_result_count = int(x_data.get("result_count") or 0)
@@ -266,6 +274,60 @@ class CommonEvaluator:
             evaluated_at=datetime.now(timezone.utc).isoformat(),
             evaluated_age_minutes=age,
         )
+
+    async def _forensic_x_search(self, mint: str) -> Dict[str, Any]:
+        """
+        Search X for forensic tool reports (Bubblemaps, InsightX) about a token.
+
+        Queries X.ai for "bubblemaps {mint}" and "insightx {mint}" and checks
+        if the results contain scam/rug warnings from forensic analysis tools.
+
+        Args:
+            mint: Token mint address.
+
+        Returns:
+            Dict with scam_detected (bool), sources (list), and details (str).
+        """
+        result: Dict[str, Any] = {
+            "scam_detected": False,
+            "sources": [],
+            "details": "",
+        }
+
+        scam_keywords = {"scam", "rug", "honeypot", "fraudulent", "manipulated", "bundled"}
+        queries = [f"bubblemaps {mint}", f"insightx {mint}"]
+
+        for query in queries:
+            try:
+                search_result = await self.x_search.search_token(query, "", mint)
+                if search_result.get("status") == "X_DATA_NOT_FOUND_OR_NOT_INDEXED":
+                    continue
+                # Check evidence content for scam indicators
+                for item in search_result.get("evidence", []):
+                    content = str(item.get("content", "")).lower()
+                    title = str(item.get("title", "")).lower()
+                    combined = content + " " + title
+                    for keyword in scam_keywords:
+                        if keyword in combined:
+                            result["scam_detected"] = True
+                            result["sources"].append(query.split()[0])
+                            result["details"] = (
+                                f"Forensic tool ({query.split()[0]}) flagged scam indicators"
+                            )
+                            return result
+                # Also check the scam_warning field from search
+                if search_result.get("scam_warning"):
+                    result["scam_detected"] = True
+                    result["sources"].append(query.split()[0])
+                    result["details"] = (
+                        f"Forensic tool ({query.split()[0]}) scam warning detected"
+                    )
+                    return result
+            except Exception:
+                # Forensic search is best-effort; failures do not block
+                continue
+
+        return result
 
 
 def format_signal(decision: CandidateDecision) -> str:
@@ -296,6 +358,21 @@ def format_signal(decision: CandidateDecision) -> str:
         details = holder_suspicion.get("details", [])
         for detail in details:
             holder_flags_lines.append(f"  - {detail}")
+        # Same-amount buy detection
+        if holder_suspicion.get("same_amount_buys"):
+            holder_flags_lines.append("  - Same-amount buys detected (3+ holders)")
+        # Common funder address
+        common_funder_addr = holder_suspicion.get("common_funder_address")
+        if common_funder_addr:
+            holder_flags_lines.append(f"  - Common funder: {common_funder_addr}")
+        # Funding sources (top 3)
+        funding_sources = holder_suspicion.get("funding_sources", [])
+        if funding_sources:
+            top_sources = funding_sources[:3]
+            holder_flags_lines.append(
+                f"  - Funding sources: {', '.join(s[:12] + '...' for s in top_sources)}"
+            )
+    bubblemaps_link = f"https://app.bubblemaps.io/sol/token/{candidate.mint}"
     return "\n".join([
         "SOLANA CANDIDATE PASSED AVAILABLE SAFETY CHECKS",
         f"${candidate.symbol or 'UNKNOWN'} — {candidate.name or 'Unknown'}",
@@ -307,6 +384,7 @@ def format_signal(decision: CandidateDecision) -> str:
         f"Creator holding: {dev_text}",
         f"Top-10 concentration: {top10_text}",
     ] + (holder_flags_lines if holder_flags_lines else []) + [
+        f"Bubblemaps: {bubblemaps_link}",
         f"Sources: {sources}",
         f"Paid boost metadata: {'present (not scored)' if candidate.paid_boost else 'none'}",
         f"X OSINT: {x_status} (partial evidence only)",
