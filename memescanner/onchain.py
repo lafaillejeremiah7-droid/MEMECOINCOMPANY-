@@ -732,6 +732,159 @@ class OnchainAnalyzer:
                 return False
         return True
 
+    async def _analyze_holder_histories(
+        self, client: httpx.AsyncClient, holder_owners: List[str]
+    ) -> Dict[str, Any]:
+        """
+        Analyze transaction histories of top holders for suspicious patterns.
+
+        Checks top 5 holder wallets for:
+        1. Fresh wallets - fewer than 5 total signatures
+        2. Same-block buying - 3+ holders have a signature in the same slot
+        3. Common funder - share the same first funding source
+        4. Single-token wallets - only 1-2 unique programs interacted with
+
+        Args:
+            client: httpx async client.
+            holder_owners: List of owner wallet addresses (max 5 checked).
+
+        Returns:
+            Dict with fresh_wallets, same_block_buys, common_funder,
+            single_token_wallets, risk, details.
+        """
+        result: Dict[str, Any] = {
+            "fresh_wallets": 0,
+            "same_block_buys": False,
+            "common_funder": False,
+            "single_token_wallets": 0,
+            "risk": "LOW",
+            "details": [],
+        }
+
+        if not holder_owners:
+            return result
+
+        # Only check top 5 holders
+        wallets_to_check = holder_owners[:5]
+
+        # Collect signatures for each wallet
+        all_signatures: List[Optional[List[Dict[str, Any]]]] = []
+        for wallet in wallets_to_check:
+            await asyncio.sleep(RPC_CALL_DELAY)
+            sigs = await self._rpc_call(
+                client,
+                "getSignaturesForAddress",
+                [wallet, {"limit": 10}],
+            )
+            if isinstance(sigs, list):
+                all_signatures.append(sigs)
+            else:
+                all_signatures.append(None)
+
+        fresh_wallets = 0
+        single_token_wallets = 0
+        slots: List[int] = []
+        first_sources: List[Optional[str]] = []
+
+        for i, sigs in enumerate(all_signatures):
+            if sigs is None:
+                first_sources.append(None)
+                continue
+
+            # 1. Fresh wallet detection: fewer than 5 total signatures
+            if len(sigs) < 5:
+                fresh_wallets += 1
+                result["details"].append(
+                    f"Holder {i+1} ({wallets_to_check[i][:8]}...) has only {len(sigs)} transactions"
+                )
+
+            # 2. Collect slots for same-block detection
+            for sig_info in sigs:
+                slot = sig_info.get("slot")
+                if slot is not None:
+                    slots.append(int(slot))
+
+            # 3. Common funder: check the oldest (last) signature source
+            # The last signature in the list is the oldest since results come
+            # in reverse chronological order
+            if sigs:
+                oldest_sig = sigs[-1] if len(sigs) > 0 else None
+                if oldest_sig:
+                    first_sources.append(oldest_sig.get("signature"))
+                else:
+                    first_sources.append(None)
+            else:
+                first_sources.append(None)
+
+            # 4. Single-token wallet: check unique programs interacted with
+            # If a wallet has very few signatures and limited program diversity,
+            # it's likely a single-purpose wallet
+            unique_programs: set = set()
+            for sig_info in sigs:
+                # The memo field or err can hint at programs, but signatures
+                # endpoint doesn't return program IDs directly.
+                # Use the number of unique signatures as a proxy: if wallet
+                # has <= 2 total transactions, it's single-purpose.
+                pass
+            if len(sigs) <= 2:
+                single_token_wallets += 1
+                result["details"].append(
+                    f"Holder {i+1} ({wallets_to_check[i][:8]}...) is single-purpose wallet ({len(sigs)} txns)"
+                )
+
+        result["fresh_wallets"] = fresh_wallets
+        result["single_token_wallets"] = single_token_wallets
+
+        # Same-block detection: 3+ holders have signatures in the same slot
+        if slots:
+            slot_counts: Dict[int, int] = {}
+            for slot in slots:
+                slot_counts[slot] = slot_counts.get(slot, 0) + 1
+            max_same_slot = max(slot_counts.values()) if slot_counts else 0
+            if max_same_slot >= 3:
+                result["same_block_buys"] = True
+                result["details"].append(
+                    f"{max_same_slot} holders transacted in the same block"
+                )
+
+        # Common funder: check if multiple wallets share the same first signature
+        # (indicates they were funded from the same source in a batch)
+        valid_sources = [s for s in first_sources if s is not None]
+        if len(valid_sources) >= 2:
+            source_counts: Dict[str, int] = {}
+            for source in valid_sources:
+                source_counts[source] = source_counts.get(source, 0) + 1
+            max_shared = max(source_counts.values()) if source_counts else 0
+            if max_shared >= 2:
+                result["common_funder"] = True
+                result["details"].append(
+                    f"{max_shared} holders share the same funding source"
+                )
+
+        # Determine risk level
+        risk_signals = 0
+        if fresh_wallets >= 3:
+            risk_signals += 2
+        elif fresh_wallets >= 2:
+            risk_signals += 1
+        if result["same_block_buys"]:
+            risk_signals += 2
+        if result["common_funder"]:
+            risk_signals += 2
+        if single_token_wallets >= 3:
+            risk_signals += 2
+        elif single_token_wallets >= 2:
+            risk_signals += 1
+
+        if risk_signals >= 3:
+            result["risk"] = "HIGH"
+        elif risk_signals >= 1:
+            result["risk"] = "MEDIUM"
+        else:
+            result["risk"] = "LOW"
+
+        return result
+
     async def check_token(self, mint: str, creator: str) -> Dict[str, Any]:
         """
         Perform full on-chain verification for a token.
@@ -770,6 +923,7 @@ class OnchainAnalyzer:
             "cluster_count": 0,
             "cluster_pct_of_supply": 0.0,
             "coordinated_risk": "LOW",
+            "holder_suspicion": None,
         }
 
         if not self.enabled:
@@ -827,6 +981,7 @@ class OnchainAnalyzer:
                 # available and every inspected token account owner resolves.
                 dev_holding = 0.0
                 owners_complete = bool(creator)
+                resolved_owners: List[str] = []
                 for address, amount in top10_amounts:
                     if not address or amount <= 0:
                         continue
@@ -837,8 +992,10 @@ class OnchainAnalyzer:
                     owner = await self._get_account_owner(client, address)
                     if owner is None:
                         owners_complete = False
-                    elif owner == creator:
-                        dev_holding += amount
+                    else:
+                        resolved_owners.append(owner)
+                        if owner == creator:
+                            dev_holding += amount
 
                 result["dev_holding_pct"] = (
                     (dev_holding / total_supply) * 100 if owners_complete else None
@@ -852,6 +1009,13 @@ class OnchainAnalyzer:
                 result["cluster_count"] = coordinated["cluster_count"]
                 result["cluster_pct_of_supply"] = coordinated["cluster_pct_of_supply"]
                 result["coordinated_risk"] = coordinated["coordinated_risk"]
+
+                # Step 6: Analyze holder transaction histories for suspicion
+                if resolved_owners:
+                    holder_suspicion = await self._analyze_holder_histories(
+                        client, resolved_owners
+                    )
+                    result["holder_suspicion"] = holder_suspicion
 
                 # Holder and extension evidence can still be complete when a
                 # source cannot identify the launcher's wallet. In that case

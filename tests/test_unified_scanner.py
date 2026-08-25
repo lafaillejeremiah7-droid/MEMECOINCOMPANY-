@@ -1150,11 +1150,11 @@ async def test_x_mentions_bypassed_by_viral_evidence():
 
 
 @pytest.mark.asyncio
-async def test_top10_concentration_above_20_is_rejected():
+async def test_top10_concentration_above_30_is_rejected():
     class HighConcentrationOnchain(StubOnchain):
         async def check_token(self, mint, creator):
             data = await super().check_token(mint, creator)
-            data["top10_concentration_pct"] = 25.0
+            data["top10_concentration_pct"] = 35.0
             return data
 
     result = await CommonEvaluator(

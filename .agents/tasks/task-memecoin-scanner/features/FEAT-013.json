@@ -1,0 +1,24 @@
+{
+  "id": "FEAT-013",
+  "type": "feat",
+  "description": "Change top-10 concentration max to 30%. Add holder history suspicion analysis (_analyze_holder_histories) to OnchainAnalyzer that checks top 5 holders for fresh wallets, same-block buying, common funder, and single-token wallets. Integrate into check_token output and unified_scanner rejection logic. Show holder_flags in Telegram alert.",
+  "status": "in_progress",
+  "steps": [
+    "Update FiltersConfig.max_top10_concentration_pct default from 20.0 to 30.0 in config.py",
+    "Update CommonEvaluator max_top10_concentration_pct default from 20.0 to 30.0 in unified_scanner.py",
+    "Update config.example.yaml max_top10_concentration_pct from 20 to 30",
+    "Add _analyze_holder_histories method to OnchainAnalyzer in onchain.py",
+    "Integrate _analyze_holder_histories into check_token output as holder_suspicion dict",
+    "In CommonEvaluator.evaluate(), after coordinated_risk check, reject if holder_suspicion risk is HIGH",
+    "In format_signal(), add holder_flags to Telegram output if present"
+  ],
+  "acceptance_criteria": [
+    "max_top10_concentration_pct defaults to 30.0 everywhere",
+    "_analyze_holder_histories checks top 5 holders via getSignaturesForAddress with limit=10",
+    "Detects fresh wallets (<5 total signatures), same-block buys (3+ in same slot), common funder, single-token wallets",
+    "check_token returns holder_suspicion dict with fresh_wallets, same_block_buys, common_funder, single_token_wallets, risk, details",
+    "CommonEvaluator rejects tokens with HIGH holder_suspicion risk",
+    "format_signal shows holder_flags in Telegram output",
+    "All existing tests pass"
+  ]
+}

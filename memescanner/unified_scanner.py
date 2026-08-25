@@ -112,7 +112,7 @@ class CommonEvaluator:
         min_volume_24h_usd: float = 25000.0,
         min_buy_sell_ratio: float = 1.0,
         max_dev_holding_pct: float = 30.0,
-        max_top10_concentration_pct: float = 20.0,
+        max_top10_concentration_pct: float = 30.0,
         min_x_mentions: int = 5,
     ) -> None:
         self.pair_client = pair_client
@@ -217,6 +217,9 @@ class CommonEvaluator:
             return CandidateDecision(candidate, "REJECTED", ["HOLDER_CONCENTRATION_TOO_HIGH"], evidence, market)
         if onchain.get("coordinated_risk") == "HIGH":
             return CandidateDecision(candidate, "REJECTED", ["COORDINATED_BUY_RISK_HIGH"], evidence, market)
+        holder_suspicion = onchain.get("holder_suspicion")
+        if holder_suspicion and holder_suspicion.get("risk") == "HIGH":
+            return CandidateDecision(candidate, "REJECTED", ["SUSPICIOUS_HOLDER_ACTIVITY"], evidence, market)
 
         try:
             x_data = await self.x_search.search_token(
@@ -284,6 +287,15 @@ def format_signal(decision: CandidateDecision) -> str:
     dev_text = f"{dev_holding:.1f}%" if dev_holding is not None else "unknown (not scored safe)"
     top10 = onchain.get("top10_concentration_pct")
     top10_text = f"{top10:.1f}%" if top10 is not None else "unknown"
+    holder_suspicion = onchain.get("holder_suspicion")
+    holder_flags_lines: List[str] = []
+    if holder_suspicion and holder_suspicion.get("risk") != "LOW":
+        holder_flags_lines.append(
+            f"Holder suspicion: {holder_suspicion.get('risk', 'UNKNOWN')}"
+        )
+        details = holder_suspicion.get("details", [])
+        for detail in details:
+            holder_flags_lines.append(f"  - {detail}")
     return "\n".join([
         "SOLANA CANDIDATE PASSED AVAILABLE SAFETY CHECKS",
         f"${candidate.symbol or 'UNKNOWN'} — {candidate.name or 'Unknown'}",
@@ -294,6 +306,7 @@ def format_signal(decision: CandidateDecision) -> str:
         f"24h buys/sells (transaction counts, not USD flow): {market.get('buys_24h', 0)}/{market.get('sells_24h', 0)}",
         f"Creator holding: {dev_text}",
         f"Top-10 concentration: {top10_text}",
+    ] + (holder_flags_lines if holder_flags_lines else []) + [
         f"Sources: {sources}",
         f"Paid boost metadata: {'present (not scored)' if candidate.paid_boost else 'none'}",
         f"X OSINT: {x_status} (partial evidence only)",
