@@ -1,8 +1,10 @@
 """
-Paper Trading Dashboard for the Memescanner bot.
+Paper Trading & Pipeline Dashboard for the Memescanner bot.
 
 A lightweight web server using only the standard library that reads from
-memescanner.db and provides a real-time quant trading terminal dashboard.
+memescanner.db and provides a real-time quant trading terminal dashboard
+with full pipeline visibility: discovery cycles, candidate observations,
+cohort tracking, outcome jobs, and calibration runs.
 
 Run with: python -m memescanner.dashboard
 """
@@ -35,6 +37,104 @@ def get_db():
     conn.execute("""CREATE TABLE IF NOT EXISTS deployers (
         twitter_account TEXT PRIMARY KEY, token_count INTEGER NOT NULL DEFAULT 0,
         last_seen REAL, tokens_json TEXT)""")
+    conn.execute("""CREATE TABLE IF NOT EXISTS discovery_cycles (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        observed_at TEXT NOT NULL,
+        source_status_json TEXT NOT NULL,
+        candidate_count INTEGER NOT NULL)""")
+    conn.execute("""CREATE TABLE IF NOT EXISTS candidate_observations (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        chain_id TEXT NOT NULL,
+        mint TEXT NOT NULL,
+        observed_at TEXT NOT NULL,
+        name TEXT,
+        symbol TEXT,
+        candidate_json TEXT,
+        pair_created_at REAL,
+        age_minutes REAL,
+        sources_json TEXT NOT NULL,
+        boost_json TEXT,
+        evidence_json TEXT,
+        market_json TEXT,
+        screening_score REAL,
+        decision TEXT NOT NULL,
+        reasons_json TEXT NOT NULL,
+        alerted INTEGER NOT NULL DEFAULT 0,
+        outcome_identity TEXT NOT NULL,
+        cycle_id INTEGER,
+        candidate_id INTEGER,
+        policy_version TEXT,
+        feature_schema_version TEXT)""")
+    conn.execute("""CREATE TABLE IF NOT EXISTS cohort_candidates (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        chain_id TEXT NOT NULL,
+        mint TEXT NOT NULL,
+        first_discovered_at TEXT NOT NULL,
+        first_discovered_epoch REAL NOT NULL,
+        first_cycle_id INTEGER NOT NULL,
+        candidate_json TEXT NOT NULL,
+        sources_json TEXT NOT NULL,
+        policy_version TEXT NOT NULL,
+        feature_schema_version TEXT NOT NULL,
+        first_evaluated_at TEXT,
+        first_evaluated_epoch REAL,
+        initial_decision TEXT,
+        initial_screening_score REAL,
+        created_at TEXT NOT NULL,
+        UNIQUE(chain_id, mint))""")
+    conn.execute("""CREATE TABLE IF NOT EXISTS candidate_alert_claims (
+        chain_id TEXT NOT NULL,
+        mint TEXT NOT NULL,
+        status TEXT NOT NULL,
+        claimed_at TEXT NOT NULL,
+        completed_at TEXT,
+        PRIMARY KEY (chain_id, mint))""")
+    conn.execute("""CREATE TABLE IF NOT EXISTS outcome_jobs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        candidate_id INTEGER NOT NULL,
+        horizon_seconds INTEGER NOT NULL,
+        target_at REAL NOT NULL,
+        window_seconds INTEGER NOT NULL,
+        status TEXT NOT NULL DEFAULT 'PENDING',
+        attempt_count INTEGER NOT NULL DEFAULT 0,
+        next_attempt_at REAL NOT NULL,
+        completed_at TEXT,
+        UNIQUE(candidate_id, horizon_seconds))""")
+    conn.execute("""CREATE TABLE IF NOT EXISTS market_observations (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        candidate_id INTEGER NOT NULL,
+        horizon_seconds INTEGER NOT NULL,
+        target_at REAL NOT NULL,
+        captured_at TEXT NOT NULL,
+        captured_epoch REAL NOT NULL,
+        lag_seconds REAL NOT NULL,
+        provider TEXT NOT NULL,
+        pair_address TEXT,
+        price_usd REAL,
+        market_cap REAL,
+        liquidity_usd REAL,
+        status TEXT NOT NULL,
+        error_code TEXT)""")
+    conn.execute("""CREATE TABLE IF NOT EXISTS candidate_outcomes (
+        candidate_id INTEGER NOT NULL,
+        horizon_seconds INTEGER NOT NULL,
+        definition_version TEXT NOT NULL,
+        baseline_observation_id INTEGER NOT NULL,
+        terminal_observation_id INTEGER NOT NULL,
+        price_return_pct REAL NOT NULL,
+        event_2x INTEGER NOT NULL,
+        computed_at TEXT NOT NULL,
+        PRIMARY KEY (candidate_id, horizon_seconds, definition_version))""")
+    conn.execute("""CREATE TABLE IF NOT EXISTS calibration_runs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        created_at TEXT NOT NULL,
+        as_of_epoch REAL NOT NULL,
+        horizon_seconds INTEGER NOT NULL,
+        policy_version TEXT NOT NULL,
+        feature_schema_version TEXT NOT NULL,
+        definition_version TEXT NOT NULL,
+        status TEXT NOT NULL,
+        report_json TEXT NOT NULL)""")
     conn.commit()
     conn.row_factory = sqlite3.Row
     return conn
@@ -300,9 +400,9 @@ def api_stats():
         days_active = max(1, (now - first_trade_time) / 86400) if first_trade_time > 0 else 1
         trades_per_day = total_closed / days_active
 
-        # Scan count approximation (use total closed + open as proxy)
-        cursor.execute("SELECT COUNT(*) as cnt FROM paper_positions")
-        scan_count = safe_int(cursor.fetchone()["cnt"]) * 10  # rough cycles estimate
+        # Use actual discovery_cycles count
+        cursor.execute("SELECT COUNT(*) as cnt FROM discovery_cycles")
+        scan_count = safe_int(cursor.fetchone()["cnt"])
 
         db.close()
         return {
@@ -366,6 +466,403 @@ def api_waves():
         return {"keywords": keywords, "count": len(keywords)}
     except sqlite3.OperationalError:
         return {"keywords": [], "count": 0}
+
+
+# --- New Pipeline / Calibration API endpoints ---
+
+
+def api_discovery(page=1, limit=50):
+    """Recent discovery cycles with source status and candidate counts."""
+    try:
+        db = get_db()
+        cursor = db.cursor()
+
+        offset = (page - 1) * limit
+
+        cursor.execute("SELECT COUNT(*) as cnt FROM discovery_cycles")
+        total = safe_int(cursor.fetchone()["cnt"])
+
+        cursor.execute(
+            "SELECT id, observed_at, source_status_json, candidate_count "
+            "FROM discovery_cycles ORDER BY id DESC LIMIT ? OFFSET ?",
+            (limit, offset),
+        )
+        rows = cursor.fetchall()
+
+        cycles = []
+        for row in rows:
+            source_status = {}
+            try:
+                source_status = json.loads(row["source_status_json"] or "{}")
+            except (json.JSONDecodeError, TypeError):
+                pass
+
+            cycles.append({
+                "id": row["id"],
+                "observed_at": row["observed_at"] or "",
+                "source_status": source_status,
+                "candidate_count": safe_int(row["candidate_count"]),
+            })
+
+        db.close()
+        return {
+            "cycles": cycles,
+            "total": total,
+            "page": page,
+            "limit": limit,
+            "total_pages": max(1, (total + limit - 1) // limit),
+        }
+    except sqlite3.OperationalError:
+        return {"cycles": [], "total": 0, "page": 1, "limit": limit, "total_pages": 1}
+
+
+def api_candidates(page=1, limit=50, decision=None):
+    """Candidate observations with optional decision filter."""
+    try:
+        db = get_db()
+        cursor = db.cursor()
+
+        offset = (page - 1) * limit
+
+        where_clause = ""
+        params = []
+        if decision:
+            where_clause = "WHERE decision = ?"
+            params.append(decision)
+
+        cursor.execute(f"SELECT COUNT(*) as cnt FROM candidate_observations {where_clause}", params)
+        total = safe_int(cursor.fetchone()["cnt"])
+
+        cursor.execute(
+            f"SELECT id, chain_id, mint, observed_at, name, symbol, age_minutes, "
+            f"screening_score, decision, reasons_json, alerted, sources_json, "
+            f"market_json, policy_version "
+            f"FROM candidate_observations {where_clause} "
+            f"ORDER BY id DESC LIMIT ? OFFSET ?",
+            params + [limit, offset],
+        )
+        rows = cursor.fetchall()
+
+        candidates = []
+        for row in rows:
+            reasons = []
+            try:
+                reasons = json.loads(row["reasons_json"] or "[]")
+            except (json.JSONDecodeError, TypeError):
+                pass
+
+            sources = []
+            try:
+                sources = json.loads(row["sources_json"] or "[]")
+            except (json.JSONDecodeError, TypeError):
+                pass
+
+            market = {}
+            try:
+                market = json.loads(row["market_json"] or "{}")
+            except (json.JSONDecodeError, TypeError):
+                pass
+
+            candidates.append({
+                "id": row["id"],
+                "chain_id": row["chain_id"] or "",
+                "mint": row["mint"] or "",
+                "observed_at": row["observed_at"] or "",
+                "name": row["name"] or "",
+                "symbol": row["symbol"] or "???",
+                "age_minutes": safe_float(row["age_minutes"]),
+                "screening_score": safe_float(row["screening_score"]),
+                "decision": row["decision"] or "",
+                "reasons": reasons,
+                "alerted": bool(row["alerted"]),
+                "sources": sources,
+                "market": market,
+                "policy_version": row["policy_version"] or "",
+            })
+
+        # Decision breakdown
+        cursor.execute(
+            "SELECT decision, COUNT(*) as cnt FROM candidate_observations GROUP BY decision"
+        )
+        breakdown = {}
+        for row in cursor.fetchall():
+            breakdown[row["decision"]] = safe_int(row["cnt"])
+
+        db.close()
+        return {
+            "candidates": candidates,
+            "total": total,
+            "page": page,
+            "limit": limit,
+            "total_pages": max(1, (total + limit - 1) // limit),
+            "decision_breakdown": breakdown,
+        }
+    except sqlite3.OperationalError:
+        return {
+            "candidates": [], "total": 0, "page": 1, "limit": limit,
+            "total_pages": 1, "decision_breakdown": {},
+        }
+
+
+def api_cohort(page=1, limit=50):
+    """Cohort candidates with initial evaluations."""
+    try:
+        db = get_db()
+        cursor = db.cursor()
+
+        offset = (page - 1) * limit
+
+        cursor.execute("SELECT COUNT(*) as cnt FROM cohort_candidates")
+        total = safe_int(cursor.fetchone()["cnt"])
+
+        cursor.execute(
+            "SELECT id, chain_id, mint, first_discovered_at, first_discovered_epoch, "
+            "first_cycle_id, sources_json, policy_version, feature_schema_version, "
+            "first_evaluated_at, initial_decision, initial_screening_score, created_at "
+            "FROM cohort_candidates ORDER BY id DESC LIMIT ? OFFSET ?",
+            (limit, offset),
+        )
+        rows = cursor.fetchall()
+
+        cohort = []
+        for row in rows:
+            sources = []
+            try:
+                sources = json.loads(row["sources_json"] or "[]")
+            except (json.JSONDecodeError, TypeError):
+                pass
+
+            cohort.append({
+                "id": row["id"],
+                "chain_id": row["chain_id"] or "",
+                "mint": row["mint"] or "",
+                "first_discovered_at": row["first_discovered_at"] or "",
+                "first_discovered_epoch": safe_float(row["first_discovered_epoch"]),
+                "first_cycle_id": safe_int(row["first_cycle_id"]),
+                "sources": sources,
+                "policy_version": row["policy_version"] or "",
+                "feature_schema_version": row["feature_schema_version"] or "",
+                "first_evaluated_at": row["first_evaluated_at"] or "",
+                "initial_decision": row["initial_decision"] or "",
+                "initial_screening_score": safe_float(row["initial_screening_score"]),
+                "created_at": row["created_at"] or "",
+            })
+
+        # Summary stats
+        cursor.execute(
+            "SELECT initial_decision, COUNT(*) as cnt FROM cohort_candidates "
+            "WHERE initial_decision IS NOT NULL GROUP BY initial_decision"
+        )
+        decision_breakdown = {}
+        for row in cursor.fetchall():
+            decision_breakdown[row["initial_decision"]] = safe_int(row["cnt"])
+
+        db.close()
+        return {
+            "cohort": cohort,
+            "total": total,
+            "page": page,
+            "limit": limit,
+            "total_pages": max(1, (total + limit - 1) // limit),
+            "decision_breakdown": decision_breakdown,
+        }
+    except sqlite3.OperationalError:
+        return {
+            "cohort": [], "total": 0, "page": 1, "limit": limit,
+            "total_pages": 1, "decision_breakdown": {},
+        }
+
+
+def api_outcomes(page=1, limit=50):
+    """Outcome jobs status and completed candidate outcomes."""
+    try:
+        db = get_db()
+        cursor = db.cursor()
+
+        # Outcome jobs status summary
+        cursor.execute(
+            "SELECT status, COUNT(*) as cnt FROM outcome_jobs GROUP BY status"
+        )
+        job_status = {}
+        for row in cursor.fetchall():
+            job_status[row["status"]] = safe_int(row["cnt"])
+
+        # Recent completed outcomes with price returns
+        offset = (page - 1) * limit
+
+        cursor.execute("SELECT COUNT(*) as cnt FROM candidate_outcomes")
+        total = safe_int(cursor.fetchone()["cnt"])
+
+        cursor.execute(
+            "SELECT co.candidate_id, co.horizon_seconds, co.price_return_pct, "
+            "co.event_2x, co.computed_at, co.definition_version, "
+            "cc.chain_id, cc.mint, cc.initial_decision, cc.initial_screening_score "
+            "FROM candidate_outcomes co "
+            "LEFT JOIN cohort_candidates cc ON cc.id = co.candidate_id "
+            "ORDER BY co.computed_at DESC LIMIT ? OFFSET ?",
+            (limit, offset),
+        )
+        rows = cursor.fetchall()
+
+        outcomes = []
+        for row in rows:
+            outcomes.append({
+                "candidate_id": safe_int(row["candidate_id"]),
+                "horizon_seconds": safe_int(row["horizon_seconds"]),
+                "price_return_pct": safe_float(row["price_return_pct"]),
+                "event_2x": bool(row["event_2x"]),
+                "computed_at": row["computed_at"] or "",
+                "definition_version": row["definition_version"] or "",
+                "chain_id": row["chain_id"] or "",
+                "mint": row["mint"] or "",
+                "initial_decision": row["initial_decision"] or "",
+                "initial_screening_score": safe_float(row["initial_screening_score"]),
+            })
+
+        # Outcome summary stats
+        cursor.execute(
+            "SELECT COUNT(*) as total, "
+            "AVG(price_return_pct) as avg_return, "
+            "SUM(event_2x) as total_2x, "
+            "MIN(price_return_pct) as worst, "
+            "MAX(price_return_pct) as best "
+            "FROM candidate_outcomes"
+        )
+        summary_row = cursor.fetchone()
+        summary = {
+            "total_outcomes": safe_int(summary_row["total"]) if summary_row else 0,
+            "avg_return_pct": safe_float(summary_row["avg_return"]) if summary_row else 0.0,
+            "total_2x_events": safe_int(summary_row["total_2x"]) if summary_row else 0,
+            "worst_return_pct": safe_float(summary_row["worst"]) if summary_row else 0.0,
+            "best_return_pct": safe_float(summary_row["best"]) if summary_row else 0.0,
+        }
+
+        db.close()
+        return {
+            "outcomes": outcomes,
+            "total": total,
+            "page": page,
+            "limit": limit,
+            "total_pages": max(1, (total + limit - 1) // limit),
+            "job_status": job_status,
+            "summary": summary,
+        }
+    except sqlite3.OperationalError:
+        return {
+            "outcomes": [], "total": 0, "page": 1, "limit": limit,
+            "total_pages": 1, "job_status": {}, "summary": {
+                "total_outcomes": 0, "avg_return_pct": 0.0,
+                "total_2x_events": 0, "worst_return_pct": 0.0, "best_return_pct": 0.0,
+            },
+        }
+
+
+def api_calibration():
+    """Calibration run history with report summaries."""
+    try:
+        db = get_db()
+        cursor = db.cursor()
+
+        cursor.execute(
+            "SELECT id, created_at, as_of_epoch, horizon_seconds, policy_version, "
+            "feature_schema_version, definition_version, status, report_json "
+            "FROM calibration_runs ORDER BY id DESC LIMIT 50"
+        )
+        rows = cursor.fetchall()
+
+        runs = []
+        for row in rows:
+            report = {}
+            try:
+                report = json.loads(row["report_json"] or "{}")
+            except (json.JSONDecodeError, TypeError):
+                pass
+
+            runs.append({
+                "id": row["id"],
+                "created_at": row["created_at"] or "",
+                "as_of_epoch": safe_float(row["as_of_epoch"]),
+                "horizon_seconds": safe_int(row["horizon_seconds"]),
+                "policy_version": row["policy_version"] or "",
+                "feature_schema_version": row["feature_schema_version"] or "",
+                "definition_version": row["definition_version"] or "",
+                "status": row["status"] or "",
+                "report": report,
+            })
+
+        db.close()
+        return {"runs": runs, "count": len(runs)}
+    except sqlite3.OperationalError:
+        return {"runs": [], "count": 0}
+
+
+def api_pipeline_summary():
+    """High-level pipeline health summary for the sidebar."""
+    try:
+        db = get_db()
+        cursor = db.cursor()
+
+        # Discovery cycles in the last hour
+        one_hour_ago = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
+        cursor.execute(
+            "SELECT COUNT(*) as cnt, COALESCE(SUM(candidate_count), 0) as total_candidates "
+            "FROM discovery_cycles WHERE observed_at >= ?",
+            (one_hour_ago,),
+        )
+        row = cursor.fetchone()
+        cycles_last_hour = safe_int(row["cnt"])
+        candidates_last_hour = safe_int(row["total_candidates"])
+
+        # Total cohort size
+        cursor.execute("SELECT COUNT(*) as cnt FROM cohort_candidates")
+        cohort_size = safe_int(cursor.fetchone()["cnt"])
+
+        # Alert claims
+        cursor.execute(
+            "SELECT status, COUNT(*) as cnt FROM candidate_alert_claims GROUP BY status"
+        )
+        alert_claims = {}
+        for row in cursor.fetchall():
+            alert_claims[row["status"]] = safe_int(row["cnt"])
+
+        # Outcome jobs pending
+        cursor.execute(
+            "SELECT COUNT(*) as cnt FROM outcome_jobs WHERE status IN ('PENDING', 'RETRYING')"
+        )
+        pending_jobs = safe_int(cursor.fetchone()["cnt"])
+
+        # Latest calibration run
+        cursor.execute(
+            "SELECT created_at, status, horizon_seconds FROM calibration_runs "
+            "ORDER BY id DESC LIMIT 1"
+        )
+        latest_cal = cursor.fetchone()
+        latest_calibration = None
+        if latest_cal:
+            latest_calibration = {
+                "created_at": latest_cal["created_at"] or "",
+                "status": latest_cal["status"] or "",
+                "horizon_seconds": safe_int(latest_cal["horizon_seconds"]),
+            }
+
+        db.close()
+        return {
+            "cycles_last_hour": cycles_last_hour,
+            "candidates_last_hour": candidates_last_hour,
+            "cohort_size": cohort_size,
+            "alert_claims": alert_claims,
+            "pending_outcome_jobs": pending_jobs,
+            "latest_calibration": latest_calibration,
+        }
+    except sqlite3.OperationalError:
+        return {
+            "cycles_last_hour": 0,
+            "candidates_last_hour": 0,
+            "cohort_size": 0,
+            "alert_claims": {},
+            "pending_outcome_jobs": 0,
+            "latest_calibration": None,
+        }
 
 
 HTML_TEMPLATE = """<!DOCTYPE html>
@@ -440,12 +937,39 @@ HTML_TEMPLATE = """<!DOCTYPE html>
             border: 1px solid #00d4ff;
         }
 
+        /* TAB NAVIGATION */
+        .tab-nav {
+            display: flex;
+            border-bottom: 1px solid #003300;
+            background: #0a0a0a;
+            padding: 0 20px;
+        }
+        .tab-btn {
+            padding: 10px 20px;
+            background: none;
+            border: none;
+            color: #666666;
+            font-family: 'Courier New', monospace;
+            font-size: 0.8rem;
+            cursor: pointer;
+            letter-spacing: 1px;
+            border-bottom: 2px solid transparent;
+            transition: all 0.2s;
+        }
+        .tab-btn:hover {
+            color: #00ff41;
+        }
+        .tab-btn.active {
+            color: #00d4ff;
+            border-bottom-color: #00d4ff;
+        }
+
         /* MAIN LAYOUT */
         .main-layout {
             display: grid;
-            grid-template-columns: 1fr 260px;
+            grid-template-columns: 1fr 280px;
             gap: 0;
-            min-height: calc(100vh - 45px);
+            min-height: calc(100vh - 85px);
         }
         .content-area {
             padding: 20px;
@@ -454,6 +978,14 @@ HTML_TEMPLATE = """<!DOCTYPE html>
         .sidebar {
             padding: 16px;
             background: #0a0a0a;
+        }
+
+        /* TAB PANELS */
+        .tab-panel {
+            display: none;
+        }
+        .tab-panel.active {
+            display: block;
         }
 
         /* ACCOUNT SECTION */
@@ -724,6 +1256,132 @@ HTML_TEMPLATE = """<!DOCTYPE html>
             font-size: 0.8rem;
         }
 
+        /* PIPELINE SPECIFIC STYLES */
+        .pipeline-cards {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 12px;
+            margin-bottom: 24px;
+        }
+        .pipeline-card {
+            padding: 16px;
+            border: 1px solid #003300;
+            background: #0a0a0a;
+        }
+        .pipeline-card-title {
+            font-size: 0.65rem;
+            color: #666666;
+            letter-spacing: 1px;
+            margin-bottom: 8px;
+            text-transform: uppercase;
+        }
+        .pipeline-card-value {
+            font-size: 1.8rem;
+            font-weight: bold;
+            color: #00ff41;
+        }
+        .pipeline-card-value.cyan {
+            color: #00d4ff;
+        }
+        .pipeline-card-value.gold {
+            color: #ffd700;
+        }
+        .pipeline-card-value.red {
+            color: #ff3333;
+        }
+        .pipeline-card-subtitle {
+            font-size: 0.65rem;
+            color: #666666;
+            margin-top: 4px;
+        }
+
+        /* DECISION FILTER BUTTONS */
+        .filter-row {
+            display: flex;
+            gap: 8px;
+            margin-bottom: 16px;
+            flex-wrap: wrap;
+        }
+        .filter-btn {
+            padding: 4px 12px;
+            background: #0a0a0a;
+            border: 1px solid #1a1a1a;
+            color: #666666;
+            font-family: 'Courier New', monospace;
+            font-size: 0.7rem;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        .filter-btn:hover {
+            border-color: #003300;
+            color: #00ff41;
+        }
+        .filter-btn.active {
+            border-color: #00d4ff;
+            color: #00d4ff;
+        }
+
+        /* CALIBRATION CARD */
+        .cal-card {
+            padding: 14px;
+            border: 1px solid #1a1a1a;
+            margin-bottom: 10px;
+            background: #0a0a0a;
+        }
+        .cal-card-header {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 8px;
+        }
+        .cal-status {
+            padding: 2px 8px;
+            border-radius: 3px;
+            font-size: 0.6rem;
+            font-weight: bold;
+        }
+        .cal-status.ok {
+            background: #003300;
+            color: #00ff41;
+            border: 1px solid #00ff41;
+        }
+        .cal-status.insufficient {
+            background: #1a1a00;
+            color: #ffd700;
+            border: 1px solid #ffd700;
+        }
+        .cal-status.error {
+            background: #330000;
+            color: #ff3333;
+            border: 1px solid #ff3333;
+        }
+        .cal-meta {
+            font-size: 0.7rem;
+            color: #666666;
+        }
+        .cal-report-row {
+            display: flex;
+            justify-content: space-between;
+            font-size: 0.7rem;
+            padding: 2px 0;
+        }
+
+        /* OUTCOME ROW */
+        .outcome-positive {
+            color: #00ff41;
+        }
+        .outcome-negative {
+            color: #ff3333;
+        }
+        .badge-2x {
+            background: #1a1a00;
+            color: #ffd700;
+            border: 1px solid #ffd700;
+            padding: 1px 5px;
+            font-size: 0.6rem;
+            border-radius: 2px;
+            font-weight: bold;
+        }
+
         /* RESPONSIVE */
         @media (max-width: 900px) {
             .main-layout {
@@ -737,6 +1395,9 @@ HTML_TEMPLATE = """<!DOCTYPE html>
             }
             .pnl-display {
                 font-size: 2rem;
+            }
+            .pipeline-cards {
+                grid-template-columns: 1fr 1fr;
             }
         }
     </style>
@@ -755,41 +1416,153 @@ HTML_TEMPLATE = """<!DOCTYPE html>
         </div>
     </div>
 
+    <!-- TAB NAVIGATION -->
+    <div class="tab-nav">
+        <button class="tab-btn active" onclick="switchTab('trading')">PAPER TRADING</button>
+        <button class="tab-btn" onclick="switchTab('pipeline')">DISCOVERY PIPELINE</button>
+        <button class="tab-btn" onclick="switchTab('outcomes')">OUTCOMES</button>
+        <button class="tab-btn" onclick="switchTab('calibration')">CALIBRATION</button>
+    </div>
+
     <div class="main-layout">
         <!-- CONTENT AREA -->
         <div class="content-area" id="content-area">
-            <!-- ACCOUNT SECTION -->
-            <div class="account-section" id="account-section">
-                <div class="pnl-display" id="pnl-display">$0.00</div>
-                <div class="pnl-subtitle" id="pnl-subtitle">ALL-TIME P&L &#8226; 0 DAYS &#8226; +$0.00</div>
-                <div class="stats-row">
-                    <div class="stat"><span class="stat-label">TRADES:</span> <span class="stat-value" id="stat-trades">0</span></div>
-                    <div class="stat"><span class="stat-label">WIN RATE:</span> <span class="stat-value cyan" id="stat-winrate">0%</span></div>
-                    <div class="stat"><span class="stat-label">AVG R/R:</span> <span class="stat-value gold" id="stat-rr">0.00</span></div>
-                    <div class="stat"><span class="stat-label">LIQ RISK:</span> <span class="stat-value" id="stat-liq">0.0/10</span></div>
+
+            <!-- TAB: PAPER TRADING -->
+            <div class="tab-panel active" id="tab-trading">
+                <!-- ACCOUNT SECTION -->
+                <div class="account-section" id="account-section">
+                    <div class="pnl-display" id="pnl-display">$0.00</div>
+                    <div class="pnl-subtitle" id="pnl-subtitle">ALL-TIME P&L &#8226; 0 DAYS &#8226; +$0.00</div>
+                    <div class="stats-row">
+                        <div class="stat"><span class="stat-label">TRADES:</span> <span class="stat-value" id="stat-trades">0</span></div>
+                        <div class="stat"><span class="stat-label">WIN RATE:</span> <span class="stat-value cyan" id="stat-winrate">0%</span></div>
+                        <div class="stat"><span class="stat-label">AVG R/R:</span> <span class="stat-value gold" id="stat-rr">0.00</span></div>
+                        <div class="stat"><span class="stat-label">LIQ RISK:</span> <span class="stat-value" id="stat-liq">0.0/10</span></div>
+                    </div>
+                </div>
+
+                <!-- POSITIONS SECTION -->
+                <div class="positions-section">
+                    <div class="section-header">
+                        <span class="section-title" id="positions-header">OPEN POSITIONS (0/3)</span>
+                    </div>
+                    <div id="positions-container">
+                        <div class="empty-state">NO ACTIVE POSITIONS</div>
+                    </div>
+                </div>
+
+                <!-- HISTORY SECTION -->
+                <div class="history-section">
+                    <div class="section-header">
+                        <span class="section-title">TRADE HISTORY</span>
+                    </div>
+                    <div id="history-container">
+                        <div class="empty-state">NO CLOSED TRADES</div>
+                    </div>
+                    <div class="pagination" id="pagination"></div>
                 </div>
             </div>
 
-            <!-- POSITIONS SECTION -->
-            <div class="positions-section">
-                <div class="section-header">
-                    <span class="section-title" id="positions-header">OPEN POSITIONS (0/3)</span>
+            <!-- TAB: DISCOVERY PIPELINE -->
+            <div class="tab-panel" id="tab-pipeline">
+                <div class="pipeline-cards" id="pipeline-summary-cards">
+                    <div class="pipeline-card">
+                        <div class="pipeline-card-title">CYCLES (1H)</div>
+                        <div class="pipeline-card-value" id="pipe-cycles">0</div>
+                    </div>
+                    <div class="pipeline-card">
+                        <div class="pipeline-card-title">CANDIDATES (1H)</div>
+                        <div class="pipeline-card-value cyan" id="pipe-candidates">0</div>
+                    </div>
+                    <div class="pipeline-card">
+                        <div class="pipeline-card-title">COHORT SIZE</div>
+                        <div class="pipeline-card-value gold" id="pipe-cohort">0</div>
+                    </div>
+                    <div class="pipeline-card">
+                        <div class="pipeline-card-title">ALERTS SENT</div>
+                        <div class="pipeline-card-value" id="pipe-alerts">0</div>
+                    </div>
                 </div>
-                <div id="positions-container">
-                    <div class="empty-state">NO ACTIVE POSITIONS</div>
+
+                <!-- CANDIDATE OBSERVATIONS -->
+                <div class="section-header">
+                    <span class="section-title">CANDIDATE OBSERVATIONS</span>
+                </div>
+                <div class="filter-row" id="decision-filters">
+                    <button class="filter-btn active" onclick="filterCandidates(null)">ALL</button>
+                    <button class="filter-btn" onclick="filterCandidates('ALERT')">ALERT</button>
+                    <button class="filter-btn" onclick="filterCandidates('REJECT')">REJECT</button>
+                    <button class="filter-btn" onclick="filterCandidates('DEFERRED')">DEFERRED</button>
+                </div>
+                <div id="candidates-container">
+                    <div class="empty-state">NO CANDIDATES OBSERVED</div>
+                </div>
+                <div class="pagination" id="candidates-pagination"></div>
+
+                <!-- DISCOVERY CYCLES -->
+                <div style="margin-top: 24px;">
+                    <div class="section-header">
+                        <span class="section-title">RECENT DISCOVERY CYCLES</span>
+                    </div>
+                    <div id="discovery-container">
+                        <div class="empty-state">NO DISCOVERY CYCLES</div>
+                    </div>
+                    <div class="pagination" id="discovery-pagination"></div>
                 </div>
             </div>
 
-            <!-- HISTORY SECTION -->
-            <div class="history-section">
+            <!-- TAB: OUTCOMES -->
+            <div class="tab-panel" id="tab-outcomes">
+                <div class="pipeline-cards" id="outcome-summary-cards">
+                    <div class="pipeline-card">
+                        <div class="pipeline-card-title">TOTAL OUTCOMES</div>
+                        <div class="pipeline-card-value" id="out-total">0</div>
+                    </div>
+                    <div class="pipeline-card">
+                        <div class="pipeline-card-title">AVG RETURN</div>
+                        <div class="pipeline-card-value cyan" id="out-avg">0%</div>
+                    </div>
+                    <div class="pipeline-card">
+                        <div class="pipeline-card-title">2X EVENTS</div>
+                        <div class="pipeline-card-value gold" id="out-2x">0</div>
+                    </div>
+                    <div class="pipeline-card">
+                        <div class="pipeline-card-title">PENDING JOBS</div>
+                        <div class="pipeline-card-value" id="out-pending">0</div>
+                    </div>
+                </div>
+
+                <!-- OUTCOME JOBS STATUS -->
                 <div class="section-header">
-                    <span class="section-title">TRADE HISTORY</span>
+                    <span class="section-title">OUTCOME JOB STATUS</span>
                 </div>
-                <div id="history-container">
-                    <div class="empty-state">NO CLOSED TRADES</div>
+                <div id="job-status-container">
+                    <div class="empty-state">NO OUTCOME JOBS</div>
                 </div>
-                <div class="pagination" id="pagination"></div>
+
+                <!-- COMPLETED OUTCOMES -->
+                <div style="margin-top: 24px;">
+                    <div class="section-header">
+                        <span class="section-title">COMPLETED OUTCOMES</span>
+                    </div>
+                    <div id="outcomes-container">
+                        <div class="empty-state">NO OUTCOMES COMPUTED</div>
+                    </div>
+                    <div class="pagination" id="outcomes-pagination"></div>
+                </div>
             </div>
+
+            <!-- TAB: CALIBRATION -->
+            <div class="tab-panel" id="tab-calibration">
+                <div class="section-header">
+                    <span class="section-title">CALIBRATION RUNS</span>
+                </div>
+                <div id="calibration-container">
+                    <div class="empty-state">NO CALIBRATION RUNS</div>
+                </div>
+            </div>
+
         </div>
 
         <!-- SIDEBAR -->
@@ -802,6 +1575,26 @@ HTML_TEMPLATE = """<!DOCTYPE html>
                 </div>
                 <div class="countdown" id="countdown">15</div>
                 <div class="countdown-label">NEXT SCAN</div>
+            </div>
+
+            <div class="sidebar-section">
+                <div class="sidebar-title">PIPELINE HEALTH</div>
+                <div class="sidebar-stat">
+                    <span class="sidebar-stat-label">Cohort size</span>
+                    <span class="sidebar-stat-value" id="sb-cohort">0</span>
+                </div>
+                <div class="sidebar-stat">
+                    <span class="sidebar-stat-label">Pending jobs</span>
+                    <span class="sidebar-stat-value" id="sb-pending-jobs">0</span>
+                </div>
+                <div class="sidebar-stat">
+                    <span class="sidebar-stat-label">Alerts sent</span>
+                    <span class="sidebar-stat-value" id="sb-alerts-sent">0</span>
+                </div>
+                <div class="sidebar-stat">
+                    <span class="sidebar-stat-label">Last calibration</span>
+                    <span class="sidebar-stat-value" id="sb-last-cal">--</span>
+                </div>
             </div>
 
             <div class="sidebar-section">
@@ -827,6 +1620,10 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 
     <script>
         let currentPage = 1;
+        let candidatePage = 1;
+        let discoveryPage = 1;
+        let outcomePage = 1;
+        let currentDecisionFilter = null;
         const LIMIT = 15;
         let countdownVal = 15;
         let lastPnl = null;
@@ -863,6 +1660,24 @@ HTML_TEMPLATE = """<!DOCTYPE html>
             return '$' + val.toFixed(0);
         }
 
+        function shortMint(mint) {
+            if (!mint || mint.length < 10) return mint || '';
+            return mint.slice(0, 4) + '...' + mint.slice(-4);
+        }
+
+        function timeAgo(isoStr) {
+            if (!isoStr) return '--';
+            try {
+                const d = new Date(isoStr);
+                const now = new Date();
+                const diff = (now - d) / 1000;
+                if (diff < 60) return Math.floor(diff) + 's ago';
+                if (diff < 3600) return Math.floor(diff/60) + 'm ago';
+                if (diff < 86400) return Math.floor(diff/3600) + 'h ago';
+                return Math.floor(diff/86400) + 'd ago';
+            } catch(e) { return '--'; }
+        }
+
         async function fetchJSON(url) {
             try {
                 const res = await fetch(url);
@@ -872,6 +1687,26 @@ HTML_TEMPLATE = """<!DOCTYPE html>
             }
         }
 
+        // --- TAB SWITCHING ---
+        function switchTab(tabName) {
+            document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+            document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+            document.getElementById('tab-' + tabName).classList.add('active');
+            event.target.classList.add('active');
+
+            // Load tab-specific data
+            if (tabName === 'pipeline') {
+                loadPipelineSummary();
+                loadCandidates(1);
+                loadDiscovery(1);
+            } else if (tabName === 'outcomes') {
+                loadOutcomes(1);
+            } else if (tabName === 'calibration') {
+                loadCalibration();
+            }
+        }
+
+        // --- TRADING TAB ---
         async function loadOverview() {
             const data = await fetchJSON('/api/overview');
             if (!data) return;
@@ -935,8 +1770,6 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 
             let html = '';
             for (const pos of data.positions) {
-                // Since we don't track current price in the DB for open positions,
-                // show entry info and status badges
                 let badgeClass = 'profit';
                 let multiplierText = '\\u00d71.0';
 
@@ -1053,6 +1886,270 @@ HTML_TEMPLATE = """<!DOCTYPE html>
             container.innerHTML = html;
         }
 
+        // --- PIPELINE TAB ---
+        async function loadPipelineSummary() {
+            const data = await fetchJSON('/api/pipeline');
+            if (!data) return;
+
+            document.getElementById('pipe-cycles').textContent = data.cycles_last_hour || 0;
+            document.getElementById('pipe-candidates').textContent = data.candidates_last_hour || 0;
+            document.getElementById('pipe-cohort').textContent = data.cohort_size || 0;
+            const alertsSent = (data.alert_claims && data.alert_claims.SENT) || 0;
+            document.getElementById('pipe-alerts').textContent = alertsSent;
+
+            // Sidebar pipeline health
+            document.getElementById('sb-cohort').textContent = data.cohort_size || 0;
+            document.getElementById('sb-pending-jobs').textContent = data.pending_outcome_jobs || 0;
+            document.getElementById('sb-alerts-sent').textContent = alertsSent;
+
+            if (data.latest_calibration) {
+                document.getElementById('sb-last-cal').textContent =
+                    timeAgo(data.latest_calibration.created_at);
+            }
+        }
+
+        function filterCandidates(decision) {
+            currentDecisionFilter = decision;
+            candidatePage = 1;
+
+            // Update filter button states
+            document.querySelectorAll('#decision-filters .filter-btn').forEach(btn => {
+                btn.classList.remove('active');
+            });
+            event.target.classList.add('active');
+
+            loadCandidates(1);
+        }
+
+        async function loadCandidates(page) {
+            candidatePage = page || 1;
+            let url = '/api/candidates?page=' + candidatePage + '&limit=' + LIMIT;
+            if (currentDecisionFilter) {
+                url += '&decision=' + currentDecisionFilter;
+            }
+
+            const data = await fetchJSON(url);
+            const container = document.getElementById('candidates-container');
+            const pagination = document.getElementById('candidates-pagination');
+
+            if (!data || data.candidates.length === 0) {
+                container.innerHTML = '<div class="empty-state">NO CANDIDATES OBSERVED</div>';
+                pagination.innerHTML = '';
+                return;
+            }
+
+            let html = '<table><thead><tr>' +
+                '<th>Symbol</th><th>Decision</th><th>Score</th><th>Age</th>' +
+                '<th>Sources</th><th>When</th>' +
+                '</tr></thead><tbody>';
+
+            for (const c of data.candidates) {
+                const decClass = c.decision === 'ALERT' ? 'win' : (c.decision === 'REJECT' ? 'loss' : '');
+                const scoreStr = c.screening_score ? c.screening_score.toFixed(1) : '--';
+                const ageStr = c.age_minutes ? Math.round(c.age_minutes) + 'm' : '--';
+                const srcStr = Array.isArray(c.sources) ? c.sources.join(', ') : '--';
+
+                html += '<tr class="' + decClass + '">' +
+                    '<td>$' + c.symbol + '</td>' +
+                    '<td>' + c.decision + (c.alerted ? ' \\u2713' : '') + '</td>' +
+                    '<td>' + scoreStr + '</td>' +
+                    '<td>' + ageStr + '</td>' +
+                    '<td>' + srcStr + '</td>' +
+                    '<td>' + timeAgo(c.observed_at) + '</td>' +
+                    '</tr>';
+            }
+            html += '</tbody></table>';
+
+            // Breakdown badges
+            if (data.decision_breakdown && Object.keys(data.decision_breakdown).length > 0) {
+                html += '<div style="margin-top:8px;font-size:0.7rem;color:#666">';
+                for (const [dec, cnt] of Object.entries(data.decision_breakdown)) {
+                    html += '<span style="margin-right:12px">' + dec + ': <span style="color:#00d4ff">' + cnt + '</span></span>';
+                }
+                html += '</div>';
+            }
+
+            container.innerHTML = html;
+
+            let pagHtml = '';
+            pagHtml += '<button onclick="loadCandidates(' + (candidatePage - 1) + ')" ' +
+                       (candidatePage <= 1 ? 'disabled' : '') + '>&lt;</button>';
+            pagHtml += '<span class="page-info">' + data.page + '/' + data.total_pages + '</span>';
+            pagHtml += '<button onclick="loadCandidates(' + (candidatePage + 1) + ')" ' +
+                       (candidatePage >= data.total_pages ? 'disabled' : '') + '>&gt;</button>';
+            pagination.innerHTML = pagHtml;
+        }
+
+        async function loadDiscovery(page) {
+            discoveryPage = page || 1;
+            const data = await fetchJSON('/api/discovery?page=' + discoveryPage + '&limit=' + LIMIT);
+            const container = document.getElementById('discovery-container');
+            const pagination = document.getElementById('discovery-pagination');
+
+            if (!data || data.cycles.length === 0) {
+                container.innerHTML = '<div class="empty-state">NO DISCOVERY CYCLES</div>';
+                pagination.innerHTML = '';
+                return;
+            }
+
+            let html = '<table><thead><tr>' +
+                '<th>ID</th><th>Candidates</th><th>Sources</th><th>When</th>' +
+                '</tr></thead><tbody>';
+
+            for (const cycle of data.cycles) {
+                const sources = cycle.source_status || {};
+                let srcHtml = '';
+                for (const [src, status] of Object.entries(sources)) {
+                    const color = status === 'ok' ? '#00ff41' : '#ff3333';
+                    srcHtml += '<span style="color:' + color + ';margin-right:6px">' + src + '</span>';
+                }
+
+                html += '<tr>' +
+                    '<td>' + cycle.id + '</td>' +
+                    '<td>' + cycle.candidate_count + '</td>' +
+                    '<td>' + srcHtml + '</td>' +
+                    '<td>' + timeAgo(cycle.observed_at) + '</td>' +
+                    '</tr>';
+            }
+            html += '</tbody></table>';
+            container.innerHTML = html;
+
+            let pagHtml = '';
+            pagHtml += '<button onclick="loadDiscovery(' + (discoveryPage - 1) + ')" ' +
+                       (discoveryPage <= 1 ? 'disabled' : '') + '>&lt;</button>';
+            pagHtml += '<span class="page-info">' + data.page + '/' + data.total_pages + '</span>';
+            pagHtml += '<button onclick="loadDiscovery(' + (discoveryPage + 1) + ')" ' +
+                       (discoveryPage >= data.total_pages ? 'disabled' : '') + '>&gt;</button>';
+            pagination.innerHTML = pagHtml;
+        }
+
+        // --- OUTCOMES TAB ---
+        async function loadOutcomes(page) {
+            outcomePage = page || 1;
+            const data = await fetchJSON('/api/outcomes?page=' + outcomePage + '&limit=' + LIMIT);
+            if (!data) return;
+
+            // Summary cards
+            const summary = data.summary || {};
+            document.getElementById('out-total').textContent = summary.total_outcomes || 0;
+            const avgRet = summary.avg_return_pct || 0;
+            const avgRetEl = document.getElementById('out-avg');
+            avgRetEl.textContent = (avgRet >= 0 ? '+' : '') + avgRet.toFixed(1) + '%';
+            avgRetEl.className = 'pipeline-card-value ' + (avgRet >= 0 ? 'cyan' : 'red');
+            document.getElementById('out-2x').textContent = summary.total_2x_events || 0;
+
+            // Pending jobs count
+            const jobStatus = data.job_status || {};
+            const pending = (jobStatus.PENDING || 0) + (jobStatus.RETRYING || 0);
+            document.getElementById('out-pending').textContent = pending;
+
+            // Job status breakdown
+            const jobContainer = document.getElementById('job-status-container');
+            if (Object.keys(jobStatus).length === 0) {
+                jobContainer.innerHTML = '<div class="empty-state">NO OUTCOME JOBS</div>';
+            } else {
+                let jhtml = '<div class="stats-row" style="flex-wrap:wrap;gap:16px">';
+                for (const [status, cnt] of Object.entries(jobStatus)) {
+                    let color = '#00ff41';
+                    if (status === 'PENDING' || status === 'RETRYING') color = '#ffd700';
+                    else if (status === 'MISSED_WINDOW' || status === 'NO_DATA_WITHIN_WINDOW') color = '#ff3333';
+                    else if (status === 'CAPTURED') color = '#00d4ff';
+                    jhtml += '<div class="stat"><span class="stat-label">' + status + ':</span>' +
+                             ' <span class="stat-value" style="color:' + color + '">' + cnt + '</span></div>';
+                }
+                jhtml += '</div>';
+                jobContainer.innerHTML = jhtml;
+            }
+
+            // Outcomes table
+            const outContainer = document.getElementById('outcomes-container');
+            const outPagination = document.getElementById('outcomes-pagination');
+
+            if (!data.outcomes || data.outcomes.length === 0) {
+                outContainer.innerHTML = '<div class="empty-state">NO OUTCOMES COMPUTED</div>';
+                outPagination.innerHTML = '';
+                return;
+            }
+
+            let html = '<table><thead><tr>' +
+                '<th>Mint</th><th>Horizon</th><th>Return</th><th>Decision</th><th>Score</th><th>When</th>' +
+                '</tr></thead><tbody>';
+
+            for (const o of data.outcomes) {
+                const ret = o.price_return_pct || 0;
+                const retClass = ret >= 0 ? 'outcome-positive' : 'outcome-negative';
+                const retStr = (ret >= 0 ? '+' : '') + ret.toFixed(1) + '%';
+                const horizonStr = (o.horizon_seconds / 60) + 'm';
+                const badge2x = o.event_2x ? ' <span class="badge-2x">2X</span>' : '';
+
+                html += '<tr>' +
+                    '<td>' + shortMint(o.mint) + '</td>' +
+                    '<td>' + horizonStr + '</td>' +
+                    '<td class="' + retClass + '">' + retStr + badge2x + '</td>' +
+                    '<td>' + (o.initial_decision || '--') + '</td>' +
+                    '<td>' + (o.initial_screening_score ? o.initial_screening_score.toFixed(1) : '--') + '</td>' +
+                    '<td>' + timeAgo(o.computed_at) + '</td>' +
+                    '</tr>';
+            }
+            html += '</tbody></table>';
+            outContainer.innerHTML = html;
+
+            let pagHtml = '';
+            pagHtml += '<button onclick="loadOutcomes(' + (outcomePage - 1) + ')" ' +
+                       (outcomePage <= 1 ? 'disabled' : '') + '>&lt;</button>';
+            pagHtml += '<span class="page-info">' + data.page + '/' + data.total_pages + '</span>';
+            pagHtml += '<button onclick="loadOutcomes(' + (outcomePage + 1) + ')" ' +
+                       (outcomePage >= data.total_pages ? 'disabled' : '') + '>&gt;</button>';
+            outPagination.innerHTML = pagHtml;
+        }
+
+        // --- CALIBRATION TAB ---
+        async function loadCalibration() {
+            const data = await fetchJSON('/api/calibration');
+            const container = document.getElementById('calibration-container');
+
+            if (!data || data.runs.length === 0) {
+                container.innerHTML = '<div class="empty-state">NO CALIBRATION RUNS</div>';
+                return;
+            }
+
+            let html = '';
+            for (const run of data.runs) {
+                const statusClass = run.status === 'COMPLETE' ? 'ok' :
+                                   (run.status === 'INSUFFICIENT_DATA' ? 'insufficient' : 'error');
+
+                html += '<div class="cal-card">' +
+                    '<div class="cal-card-header">' +
+                        '<span class="cal-meta">Horizon: ' + (run.horizon_seconds/60) + 'm | ' +
+                            'Policy: ' + run.policy_version + ' | ' +
+                            'Schema: ' + run.feature_schema_version + '</span>' +
+                        '<span class="cal-status ' + statusClass + '">' + run.status + '</span>' +
+                    '</div>' +
+                    '<div class="cal-meta">' + timeAgo(run.created_at) + ' | def: ' + run.definition_version + '</div>';
+
+                // Show report details
+                const report = run.report || {};
+                if (Object.keys(report).length > 0) {
+                    html += '<div style="margin-top:8px">';
+                    for (const [key, val] of Object.entries(report)) {
+                        let displayVal = val;
+                        if (typeof val === 'number') displayVal = val.toFixed(2);
+                        else if (typeof val === 'object') displayVal = JSON.stringify(val).slice(0, 80);
+                        html += '<div class="cal-report-row">' +
+                            '<span style="color:#666">' + key + '</span>' +
+                            '<span style="color:#00d4ff">' + displayVal + '</span>' +
+                            '</div>';
+                    }
+                    html += '</div>';
+                }
+
+                html += '</div>';
+            }
+
+            container.innerHTML = html;
+        }
+
+        // --- REFRESH ALL ---
         async function refreshAll() {
             await Promise.all([
                 loadOverview(),
@@ -1060,6 +2157,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
                 loadHistory(currentPage),
                 loadStats(),
                 loadWaves(),
+                loadPipelineSummary(),
             ]);
             countdownVal = 15;
         }
@@ -1067,9 +2165,9 @@ HTML_TEMPLATE = """<!DOCTYPE html>
         // Clock update every second
         function updateClock() {
             const now = new Date();
-            const h = String(now.getHours()).padStart(2, '0');
-            const m = String(now.getMinutes()).padStart(2, '0');
-            const s = String(now.getSeconds()).padStart(2, '0');
+            const h = String(now.getUTCHours()).padStart(2, '0');
+            const m = String(now.getUTCMinutes()).padStart(2, '0');
+            const s = String(now.getUTCSeconds()).padStart(2, '0');
             document.getElementById('clock').textContent = h + ':' + m + ':' + s + ' UTC';
         }
 
@@ -1140,6 +2238,27 @@ class DashboardHandler(BaseHTTPRequestHandler):
             self._send_json(api_stats())
         elif path == "/api/waves":
             self._send_json(api_waves())
+        elif path == "/api/discovery":
+            page = int(params.get("page", ["1"])[0])
+            limit = int(params.get("limit", ["50"])[0])
+            self._send_json(api_discovery(page, limit))
+        elif path == "/api/candidates":
+            page = int(params.get("page", ["1"])[0])
+            limit = int(params.get("limit", ["50"])[0])
+            decision = params.get("decision", [None])[0]
+            self._send_json(api_candidates(page, limit, decision))
+        elif path == "/api/cohort":
+            page = int(params.get("page", ["1"])[0])
+            limit = int(params.get("limit", ["50"])[0])
+            self._send_json(api_cohort(page, limit))
+        elif path == "/api/outcomes":
+            page = int(params.get("page", ["1"])[0])
+            limit = int(params.get("limit", ["50"])[0])
+            self._send_json(api_outcomes(page, limit))
+        elif path == "/api/calibration":
+            self._send_json(api_calibration())
+        elif path == "/api/pipeline":
+            self._send_json(api_pipeline_summary())
         else:
             self.send_response(404)
             self.send_header("Content-Type", "text/plain")

@@ -1,0 +1,35 @@
+{
+  "id": "FEAT-012",
+  "type": "feat",
+  "description": "Update dashboard.py to display all new bot tables: discovery_cycles, candidate_observations, cohort_candidates, candidate_alert_claims, outcome_jobs, market_observations, candidate_outcomes, and calibration_runs. Add new API endpoints and UI sections for pipeline visibility, calibration review, and outcome tracking.",
+  "status": "completed",
+  "steps": [
+    "Add CREATE TABLE IF NOT EXISTS statements for all new tables in the dashboard's get_db() function",
+    "Add api_discovery() endpoint showing recent discovery cycles and candidate counts",
+    "Add api_candidates() endpoint showing candidate observations with filtering by decision",
+    "Add api_cohort() endpoint showing cohort candidates with their initial scores and decisions",
+    "Add api_outcomes() endpoint showing outcome jobs status and completed candidate_outcomes",
+    "Add api_calibration() endpoint showing calibration runs and their report summaries",
+    "Add HTML/CSS/JS sections for Discovery Pipeline, Candidates, Outcomes, and Calibration Review panels",
+    "Wire new API endpoints into DashboardHandler.do_GET()",
+    "Add tab navigation to switch between Paper Trading view and Pipeline/Calibration views",
+    "Verify all 519 tests still pass"
+  ],
+  "acceptance_criteria": [
+    "Dashboard displays discovery cycle history (timestamp, source status, candidate count)",
+    "Dashboard displays candidate observations with decision breakdown (ALERT, REJECT, DEFERRED)",
+    "Dashboard displays cohort candidates with initial scores",
+    "Dashboard displays outcome job status summary (PENDING, CAPTURED, MISSED_WINDOW counts)",
+    "Dashboard displays candidate outcomes (price return %, 2x events)",
+    "Dashboard displays calibration run history with status and report summaries",
+    "New API endpoints return correct JSON data from the new tables",
+    "All existing 519 tests still pass",
+    "Dashboard still works when new tables are empty (graceful empty states)"
+  ],
+  "verification": [
+    "python -m pytest tests/ -q",
+    "python -c \"from memescanner.dashboard import api_discovery, api_candidates, api_cohort, api_outcomes, api_calibration; print('OK')\""
+  ],
+  "blocked_reason": null,
+  "findings": "All 519 tests pass. Dashboard now reads from all 8 new bot tables. Added 6 new API endpoints (discovery, candidates, cohort, outcomes, calibration, pipeline) and tab-based UI navigation. The scan_count in api_stats() now uses the actual discovery_cycles table count instead of the previous rough approximation. All endpoints gracefully handle empty tables. Integration tested with populated data verifying correct JSON output for all endpoints."
+}
