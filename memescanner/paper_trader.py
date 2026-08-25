@@ -591,10 +591,10 @@ class PaperTrader:
         # Send Telegram
         pnl_sign = "+" if half_pnl_usd >= 0 else ""
         msg = (
-            f"\U0001f4b0 PAPER SELL: ${pos['symbol']}\n"
-            f"\U0001f4c8 P&L: {pnl_sign}${half_pnl_usd:.2f} (+{pnl_pct:.0f}%)\n"
+            f"\U0001f4ca PAPER SELL (50%): ${pos['symbol']}\n"
+            f"\U0001f4c8 P&L: {pnl_sign}${half_pnl_usd:.2f} (+{pnl_pct:.0f}%) on half sold\n"
             f"\u23f1 Held: {hold_str}\n"
-            f"\U0001f3af Reason: Take profit (2x)\n"
+            f"\U0001f3af Reason: Take profit (2x) — remaining 50% still open with trailing stop\n"
             f"\U0001f4b0 Balance: ${self.balance:.0f}"
         )
         await self._notify(msg)
@@ -659,13 +659,26 @@ class PaperTrader:
         # Send Telegram
         pnl_sign = "+" if pnl_usd >= 0 else ""
         pnl_pct_sign = "+" if pnl_pct >= 0 else ""
-        msg = (
-            f"\U0001f4b0 PAPER SELL: ${pos['symbol']}\n"
-            f"\U0001f4c8 P&L: {pnl_sign}${pnl_usd:.2f} ({pnl_pct_sign}{pnl_pct:.0f}%)\n"
-            f"\u23f1 Held: {hold_str}\n"
-            f"\U0001f3af Reason: {reason}\n"
-            f"\U0001f4b0 Balance: ${self.balance:.0f}"
-        )
+
+        # Differentiate message format based on sell reason
+        if "Trailing stop" in reason:
+            # This is the remaining half after take profit
+            msg = (
+                f"\U0001f4ca PAPER SELL (remaining): ${pos['symbol']}\n"
+                f"\U0001f4c8 P&L: {pnl_sign}${pnl_usd:.2f} ({pnl_pct_sign}{pnl_pct:.0f}%) on remaining position\n"
+                f"\u23f1 Held: {hold_str}\n"
+                f"\U0001f3af Reason: {reason}\n"
+                f"\U0001f4b0 Balance: ${self.balance:.0f}"
+            )
+        else:
+            # Full position sell (recovery heuristic, hard stop, etc.)
+            msg = (
+                f"\U0001f4ca PAPER SELL: ${pos['symbol']}\n"
+                f"\U0001f4c8 P&L: {pnl_sign}${pnl_usd:.2f} ({pnl_pct_sign}{pnl_pct:.0f}%)\n"
+                f"\u23f1 Held: {hold_str}\n"
+                f"\U0001f3af Reason: {reason}\n"
+                f"\U0001f4b0 Balance: ${self.balance:.0f}"
+            )
         await self._notify(msg)
 
         logger.info("Paper CLOSE: $%s %s%.0f%% ($%.2f), reason: %s",
