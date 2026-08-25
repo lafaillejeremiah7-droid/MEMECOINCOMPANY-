@@ -72,7 +72,7 @@ class FiltersConfig:
     min_volume_24h_usd: float = 25000.0
     min_buy_sell_ratio: float = 1.0
     max_dev_holding_pct: float = 30.0
-    max_top10_concentration_pct: float = 20.0
+    max_top10_concentration_pct: float = 30.0
     min_x_mentions: int = 5
 
 
@@ -257,7 +257,7 @@ class Config:
                 min_volume_24h_usd=filters_data.get("min_volume_24h_usd", 25000.0),
                 min_buy_sell_ratio=filters_data.get("min_buy_sell_ratio", 1.0),
                 max_dev_holding_pct=filters_data.get("max_dev_holding_pct", 30.0),
-                max_top10_concentration_pct=filters_data.get("max_top10_concentration_pct", 20.0),
+                max_top10_concentration_pct=filters_data.get("max_top10_concentration_pct", 30.0),
                 min_x_mentions=filters_data.get("min_x_mentions", 5),
             ),
             scoring=ScoringWeights(

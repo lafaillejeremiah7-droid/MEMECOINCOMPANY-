@@ -44,8 +44,8 @@ filters:
   min_volume_24h_usd: 25000
   min_buy_sell_ratio: 1.0
   max_dev_holding_pct: 30
-  # Top-10 holder concentration ceiling. Stricter than 30% industry standard.
-  max_top10_concentration_pct: 20
+  # Top-10 holder concentration ceiling.
+  max_top10_concentration_pct: 30
   # Minimum X search results required. Each result summarizes multiple posts,
   # so 5 results maps to approximately 10-20 real tweets. Bypassed when a
   # celebrity/influencer account posted or evidence shows viral view counts.
