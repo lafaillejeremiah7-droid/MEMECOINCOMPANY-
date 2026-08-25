@@ -37,7 +37,7 @@ python -m memescanner
 
 - `MEMESCANNER_TELEGRAM_BOT_TOKEN`
 - `MEMESCANNER_TELEGRAM_CHAT_ID`
-- `MEMESCANNER_TAVILY_API_KEY`
+- `MEMESCANNER_TAVILY_API_KEY` (accepts both Tavily `tvly-` keys and X.ai `xai-` keys; when an X.ai key is detected, the scanner uses the X.ai Responses API with the `x_search` tool instead of Tavily)
 - `MEMESCANNER_HELIUS_RPC_URL` (preferred complete RPC endpoint)
 - `MEMESCANNER_HELIUS_API_KEY` (used only when no complete RPC URL is set)
 - `MEMESCANNER_TRANSFER_HOOK_ALLOWLIST` (comma-separated exact Token-2022 hook program IDs; empty rejects hooks)

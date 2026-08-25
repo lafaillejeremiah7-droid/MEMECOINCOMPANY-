@@ -48,7 +48,14 @@ class SourcesConfig:
 
 @dataclass
 class EvidenceConfig:
-    """Optional external evidence credentials and Token-2022 policy."""
+    """Optional external evidence credentials and Token-2022 policy.
+
+    The ``tavily_api_key`` field also accepts X.ai API keys (prefixed with
+    ``xai-``). When an X.ai key is detected, the X search module routes
+    requests to the X.ai Responses API instead of Tavily. The environment
+    variable name (MEMESCANNER_TAVILY_API_KEY) is unchanged for backward
+    compatibility with existing deployments.
+    """
 
     tavily_api_key: str = ""
     helius_rpc_url: str = ""

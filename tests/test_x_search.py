@@ -1,4 +1,4 @@
-"""Tests for the Tavily X search integration module."""
+"""Tests for the X search integration module (X.ai and Tavily backends)."""
 
 import pytest
 from unittest.mock import AsyncMock, patch, MagicMock
@@ -7,10 +7,12 @@ from memescanner.x_search import (
     XSearchClient,
     TAVILY_API_KEY,
     TAVILY_ENDPOINT,
+    XAI_ENDPOINT,
     TAVILY_TIMEOUT,
     BIG_ACCOUNTS,
     SCAM_KEYWORDS,
     _extract_handle_from_url,
+    _is_xai_key,
 )
 
 
@@ -22,6 +24,9 @@ class TestConstants:
 
     def test_tavily_endpoint(self):
         assert TAVILY_ENDPOINT == "https://api.tavily.com/search"
+
+    def test_xai_endpoint(self):
+        assert XAI_ENDPOINT == "https://api.x.ai/v1/responses"
 
     def test_tavily_timeout(self):
         assert TAVILY_TIMEOUT == 15.0
@@ -40,6 +45,22 @@ class TestConstants:
         assert "honeypot" in SCAM_KEYWORDS
         assert "beware" in SCAM_KEYWORDS
         assert "avoid" in SCAM_KEYWORDS
+
+
+class TestIsXaiKey:
+    """Test the _is_xai_key helper."""
+
+    def test_xai_prefix_detected(self):
+        assert _is_xai_key("xai-abc123") is True
+
+    def test_tavily_prefix_not_detected(self):
+        assert _is_xai_key("tvly-abc123") is False
+
+    def test_empty_string(self):
+        assert _is_xai_key("") is False
+
+    def test_random_key(self):
+        assert _is_xai_key("some-other-key") is False
 
 
 class TestExtractHandleFromUrl:
@@ -73,15 +94,438 @@ class TestExtractHandleFromUrl:
         assert _extract_handle_from_url("https://x.com/CoinbaseAssets") == "coinbaseassets"
 
 
-class TestXSearchClient:
-    """Test the XSearchClient class."""
+class TestXSearchClientXai:
+    """Test the XSearchClient with X.ai backend (xai- prefixed key)."""
 
     def setup_method(self):
-        self.client = XSearchClient(api_key="dummy-tavily-key")
+        self.client = XSearchClient(api_key="xai-test-key-123")
 
     @pytest.mark.asyncio
     async def test_search_token_found_results(self):
-        """Successful search with results returns FOUND status."""
+        """Successful X.ai search with citations returns FOUND status."""
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.raise_for_status = MagicMock()
+        mock_response.json.return_value = {
+            "output": [
+                {
+                    "type": "message",
+                    "content": [
+                        {
+                            "type": "output_text",
+                            "text": "Found mentions of this token on X. Multiple traders are discussing it.",
+                            "annotations": [
+                                {
+                                    "url": "https://x.com/trader1/status/12345",
+                                    "title": "Trader 1 tweet",
+                                    "text": "Just found $PEPE on Solana, looks great!",
+                                },
+                                {
+                                    "url": "https://x.com/trader2/status/12346",
+                                    "title": "Trader 2 tweet",
+                                    "text": "PEPE is mooning right now",
+                                },
+                                {
+                                    "url": "https://x.com/trader3/status/12347",
+                                    "title": "Trader 3 tweet",
+                                    "text": "Buying more PEPE",
+                                },
+                            ],
+                        }
+                    ],
+                }
+            ]
+        }
+
+        with patch("httpx.AsyncClient") as mock_client_class:
+            mock_client = AsyncMock()
+            mock_client.post.return_value = mock_response
+            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_client.__aexit__ = AsyncMock(return_value=False)
+            mock_client_class.return_value = mock_client
+
+            result = await self.client.search_token("PEPE", "Pepe Coin", "mint123")
+
+            assert result["status"] == "FOUND"
+            assert result["result_count"] == 3
+            assert "trader1" in result["accounts"]
+            assert "trader2" in result["accounts"]
+            assert "trader3" in result["accounts"]
+            assert result["has_buzz"] is True
+            assert result["scam_warning"] is False
+            assert result["big_account_mention"] is False
+            assert len(result["top_snippet"]) > 0
+
+            # Verify the request was made to X.ai endpoint
+            mock_client.post.assert_called_once()
+            call_args = mock_client.post.call_args
+            assert call_args[0][0] == "https://api.x.ai/v1/responses"
+            payload = call_args[1]["json"]
+            assert payload["model"] == "grok-3-mini"
+            assert {"type": "x_search", "x_search": {}} in payload["tools"]
+            headers = call_args[1]["headers"]
+            assert headers["Authorization"] == "Bearer xai-test-key-123"
+
+    @pytest.mark.asyncio
+    async def test_search_token_no_results(self):
+        """Empty X.ai response returns X_DATA_NOT_FOUND_OR_NOT_INDEXED."""
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.raise_for_status = MagicMock()
+        mock_response.json.return_value = {
+            "output": [
+                {
+                    "type": "message",
+                    "content": [
+                        {
+                            "type": "output_text",
+                            "text": "",
+                            "annotations": [],
+                        }
+                    ],
+                }
+            ]
+        }
+
+        with patch("httpx.AsyncClient") as mock_client_class:
+            mock_client = AsyncMock()
+            mock_client.post.return_value = mock_response
+            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_client.__aexit__ = AsyncMock(return_value=False)
+            mock_client_class.return_value = mock_client
+
+            result = await self.client.search_token("UNKNOWN", "Unknown Token", "mint123")
+
+            assert result["status"] == "X_DATA_NOT_FOUND_OR_NOT_INDEXED"
+            assert result["result_count"] == 0
+            assert result["accounts"] == []
+            assert result["scam_warning"] is False
+            assert result["big_account_mention"] is False
+            assert result["has_buzz"] is False
+
+    @pytest.mark.asyncio
+    async def test_search_token_scam_warning_detected(self):
+        """Scam keywords in X.ai output triggers scam_warning."""
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.raise_for_status = MagicMock()
+        mock_response.json.return_value = {
+            "output": [
+                {
+                    "type": "message",
+                    "content": [
+                        {
+                            "type": "output_text",
+                            "text": "WARNING: This token is a SCAM! Multiple users reporting it.",
+                            "annotations": [
+                                {
+                                    "url": "https://x.com/user1/status/111",
+                                    "title": "Scam alert",
+                                    "text": "Do not buy this!",
+                                },
+                            ],
+                        }
+                    ],
+                }
+            ]
+        }
+
+        with patch("httpx.AsyncClient") as mock_client_class:
+            mock_client = AsyncMock()
+            mock_client.post.return_value = mock_response
+            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_client.__aexit__ = AsyncMock(return_value=False)
+            mock_client_class.return_value = mock_client
+
+            result = await self.client.search_token("SCAMCOIN", "Scam Coin", "mint123")
+
+            assert result["status"] == "FOUND"
+            assert result["scam_warning"] is True
+
+    @pytest.mark.asyncio
+    async def test_search_token_rug_keyword_in_citation(self):
+        """'rug' keyword in citation content triggers scam_warning."""
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.raise_for_status = MagicMock()
+        mock_response.json.return_value = {
+            "output": [
+                {
+                    "type": "message",
+                    "content": [
+                        {
+                            "type": "output_text",
+                            "text": "Found some discussion about this token.",
+                            "annotations": [
+                                {
+                                    "url": "https://x.com/user1/status/111",
+                                    "title": "Warning post",
+                                    "text": "This project is going to rug, be careful",
+                                },
+                            ],
+                        }
+                    ],
+                }
+            ]
+        }
+
+        with patch("httpx.AsyncClient") as mock_client_class:
+            mock_client = AsyncMock()
+            mock_client.post.return_value = mock_response
+            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_client.__aexit__ = AsyncMock(return_value=False)
+            mock_client_class.return_value = mock_client
+
+            result = await self.client.search_token("RUGCOIN", "Rug Coin", "mint123")
+
+            assert result["scam_warning"] is True
+
+    @pytest.mark.asyncio
+    async def test_search_token_big_account_mention(self):
+        """Known big account in X.ai citations triggers big_account_mention."""
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.raise_for_status = MagicMock()
+        mock_response.json.return_value = {
+            "output": [
+                {
+                    "type": "message",
+                    "content": [
+                        {
+                            "type": "output_text",
+                            "text": "ansemtrades mentioned this token.",
+                            "annotations": [
+                                {
+                                    "url": "https://x.com/ansemtrades/status/999",
+                                    "title": "Ansem tweet",
+                                    "text": "Looking at this new token on Solana",
+                                },
+                            ],
+                        }
+                    ],
+                }
+            ]
+        }
+
+        with patch("httpx.AsyncClient") as mock_client_class:
+            mock_client = AsyncMock()
+            mock_client.post.return_value = mock_response
+            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_client.__aexit__ = AsyncMock(return_value=False)
+            mock_client_class.return_value = mock_client
+
+            result = await self.client.search_token("TOKEN", "Token Name", "mint123")
+
+            assert result["big_account_mention"] is True
+            assert "ansemtrades" in result["accounts"]
+
+    @pytest.mark.asyncio
+    async def test_search_token_has_buzz_3_plus_citations(self):
+        """3+ citations triggers has_buzz."""
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.raise_for_status = MagicMock()
+        mock_response.json.return_value = {
+            "output": [
+                {
+                    "type": "message",
+                    "content": [
+                        {
+                            "type": "output_text",
+                            "text": "Multiple mentions found.",
+                            "annotations": [
+                                {"url": "https://x.com/u1/status/1", "title": "T1", "text": "A"},
+                                {"url": "https://x.com/u2/status/2", "title": "T2", "text": "B"},
+                                {"url": "https://x.com/u3/status/3", "title": "T3", "text": "C"},
+                            ],
+                        }
+                    ],
+                }
+            ]
+        }
+
+        with patch("httpx.AsyncClient") as mock_client_class:
+            mock_client = AsyncMock()
+            mock_client.post.return_value = mock_response
+            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_client.__aexit__ = AsyncMock(return_value=False)
+            mock_client_class.return_value = mock_client
+
+            result = await self.client.search_token("TOKEN", "Token", "mint123")
+
+            assert result["has_buzz"] is True
+
+    @pytest.mark.asyncio
+    async def test_search_token_no_buzz_under_3_citations(self):
+        """Less than 3 citations means no buzz."""
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.raise_for_status = MagicMock()
+        mock_response.json.return_value = {
+            "output": [
+                {
+                    "type": "message",
+                    "content": [
+                        {
+                            "type": "output_text",
+                            "text": "Some discussion found.",
+                            "annotations": [
+                                {"url": "https://x.com/u1/status/1", "title": "T1", "text": "A"},
+                                {"url": "https://x.com/u2/status/2", "title": "T2", "text": "B"},
+                            ],
+                        }
+                    ],
+                }
+            ]
+        }
+
+        with patch("httpx.AsyncClient") as mock_client_class:
+            mock_client = AsyncMock()
+            mock_client.post.return_value = mock_response
+            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_client.__aexit__ = AsyncMock(return_value=False)
+            mock_client_class.return_value = mock_client
+
+            result = await self.client.search_token("TOKEN", "Token", "mint123")
+
+            assert result["has_buzz"] is False
+
+    @pytest.mark.asyncio
+    async def test_search_token_top_snippet_truncated(self):
+        """Top snippet is truncated to 100 characters."""
+        long_text = "A" * 200
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.raise_for_status = MagicMock()
+        mock_response.json.return_value = {
+            "output": [
+                {
+                    "type": "message",
+                    "content": [
+                        {
+                            "type": "output_text",
+                            "text": long_text,
+                            "annotations": [
+                                {"url": "https://x.com/u1/status/1", "title": "T", "text": "X"},
+                            ],
+                        }
+                    ],
+                }
+            ]
+        }
+
+        with patch("httpx.AsyncClient") as mock_client_class:
+            mock_client = AsyncMock()
+            mock_client.post.return_value = mock_response
+            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_client.__aexit__ = AsyncMock(return_value=False)
+            mock_client_class.return_value = mock_client
+
+            result = await self.client.search_token("TOKEN", "Token", "mint123")
+
+            assert len(result["top_snippet"]) == 100
+
+    @pytest.mark.asyncio
+    async def test_search_token_network_error(self):
+        """Network error returns X_DATA_NOT_FOUND_OR_NOT_INDEXED gracefully."""
+        with patch("httpx.AsyncClient") as mock_client_class:
+            mock_client = AsyncMock()
+            mock_client.post.side_effect = Exception("Network timeout")
+            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_client.__aexit__ = AsyncMock(return_value=False)
+            mock_client_class.return_value = mock_client
+
+            result = await self.client.search_token("TOKEN", "Token", "mint123")
+
+            assert result["status"] == "X_DATA_NOT_FOUND_OR_NOT_INDEXED"
+            assert result["result_count"] == 0
+            assert result["scam_warning"] is False
+            assert result["evidence_availability"] == "UNAVAILABLE"
+
+    @pytest.mark.asyncio
+    async def test_search_token_no_duplicate_accounts(self):
+        """Same account appearing multiple times is deduplicated."""
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.raise_for_status = MagicMock()
+        mock_response.json.return_value = {
+            "output": [
+                {
+                    "type": "message",
+                    "content": [
+                        {
+                            "type": "output_text",
+                            "text": "Multiple tweets from same accounts.",
+                            "annotations": [
+                                {"url": "https://x.com/trader1/status/1", "title": "T1", "text": "Tweet 1"},
+                                {"url": "https://x.com/trader1/status/2", "title": "T2", "text": "Tweet 2"},
+                                {"url": "https://x.com/trader2/status/3", "title": "T3", "text": "Tweet 3"},
+                            ],
+                        }
+                    ],
+                }
+            ]
+        }
+
+        with patch("httpx.AsyncClient") as mock_client_class:
+            mock_client = AsyncMock()
+            mock_client.post.return_value = mock_response
+            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_client.__aexit__ = AsyncMock(return_value=False)
+            mock_client_class.return_value = mock_client
+
+            result = await self.client.search_token("TOKEN", "Token", "mint123")
+
+            assert len(result["accounts"]) == 2
+            assert "trader1" in result["accounts"]
+            assert "trader2" in result["accounts"]
+
+    @pytest.mark.asyncio
+    async def test_search_token_handles_from_text_urls(self):
+        """Handles are extracted from URLs embedded in the output text."""
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.raise_for_status = MagicMock()
+        mock_response.json.return_value = {
+            "output": [
+                {
+                    "type": "message",
+                    "content": [
+                        {
+                            "type": "output_text",
+                            "text": "See https://x.com/binance/status/555 for the announcement.",
+                            "annotations": [
+                                {"url": "https://x.com/trader1/status/1", "title": "T", "text": "Info"},
+                            ],
+                        }
+                    ],
+                }
+            ]
+        }
+
+        with patch("httpx.AsyncClient") as mock_client_class:
+            mock_client = AsyncMock()
+            mock_client.post.return_value = mock_response
+            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_client.__aexit__ = AsyncMock(return_value=False)
+            mock_client_class.return_value = mock_client
+
+            result = await self.client.search_token("TOKEN", "Token", "mint123")
+
+            assert "trader1" in result["accounts"]
+            assert "binance" in result["accounts"]
+            assert result["big_account_mention"] is True
+
+
+class TestXSearchClientTavily:
+    """Test the XSearchClient with legacy Tavily backend (non-xai key)."""
+
+    def setup_method(self):
+        self.client = XSearchClient(api_key="test-legacy-tavily-key")
+
+    @pytest.mark.asyncio
+    async def test_search_token_found_results(self):
+        """Successful Tavily search with results returns FOUND status."""
         mock_response = MagicMock()
         mock_response.status_code = 200
         mock_response.raise_for_status = MagicMock()
@@ -120,6 +564,11 @@ class TestXSearchClient:
             assert result["scam_warning"] is False
             assert result["big_account_mention"] is False
             assert len(result["top_snippet"]) > 0
+
+            # Verify the request was made to Tavily endpoint
+            mock_client.post.assert_called_once()
+            call_args = mock_client.post.call_args
+            assert call_args[0][0] == "https://api.tavily.com/search"
 
     @pytest.mark.asyncio
     async def test_search_token_no_results(self):
@@ -173,58 +622,6 @@ class TestXSearchClient:
             assert result["scam_warning"] is True
 
     @pytest.mark.asyncio
-    async def test_search_token_rug_keyword_detected(self):
-        """'rug' keyword triggers scam_warning."""
-        mock_response = MagicMock()
-        mock_response.status_code = 200
-        mock_response.raise_for_status = MagicMock()
-        mock_response.json.return_value = {
-            "results": [
-                {
-                    "url": "https://x.com/user1/status/111",
-                    "content": "This project is going to rug, be careful",
-                },
-            ]
-        }
-
-        with patch("httpx.AsyncClient") as mock_client_class:
-            mock_client = AsyncMock()
-            mock_client.post.return_value = mock_response
-            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-            mock_client.__aexit__ = AsyncMock(return_value=False)
-            mock_client_class.return_value = mock_client
-
-            result = await self.client.search_token("RUGCOIN", "Rug Coin", "mint123")
-
-            assert result["scam_warning"] is True
-
-    @pytest.mark.asyncio
-    async def test_search_token_honeypot_keyword_detected(self):
-        """'honeypot' keyword triggers scam_warning."""
-        mock_response = MagicMock()
-        mock_response.status_code = 200
-        mock_response.raise_for_status = MagicMock()
-        mock_response.json.return_value = {
-            "results": [
-                {
-                    "url": "https://x.com/user1/status/111",
-                    "content": "Confirmed honeypot, cannot sell",
-                },
-            ]
-        }
-
-        with patch("httpx.AsyncClient") as mock_client_class:
-            mock_client = AsyncMock()
-            mock_client.post.return_value = mock_response
-            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-            mock_client.__aexit__ = AsyncMock(return_value=False)
-            mock_client_class.return_value = mock_client
-
-            result = await self.client.search_token("HP", "HoneyPot", "mint123")
-
-            assert result["scam_warning"] is True
-
-    @pytest.mark.asyncio
     async def test_search_token_big_account_mention(self):
         """Known big account in results triggers big_account_mention."""
         mock_response = MagicMock()
@@ -252,6 +649,23 @@ class TestXSearchClient:
             assert "ansemtrades" in result["accounts"]
 
     @pytest.mark.asyncio
+    async def test_search_token_network_error(self):
+        """Network error returns X_DATA_NOT_FOUND_OR_NOT_INDEXED gracefully."""
+        with patch("httpx.AsyncClient") as mock_client_class:
+            mock_client = AsyncMock()
+            mock_client.post.side_effect = Exception("Network timeout")
+            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_client.__aexit__ = AsyncMock(return_value=False)
+            mock_client_class.return_value = mock_client
+
+            result = await self.client.search_token("TOKEN", "Token", "mint123")
+
+            assert result["status"] == "X_DATA_NOT_FOUND_OR_NOT_INDEXED"
+            assert result["result_count"] == 0
+            assert result["scam_warning"] is False
+            assert result["evidence_availability"] == "UNAVAILABLE"
+
+    @pytest.mark.asyncio
     async def test_search_token_has_buzz_3_plus_results(self):
         """3+ results triggers has_buzz."""
         mock_response = MagicMock()
@@ -277,30 +691,6 @@ class TestXSearchClient:
             assert result["has_buzz"] is True
 
     @pytest.mark.asyncio
-    async def test_search_token_no_buzz_under_3_results(self):
-        """Less than 3 results means no buzz."""
-        mock_response = MagicMock()
-        mock_response.status_code = 200
-        mock_response.raise_for_status = MagicMock()
-        mock_response.json.return_value = {
-            "results": [
-                {"url": "https://x.com/u1/status/1", "content": "A"},
-                {"url": "https://x.com/u2/status/2", "content": "B"},
-            ]
-        }
-
-        with patch("httpx.AsyncClient") as mock_client_class:
-            mock_client = AsyncMock()
-            mock_client.post.return_value = mock_response
-            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-            mock_client.__aexit__ = AsyncMock(return_value=False)
-            mock_client_class.return_value = mock_client
-
-            result = await self.client.search_token("TOKEN", "Token", "mint123")
-
-            assert result["has_buzz"] is False
-
-    @pytest.mark.asyncio
     async def test_search_token_top_snippet_truncated(self):
         """Top snippet is truncated to 100 characters."""
         long_content = "A" * 200
@@ -324,34 +714,58 @@ class TestXSearchClient:
 
             assert len(result["top_snippet"]) == 100
 
+
+class TestXSearchClientDisabled:
+    """Test that the client handles missing API keys gracefully."""
+
+    def setup_method(self):
+        self.client = XSearchClient(api_key="")
+
     @pytest.mark.asyncio
-    async def test_search_token_network_error(self):
-        """Network error returns X_DATA_NOT_FOUND_OR_NOT_INDEXED gracefully."""
+    async def test_search_disabled_when_no_key(self):
+        """Returns disabled status when no API key is set."""
+        result = await self.client.search_token("TOKEN", "Token", "mint123")
+
+        assert result["status"] == "X_DATA_NOT_FOUND_OR_NOT_INDEXED"
+        assert result["evidence_availability"] == "DISABLED"
+        assert result["result_count"] == 0
+
+    @pytest.mark.asyncio
+    async def test_routes_to_tavily_for_non_xai_key(self):
+        """Non-xai key routes to Tavily backend."""
+        client = XSearchClient(api_key="tvly-some-key")
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.raise_for_status = MagicMock()
+        mock_response.json.return_value = {"results": []}
+
         with patch("httpx.AsyncClient") as mock_client_class:
             mock_client = AsyncMock()
-            mock_client.post.side_effect = Exception("Network timeout")
+            mock_client.post.return_value = mock_response
             mock_client.__aenter__ = AsyncMock(return_value=mock_client)
             mock_client.__aexit__ = AsyncMock(return_value=False)
             mock_client_class.return_value = mock_client
 
-            result = await self.client.search_token("TOKEN", "Token", "mint123")
+            await client.search_token("TOKEN", "Token", "mint123")
 
-            assert result["status"] == "X_DATA_NOT_FOUND_OR_NOT_INDEXED"
-            assert result["result_count"] == 0
-            assert result["scam_warning"] is False
-            assert result["evidence_availability"] == "UNAVAILABLE"
+            call_args = mock_client.post.call_args
+            assert call_args[0][0] == "https://api.tavily.com/search"
 
     @pytest.mark.asyncio
-    async def test_search_token_no_duplicate_accounts(self):
-        """Same account appearing multiple times is deduplicated."""
+    async def test_routes_to_xai_for_xai_key(self):
+        """xai- key routes to X.ai backend."""
+        client = XSearchClient(api_key="xai-some-key")
         mock_response = MagicMock()
         mock_response.status_code = 200
         mock_response.raise_for_status = MagicMock()
         mock_response.json.return_value = {
-            "results": [
-                {"url": "https://x.com/trader1/status/1", "content": "Tweet 1"},
-                {"url": "https://x.com/trader1/status/2", "content": "Tweet 2"},
-                {"url": "https://x.com/trader2/status/3", "content": "Tweet 3"},
+            "output": [
+                {
+                    "type": "message",
+                    "content": [
+                        {"type": "output_text", "text": "", "annotations": []}
+                    ],
+                }
             ]
         }
 
@@ -362,11 +776,10 @@ class TestXSearchClient:
             mock_client.__aexit__ = AsyncMock(return_value=False)
             mock_client_class.return_value = mock_client
 
-            result = await self.client.search_token("TOKEN", "Token", "mint123")
+            await client.search_token("TOKEN", "Token", "mint123")
 
-            assert len(result["accounts"]) == 2
-            assert "trader1" in result["accounts"]
-            assert "trader2" in result["accounts"]
+            call_args = mock_client.post.call_args
+            assert call_args[0][0] == "https://api.x.ai/v1/responses"
 
 
 class TestScannerXSearchIntegration:

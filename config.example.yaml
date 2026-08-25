@@ -22,6 +22,9 @@ sources:
   pump_fun: true
 
 evidence:
+  # Accepts either a Tavily key (tvly-...) or an X.ai key (xai-...).
+  # When an xai- prefixed key is set, the scanner uses the X.ai Responses
+  # API with the x_search tool instead of Tavily for X/Twitter evidence.
   tavily_api_key: ""  # MEMESCANNER_TAVILY_API_KEY
   # Prefer a complete endpoint via MEMESCANNER_HELIUS_RPC_URL. Alternatively,
   # MEMESCANNER_HELIUS_API_KEY builds the standard Helius endpoint at runtime.
