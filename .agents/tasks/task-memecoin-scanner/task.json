@@ -1,0 +1,14 @@
+{
+  "task_id": "task-memecoin-scanner",
+  "task_description": "Build a Solana memecoin scanner bot that scans Pump.fun and DEXScreener for newly launched tokens, scores them using research-backed signals (buy/sell ratio, liquidity, volume, engagement, narrative, momentum), calculates probabilities, and alerts via Telegram. SIGNAL-ONLY - never auto-trades. Self-adapts weights based on tracked outcomes.",
+  "status": "completed",
+  "feature_order": ["FEAT-001"],
+  "blocked_reason": null,
+  "verification": {
+    "build": "pass",
+    "tests": "pass",
+    "test_quality": "pass",
+    "docker_build": "skipped",
+    "summary": "pip install succeeds, all 80 tests pass in 0.06s, all 11 module imports verified. Tests cover scoring thresholds, filter logic, narrative matching, and probability calculations with meaningful assertions."
+  }
+}

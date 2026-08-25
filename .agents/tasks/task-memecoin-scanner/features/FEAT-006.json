@@ -1,0 +1,39 @@
+{
+  "id": "FEAT-006",
+  "type": "feat",
+  "description": "Add narrative wave detection + serial deployer filter (+29pp and -50pp edges from backtest research). Creates DeployerTracker and WaveDetector modules with SQLite persistence, integrates into scanner.py pipeline.",
+  "status": "completed",
+  "steps": [
+    "Create memescanner/deployer_tracker.py with DeployerTracker class using aiosqlite",
+    "Create memescanner/wave_detector.py with WaveDetector class using aiosqlite",
+    "Update scanner.py pipeline: add serial deployer filter BEFORE DEX check, add wave multiplier BEFORE P(2x) filter",
+    "Update format_telegram_message to include wave info line when applicable",
+    "Add cycle logging for both new filter steps",
+    "Create tests/test_deployer_tracker.py with comprehensive tests",
+    "Create tests/test_wave_detector.py with comprehensive tests",
+    "Run tests and verify build"
+  ],
+  "acceptance_criteria": [
+    "DeployerTracker maintains deployers SQLite table with twitter_account, token_count, last_seen, tokens_json",
+    "DeployerTracker.is_serial_deployer returns True for accounts with >= 2 prior tokens",
+    "DeployerTracker.record_token adds token to account history",
+    "DeployerTracker.get_deployer_count returns count of deployed tokens",
+    "Known serial deployers pre-seeded: narrafinder, thetrencherya, grana_pome, korean_bags",
+    "WaveDetector maintains wave_keywords SQLite table with keyword, appearances, last_seen, avg_mc",
+    "WaveDetector.get_hot_keywords returns keywords appearing in 3+ top tokens",
+    "WaveDetector.get_cold_keywords returns keywords from dead tokens",
+    "WaveDetector.get_wave_multiplier returns 1.6 for HOT, 0.3 for COLD, 1.0 for neutral",
+    "Scanner pipeline: Fetch -> Twitter -> Serial Deployer -> Age -> DEX -> Rug -> On-chain -> Wave Multiplier -> P(2x) -> Alert",
+    "Serial deployer rejection skips DEX/on-chain checks (saves API calls)",
+    "Wave multiplier applied before P(2x) cap (re-cap at 45%)",
+    "Telegram message includes wave info line when applicable",
+    "All existing tests still pass"
+  ],
+  "verification": [
+    "python -m pytest tests/ -v",
+    "python -c 'from memescanner.deployer_tracker import DeployerTracker; print(\"OK\")'",
+    "python -c 'from memescanner.wave_detector import WaveDetector; print(\"OK\")'"
+  ],
+  "blocked_reason": null,
+  "findings": "All 239 tests pass (192 existing + 47 new). DeployerTracker uses aiosqlite with shared memescanner.db, pre-seeds 4 known serial deployers, normalizes account names to lowercase. WaveDetector maintains in-memory cache refreshed from DB, initial HOT/COLD keywords always active, dynamic keywords decay after 24h. Scanner pipeline updated: serial deployer filter before DEX (saves API calls), wave multiplier after on-chain and before P(2x) cap. Telegram message shows fire/snowflake emoji wave line when keyword matched. HOT takes priority over COLD when both match."
+}

@@ -1,0 +1,33 @@
+{
+  "project_type": "Python async memecoin scanner bot (signal-only, no auto-trading)",
+  "language": "Python 3.9+",
+  "build_system": "pip with requirements.txt",
+  "test_framework": "pytest with asyncio support (pytest-asyncio)",
+  "build_command": "pip install -r requirements.txt",
+  "test_command": "python -m pytest tests/ -v",
+  "verification_instructions": "1. pip install -r requirements.txt 2. python -c 'from memescanner import main' 3. python -m pytest tests/ -v 4. python -m memescanner.main --help or dry-run check",
+  "snapshot_or_generated_files": null,
+  "setup_instructions": "pip install -r requirements.txt && cp config.example.yaml config.yaml && edit config.yaml with Telegram credentials",
+  "environment_constraints": "OPEN_INTERNET - full network access. Python 3.9 available. httpx 0.28.1 pre-installed. aiosqlite and pyyaml need pip install.",
+  "contribution_requirements": "Branch: feat/nas100-signal-bot. All code in memescanner/ package at repo root.",
+  "key_patterns": "Async throughout (asyncio + httpx). SIGNAL-ONLY - never auto-trade. Self-adapting weights based on tracked outcomes. SQLite for persistence. Telegram for alerts.",
+  "relevant_files": [
+    "memescanner/__init__.py",
+    "memescanner/pump_fun.py",
+    "memescanner/dexscreener.py",
+    "memescanner/scoring.py",
+    "memescanner/probability.py",
+    "memescanner/filters.py",
+    "memescanner/narrative.py",
+    "memescanner/telegram_bot.py",
+    "memescanner/adaptation.py",
+    "memescanner/database.py",
+    "memescanner/main.py",
+    "memescanner/config.py",
+    "config.example.yaml",
+    "requirements.txt",
+    "README.md",
+    "tests/"
+  ],
+  "directory_structure": "Repo root: memescanner/ package with all source modules, config.example.yaml, requirements.txt, README.md, tests/ directory"
+}

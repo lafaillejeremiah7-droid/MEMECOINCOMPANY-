@@ -1,0 +1,9 @@
+repos:
+  - repo: local
+    hooks:
+      - id: memescanner-secret-patterns
+        name: Check staged provider credential patterns
+        entry: python3 scripts/check_secrets.py
+        language: system
+        pass_filenames: false
+        stages: [pre-commit]
