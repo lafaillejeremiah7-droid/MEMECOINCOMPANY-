@@ -1,0 +1,30 @@
+{
+  "id": "FEAT-010",
+  "type": "feat",
+  "description": "Calibrate filter defaults: extend max age to 120 min, add $50K market cap floor, add $25K volume floor, tighten top-10 concentration to 20%, add min 5 X mentions requirement with celebrity/viral exception.",
+  "status": "in_progress",
+  "steps": [
+    "Update memescanner/config.py: add min_market_cap_usd, min_volume_24h_usd, min_x_mentions to FiltersConfig; update ScannerConfig max_candidate_age_minutes default to 120",
+    "Update memescanner/unified_scanner.py CommonEvaluator: add market cap floor check, volume floor check, update top10 default to 20%, add X mention count gate with celebrity/viral bypass",
+    "Update config.example.yaml with new defaults and comments",
+    "Update README.md filter documentation",
+    "Run tests and fix any failures"
+  ],
+  "acceptance_criteria": [
+    "max_candidate_age_minutes default is 120 (2 hours)",
+    "min_market_cap_usd default is 50000.0 ($50K floor)",
+    "min_volume_24h_usd default is 25000.0 ($25K floor)",
+    "max_top10_concentration_pct default is 20.0 (stricter than 80%)",
+    "min_x_mentions default is 5",
+    "CommonEvaluator rejects tokens below market cap floor",
+    "CommonEvaluator rejects tokens below volume floor",
+    "CommonEvaluator rejects tokens with top-10 concentration above 20%",
+    "CommonEvaluator rejects tokens with fewer than 5 X mentions UNLESS big_account_mention is True OR evidence content indicates viral reach",
+    "All existing tests still pass (with test adjustments for new defaults)"
+  ],
+  "verification": [
+    "python -m pytest tests/ -v",
+    "python -c 'from memescanner.config import Config; c = Config(); assert c.scanner.max_candidate_age_minutes == 120; assert c.filters.min_market_cap_usd == 50000.0; assert c.filters.min_volume_24h_usd == 25000.0; assert c.filters.max_top10_concentration_pct == 20.0; assert c.filters.min_x_mentions == 5; print(\"OK\")'"
+  ],
+  "blocked_reason": null
+}

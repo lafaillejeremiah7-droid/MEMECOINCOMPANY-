@@ -28,6 +28,23 @@ logger = logging.getLogger(__name__)
 AlertSender = Callable[[str], Awaitable[bool]]
 PaperBuyer = Callable[[NormalizedCandidate, Dict[str, Any]], Awaitable[Any]]
 
+# Indicators in X evidence content that suggest viral reach (high views/impressions).
+_VIRAL_INDICATORS = (
+    "views", "impressions", "viral", "trending", "million views",
+    "100k views", "500k views", "1m views", "10m views",
+    "100k impressions", "500k impressions", "1m impressions",
+)
+
+
+def _evidence_has_viral_indicators(evidence: List[Dict[str, Any]]) -> bool:
+    """Return True if any evidence item content suggests viral reach."""
+    for item in evidence:
+        content = str(item.get("content", "")).lower()
+        for indicator in _VIRAL_INDICATORS:
+            if indicator in content:
+                return True
+    return False
+
 
 @dataclass
 class CandidateDecision:
@@ -89,11 +106,14 @@ class CommonEvaluator:
         x_search: XSearchClient,
         *,
         min_age_minutes: float = 10.0,
-        max_age_minutes: float = 60.0,
+        max_age_minutes: float = 120.0,
         min_liquidity_usd: float = 5000.0,
+        min_market_cap_usd: float = 50000.0,
+        min_volume_24h_usd: float = 25000.0,
         min_buy_sell_ratio: float = 1.0,
         max_dev_holding_pct: float = 30.0,
-        max_top10_concentration_pct: float = 80.0,
+        max_top10_concentration_pct: float = 20.0,
+        min_x_mentions: int = 5,
     ) -> None:
         self.pair_client = pair_client
         self.onchain = onchain
@@ -101,9 +121,12 @@ class CommonEvaluator:
         self.min_age_minutes = min_age_minutes
         self.max_age_minutes = max_age_minutes
         self.min_liquidity_usd = min_liquidity_usd
+        self.min_market_cap_usd = min_market_cap_usd
+        self.min_volume_24h_usd = min_volume_24h_usd
         self.min_buy_sell_ratio = min_buy_sell_ratio
         self.max_dev_holding_pct = max_dev_holding_pct
         self.max_top10_concentration_pct = max_top10_concentration_pct
+        self.min_x_mentions = min_x_mentions
 
     async def evaluate(
         self, candidate: NormalizedCandidate, *, onchain_budget_available: bool
@@ -146,6 +169,14 @@ class CommonEvaluator:
             return CandidateDecision(candidate, "REJECTED", ["LIQUIDITY_BELOW_MINIMUM"], market=market)
         if buys <= sells or ratio < self.min_buy_sell_ratio:
             return CandidateDecision(candidate, "REJECTED", ["TRADING_FLOW_BELOW_MINIMUM"], market=market)
+
+        market_cap = float(market.get("market_cap") or 0)
+        if market_cap < self.min_market_cap_usd:
+            return CandidateDecision(candidate, "REJECTED", ["MARKET_CAP_BELOW_MINIMUM"], market=market)
+
+        volume_24h = float(market.get("volume_24h") or 0)
+        if volume_24h < self.min_volume_24h_usd:
+            return CandidateDecision(candidate, "REJECTED", ["VOLUME_24H_BELOW_MINIMUM"], market=market)
 
         if not onchain_budget_available:
             return CandidateDecision(
@@ -206,6 +237,17 @@ class CommonEvaluator:
             )
         if x_data.get("scam_warning"):
             return CandidateDecision(candidate, "REJECTED", ["SCAM_EVIDENCE_FOUND"], evidence, market)
+
+        # X mention count gate: require minimum mentions unless a celebrity or
+        # high-profile account posted about it, or evidence suggests viral reach.
+        x_result_count = int(x_data.get("result_count") or 0)
+        big_account = bool(x_data.get("big_account_mention"))
+        has_viral_reach = _evidence_has_viral_indicators(x_data.get("evidence", []))
+        celebrity_bypass = big_account or has_viral_reach
+        if x_result_count < self.min_x_mentions and not celebrity_bypass:
+            return CandidateDecision(
+                candidate, "REJECTED", ["X_MENTIONS_BELOW_MINIMUM"], evidence, market
+            )
 
         # This is an explainable screening rank, not a calibrated probability.
         # Paid boosts, narrative names, deployer identity, and celebrity context

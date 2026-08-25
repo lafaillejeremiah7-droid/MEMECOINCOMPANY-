@@ -16,8 +16,12 @@ The default runtime uses one normalized pipeline:
 
 ## Evidence semantics
 
-- “New” requires a known token/pair timestamp and an age of 10–60 minutes. Unknown age is rejected as `AGE_UNKNOWN_NOT_NEW`.
+- "New" requires a known token/pair timestamp and an age of 10-120 minutes. Unknown age is rejected as `AGE_UNKNOWN_NOT_NEW`.
 - An X link is required. A completed public search with no result is recorded as `X_DATA_NOT_FOUND_OR_NOT_INDEXED`; that is partial OSINT, not proof that a token has no attention. A missing credential or search outage is separately marked unavailable and defers the candidate.
+- A minimum of 5 X search results (mapping to roughly 10-20 real tweets) is required. This gate is bypassed when a big/celebrity account posted about the token or when evidence content indicates viral reach (high view/impression counts).
+- Market cap must be at least $50,000. This filters dead and micro tokens (research shows Solana high-return tokens have a median market cap around $214K).
+- 24-hour volume must be at least $25,000. This filters most wash-traded tokens (median fake volume on Solana is approximately $10K).
+- Top-10 holder concentration must be 20% or lower (stricter than the 30% industry standard).
 - Paid DEXScreener boosts are retained as metadata and never counted as organic popularity or predictive evidence.
 - Celebrity names and generic buzz are neutral. `VERIFIED` requires an exact canonical X handle whose evidence contains the exact mint address. Fan/copycat handles, Unicode confusables, unrelated results, and keywords do not verify a link. Scam evidence prevents verification and positive classification.
 - Missing critical mint, extension, supply, or holder evidence is `UNVERIFIED`; it earns no safety bonus and cannot alert or open a virtual paper position. Some launchpad-neutral feeds do not expose a creator wallet. In that case creator holdings remain explicitly unknown and neutral—never converted to 0%—while verified authority, extension, supply, concentration, and coordination checks can still qualify the candidate. If a source does provide a creator but that wallet cannot be resolved, evaluation is deferred.

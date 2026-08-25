@@ -69,6 +69,7 @@ class StubX:
             "status": "X_DATA_NOT_FOUND_OR_NOT_INDEXED",
             "evidence_availability": "AVAILABLE",
             "scam_warning": False,
+            "result_count": 10,
             "evidence": [],
         }
 
@@ -1052,3 +1053,131 @@ async def test_present_non_list_extension_container_is_unverified(extensions):
     info = await analyzer._get_mint_info(MagicMock(), "Mint111")
     assert info["evidence_status"] == "UNVERIFIED"
     assert "MALFORMED_EXTENSION_CONTAINER" in info["unsupported_extensions"]
+
+
+# --- Tests for calibrated filter gates (FEAT-010) ---
+
+
+@pytest.mark.asyncio
+async def test_market_cap_below_minimum_is_rejected():
+    pair = valid_pair()
+    pair["market_cap"] = 30_000  # Below $50K minimum
+    result = await CommonEvaluator(StubPairClient(pair), StubOnchain(), StubX()).evaluate(
+        candidate(), onchain_budget_available=True
+    )
+    assert result.decision == "REJECTED"
+    assert result.reasons == ["MARKET_CAP_BELOW_MINIMUM"]
+
+
+@pytest.mark.asyncio
+async def test_market_cap_at_minimum_passes():
+    pair = valid_pair()
+    pair["market_cap"] = 50_000
+    result = await CommonEvaluator(StubPairClient(pair), StubOnchain(), StubX()).evaluate(
+        candidate(), onchain_budget_available=True
+    )
+    assert result.decision == "QUALIFIED"
+
+
+@pytest.mark.asyncio
+async def test_volume_below_minimum_is_rejected():
+    pair = valid_pair()
+    pair["volume_24h"] = 10_000  # Below $25K minimum
+    result = await CommonEvaluator(StubPairClient(pair), StubOnchain(), StubX()).evaluate(
+        candidate(), onchain_budget_available=True
+    )
+    assert result.decision == "REJECTED"
+    assert result.reasons == ["VOLUME_24H_BELOW_MINIMUM"]
+
+
+@pytest.mark.asyncio
+async def test_volume_at_minimum_passes():
+    pair = valid_pair()
+    pair["volume_24h"] = 25_000
+    result = await CommonEvaluator(StubPairClient(pair), StubOnchain(), StubX()).evaluate(
+        candidate(), onchain_budget_available=True
+    )
+    assert result.decision == "QUALIFIED"
+
+
+@pytest.mark.asyncio
+async def test_x_mentions_below_minimum_is_rejected():
+    low_mentions_x = StubX({
+        "status": "X_DATA_NOT_FOUND_OR_NOT_INDEXED",
+        "evidence_availability": "AVAILABLE",
+        "scam_warning": False,
+        "result_count": 3,
+        "big_account_mention": False,
+        "evidence": [],
+    })
+    result = await CommonEvaluator(
+        StubPairClient(), StubOnchain(), low_mentions_x
+    ).evaluate(candidate(), onchain_budget_available=True)
+    assert result.decision == "REJECTED"
+    assert result.reasons == ["X_MENTIONS_BELOW_MINIMUM"]
+
+
+@pytest.mark.asyncio
+async def test_x_mentions_bypassed_by_big_account():
+    celebrity_x = StubX({
+        "status": "X_DATA_NOT_FOUND_OR_NOT_INDEXED",
+        "evidence_availability": "AVAILABLE",
+        "scam_warning": False,
+        "result_count": 2,
+        "big_account_mention": True,
+        "evidence": [],
+    })
+    result = await CommonEvaluator(
+        StubPairClient(), StubOnchain(), celebrity_x
+    ).evaluate(candidate(), onchain_budget_available=True)
+    assert result.decision == "QUALIFIED"
+
+
+@pytest.mark.asyncio
+async def test_x_mentions_bypassed_by_viral_evidence():
+    viral_x = StubX({
+        "status": "X_DATA_NOT_FOUND_OR_NOT_INDEXED",
+        "evidence_availability": "AVAILABLE",
+        "scam_warning": False,
+        "result_count": 1,
+        "big_account_mention": False,
+        "evidence": [{"url": "https://x.com/user/status/1", "content": "this token has 1m views already"}],
+    })
+    result = await CommonEvaluator(
+        StubPairClient(), StubOnchain(), viral_x
+    ).evaluate(candidate(), onchain_budget_available=True)
+    assert result.decision == "QUALIFIED"
+
+
+@pytest.mark.asyncio
+async def test_top10_concentration_above_20_is_rejected():
+    class HighConcentrationOnchain(StubOnchain):
+        async def check_token(self, mint, creator):
+            data = await super().check_token(mint, creator)
+            data["top10_concentration_pct"] = 25.0
+            return data
+
+    result = await CommonEvaluator(
+        StubPairClient(), HighConcentrationOnchain(), StubX()
+    ).evaluate(candidate(), onchain_budget_available=True)
+    assert result.decision == "REJECTED"
+    assert result.reasons == ["HOLDER_CONCENTRATION_TOO_HIGH"]
+
+
+@pytest.mark.asyncio
+async def test_max_age_120_minutes_qualifies():
+    pair = valid_pair(created_at=time.time() - 110 * 60)  # 110 minutes old
+    result = await CommonEvaluator(StubPairClient(pair), StubOnchain(), StubX()).evaluate(
+        candidate(), onchain_budget_available=True
+    )
+    assert result.decision == "QUALIFIED"
+
+
+@pytest.mark.asyncio
+async def test_age_beyond_120_minutes_is_rejected():
+    pair = valid_pair(created_at=time.time() - 130 * 60)  # 130 minutes old
+    result = await CommonEvaluator(StubPairClient(pair), StubOnchain(), StubX()).evaluate(
+        candidate(), onchain_budget_available=True
+    )
+    assert result.decision == "REJECTED"
+    assert result.reasons == ["AGE_TOO_OLD"]
