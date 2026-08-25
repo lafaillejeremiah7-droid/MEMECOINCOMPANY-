@@ -161,8 +161,12 @@ async def main_loop(config: Optional[Config] = None) -> None:
             min_age_minutes=config.scanner.min_candidate_age_minutes,
             max_age_minutes=config.scanner.max_candidate_age_minutes,
             min_liquidity_usd=config.filters.min_liquidity_usd,
+            min_market_cap_usd=config.filters.min_market_cap_usd,
+            min_volume_24h_usd=config.filters.min_volume_24h_usd,
             min_buy_sell_ratio=config.filters.min_buy_sell_ratio,
             max_dev_holding_pct=config.filters.max_dev_holding_pct,
+            max_top10_concentration_pct=config.filters.max_top10_concentration_pct,
+            min_x_mentions=config.filters.min_x_mentions,
         )
         paper_callback = None
         if config.scanner.enable_paper_trading:

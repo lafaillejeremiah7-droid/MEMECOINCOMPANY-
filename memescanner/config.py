@@ -31,7 +31,7 @@ class ScannerConfig:
     min_score: int = 60
     max_token_age_hours: int = 6
     min_candidate_age_minutes: int = 10
-    max_candidate_age_minutes: int = 60
+    max_candidate_age_minutes: int = 120
     max_market_checks_per_cycle: int = 40
     enable_paper_trading: bool = False
 
@@ -68,8 +68,12 @@ class FiltersConfig:
     """Hard filter thresholds."""
 
     min_liquidity_usd: float = 5000.0
+    min_market_cap_usd: float = 50000.0
+    min_volume_24h_usd: float = 25000.0
     min_buy_sell_ratio: float = 1.0
     max_dev_holding_pct: float = 30.0
+    max_top10_concentration_pct: float = 20.0
+    min_x_mentions: int = 5
 
 
 @dataclass
@@ -229,7 +233,7 @@ class Config:
                 min_score=scanner_data.get("min_score", 60),
                 max_token_age_hours=scanner_data.get("max_token_age_hours", 6),
                 min_candidate_age_minutes=scanner_data.get("min_candidate_age_minutes", 10),
-                max_candidate_age_minutes=scanner_data.get("max_candidate_age_minutes", 60),
+                max_candidate_age_minutes=scanner_data.get("max_candidate_age_minutes", 120),
                 max_market_checks_per_cycle=scanner_data.get("max_market_checks_per_cycle", 40),
                 enable_paper_trading=scanner_data.get("enable_paper_trading", False),
             ),
@@ -249,8 +253,12 @@ class Config:
             ),
             filters=FiltersConfig(
                 min_liquidity_usd=filters_data.get("min_liquidity_usd", 5000.0),
+                min_market_cap_usd=filters_data.get("min_market_cap_usd", 50000.0),
+                min_volume_24h_usd=filters_data.get("min_volume_24h_usd", 25000.0),
                 min_buy_sell_ratio=filters_data.get("min_buy_sell_ratio", 1.0),
                 max_dev_holding_pct=filters_data.get("max_dev_holding_pct", 30.0),
+                max_top10_concentration_pct=filters_data.get("max_top10_concentration_pct", 20.0),
+                min_x_mentions=filters_data.get("min_x_mentions", 5),
             ),
             scoring=ScoringWeights(
                 buy_sell_ratio=scoring_data.get("buy_sell_ratio", 0.25),
