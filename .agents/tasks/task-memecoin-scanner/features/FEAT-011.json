@@ -2,7 +2,7 @@
   "id": "FEAT-011",
   "type": "feat",
   "description": "Improve paper trading Telegram messages to clearly indicate partial sells (50% at take profit, remaining at trailing stop) and full sells (recovery heuristic). Also verify filter wiring in __main__.py.",
-  "status": "in_progress",
+  "status": "completed",
   "steps": [
     "Update _take_profit message to show PAPER SELL (50%) with 'on half sold' and note remaining 50% still open with trailing stop",
     "Update _close_position to differentiate trailing stop (remaining) from recovery heuristic (full sell) messages",
@@ -21,5 +21,5 @@
     "python -c \"from memescanner.paper_trader import PaperTrader; print('OK')\""
   ],
   "blocked_reason": null,
-  "findings": null
+  "findings": "All 519 tests pass. The __main__.py already wires all filter params (min_market_cap_usd, min_volume_24h_usd, max_top10_concentration_pct, min_x_mentions) to CommonEvaluator from FEAT-010. Message formatting uses emoji 📊 (U+1F4CA) instead of 💰 (U+1F4B0) for sell headers to differentiate from balance lines. The trailing stop detection uses 'Trailing stop' substring match in reason string."
 }
