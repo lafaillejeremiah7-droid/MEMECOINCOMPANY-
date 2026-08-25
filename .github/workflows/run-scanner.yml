@@ -1,0 +1,44 @@
+# Run Scanner - Continuous memescanner execution via GitHub Actions
+#
+# SETUP: Before running this workflow, add the following secrets in your repository:
+#   Settings -> Secrets and variables -> Actions -> New repository secret
+#
+#   Required secrets:
+#     - MEMESCANNER_TAVILY_API_KEY      : Tavily API key (tvly-...) or X.ai key (xai-...)
+#     - MEMESCANNER_HELIUS_RPC_URL      : Helius Solana RPC endpoint URL
+#     - MEMESCANNER_TELEGRAM_BOT_TOKEN  : Telegram bot token from @BotFather
+#     - MEMESCANNER_TELEGRAM_CHAT_ID    : Telegram chat ID for alerts
+#
+#   Optional secrets:
+#     - MEMESCANNER_ENABLE_PAPER_TRADING : Set to "true" to enable virtual paper trading (defaults to "true")
+
+name: Run Scanner
+
+on:
+  workflow_dispatch:
+
+jobs:
+  run-scanner:
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run memescanner
+        env:
+          MEMESCANNER_TAVILY_API_KEY: ${{ secrets.MEMESCANNER_TAVILY_API_KEY }}
+          MEMESCANNER_HELIUS_RPC_URL: ${{ secrets.MEMESCANNER_HELIUS_RPC_URL }}
+          MEMESCANNER_TELEGRAM_BOT_TOKEN: ${{ secrets.MEMESCANNER_TELEGRAM_BOT_TOKEN }}
+          MEMESCANNER_TELEGRAM_CHAT_ID: ${{ secrets.MEMESCANNER_TELEGRAM_CHAT_ID }}
+          MEMESCANNER_ENABLE_PAPER_TRADING: ${{ secrets.MEMESCANNER_ENABLE_PAPER_TRADING || 'true' }}
+        run: python -m memescanner

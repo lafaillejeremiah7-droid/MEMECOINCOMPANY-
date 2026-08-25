@@ -54,6 +54,35 @@ python3 scripts/check_secrets.py
 
 A repository-local pre-commit configuration and the `Secret pattern guard` GitHub workflow run the same staged/current-tree detector. Install the optional local hook with `pre-commit install`. `.env*`, private-key/certificate files, alternate secret YAML files, and common credential JSON files are ignored. These repository controls prevent new literals; they cannot revoke credentials that were previously exposed. Provider-side Telegram, Tavily, and Helius rotation remains mandatory, followed by updating the `MEMESCANNER_*` deployment secrets.
 
+## Deployment via GitHub Actions
+
+You can run the scanner continuously using the included GitHub Actions workflow. The workflow triggers manually and runs for up to 6 hours (the GitHub Actions per-job maximum).
+
+### 1. Add repository secrets
+
+Go to your repository **Settings > Secrets and variables > Actions** and add the following secrets:
+
+| Secret name | Description |
+|---|---|
+| `MEMESCANNER_TAVILY_API_KEY` | Tavily API key (`tvly-...`) or X.ai key (`xai-...`) |
+| `MEMESCANNER_HELIUS_RPC_URL` | Helius Solana RPC endpoint URL |
+| `MEMESCANNER_TELEGRAM_BOT_TOKEN` | Telegram bot token from @BotFather |
+| `MEMESCANNER_TELEGRAM_CHAT_ID` | Telegram chat ID where alerts are delivered |
+
+`MEMESCANNER_ENABLE_PAPER_TRADING` defaults to `"true"` if not set. Add it as a secret and set to `"false"` to disable virtual paper trading.
+
+### 2. Start the workflow
+
+1. Go to the **Actions** tab in your repository.
+2. Select **"Run Scanner"** from the workflow list on the left.
+3. Click **"Run workflow"** and choose the branch.
+
+The scanner will start and run continuously until the 6-hour timeout (350 minutes) is reached or you cancel it manually.
+
+### 3. Restarting
+
+GitHub Actions jobs have a maximum runtime of approximately 6 hours. Once the job ends, you need to manually trigger the workflow again from the Actions tab. There is no automatic restart.
+
 ## Persistence and prospective calibration
 
 SQLite stores two separate layers:
