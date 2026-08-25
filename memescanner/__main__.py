@@ -194,6 +194,8 @@ async def main_loop(config: Optional[Config] = None) -> None:
                 trade_size=50.0,
                 db_path=config.database.path,
                 message_sender=sender.send,
+                onchain_analyzer=onchain,
+                x_client=XSearchClient(config.evidence.tavily_api_key),
             )
             await paper_trader.initialize()
             paper_callback = lambda candidate, market, take_profit_target: _paper_buyer(
