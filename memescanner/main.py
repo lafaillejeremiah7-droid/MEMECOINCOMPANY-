@@ -1,16 +1,9 @@
-"""
-Main loop for the Memescanner bot.
+"""Legacy orchestration classes retained for API compatibility.
 
-Orchestrates the full scanning pipeline:
-1. Scan Pump.fun every 10 seconds for new/graduated tokens
-2. Apply hard filters to eliminate poor candidates
-3. Fetch DEXScreener data for survivors
-4. Score tokens using the research-backed scoring engine
-5. Calculate probability and EV for high-scoring tokens
-6. Send Telegram alerts for tokens scoring >= threshold
-7. Background tasks: outcome tracking, narrative updates, weight adaptation
-
-IMPORTANT: This is a SIGNAL-ONLY system. It NEVER auto-executes trades.
+The executable ``python -m memescanner.main`` is redirected to the same unified,
+evidence-gated runtime as ``python -m memescanner``. The ``MemeScanner`` class
+below remains importable for existing integrations but is not a supported
+predictively calibrated or default execution path.
 """
 
 import asyncio
@@ -495,22 +488,10 @@ class MemeScanner:
 
 
 async def main() -> None:
-    """
-    Entry point for the Memescanner bot.
+    """Compatibility command redirected to the unified safe default runtime."""
+    from memescanner.__main__ import main_loop
 
-    Loads configuration and starts the main scanning loop.
-    """
-    try:
-        config = Config.from_env()
-    except FileNotFoundError:
-        print(
-            "ERROR: Configuration file not found.\n"
-            "Copy config.example.yaml to config.yaml and fill in your settings."
-        )
-        sys.exit(1)
-
-    scanner = MemeScanner(config)
-    await scanner.run()
+    await main_loop(Config.from_env())
 
 
 if __name__ == "__main__":

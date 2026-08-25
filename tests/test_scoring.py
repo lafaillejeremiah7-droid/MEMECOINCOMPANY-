@@ -20,7 +20,7 @@ def scoring_engine() -> ScoringEngine:
 
 
 class TestScoringWeights:
-    """Test that scoring weights match the research-backed values."""
+    """Test that compatibility scoring weights remain normalized."""
 
     def test_default_weights_sum_to_one(self, scoring_engine: ScoringEngine) -> None:
         """Weights must sum to 1.0."""

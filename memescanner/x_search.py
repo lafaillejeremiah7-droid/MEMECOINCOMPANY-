@@ -10,14 +10,16 @@ Uses Tavily API:
 """
 
 import logging
+import os
 import re
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
+from urllib.parse import urlparse
 
 import httpx
 
 logger = logging.getLogger(__name__)
 
-TAVILY_API_KEY = "REDACTED_TAVILY_API_KEY"
+TAVILY_API_KEY = os.getenv("MEMESCANNER_TAVILY_API_KEY", "")
 TAVILY_ENDPOINT = "https://api.tavily.com/search"
 TAVILY_TIMEOUT = 15.0
 
@@ -47,17 +49,21 @@ def _extract_handle_from_url(url: str) -> str:
     """
     if not url:
         return ""
-
-    # Match patterns like x.com/username or twitter.com/username
-    # Also handles x.com/username/status/12345
-    match = re.search(r'(?:x\.com|twitter\.com)/([A-Za-z0-9_]+)', url)
-    if match:
-        handle = match.group(1).lower()
-        # Skip common non-account paths
-        if handle in ("search", "home", "explore", "hashtag", "i"):
-            return ""
-        return handle
-    return ""
+    try:
+        parsed = urlparse(url)
+    except ValueError:
+        return ""
+    if parsed.scheme.lower() != "https" or (parsed.hostname or "").lower() not in {
+        "x.com", "www.x.com", "twitter.com", "www.twitter.com",
+    }:
+        return ""
+    parts = [part for part in parsed.path.split("/") if part]
+    if not parts or not re.fullmatch(r"[A-Za-z0-9_]+", parts[0]):
+        return ""
+    handle = parts[0].lower()
+    if handle in ("search", "home", "explore", "hashtag", "i"):
+        return ""
+    return handle
 
 
 class XSearchClient:
@@ -70,9 +76,11 @@ class XSearchClient:
     - General buzz (3+ results = token has attention)
     """
 
-    def __init__(self):
-        """Initialize the XSearchClient."""
-        self.api_key = TAVILY_API_KEY
+    def __init__(self, api_key: Optional[str] = None):
+        """Initialize the client; a missing key leaves OSINT explicitly unavailable."""
+        self.api_key = api_key if api_key is not None else os.getenv(
+            "MEMESCANNER_TAVILY_API_KEY", TAVILY_API_KEY
+        )
         self.endpoint = TAVILY_ENDPOINT
         self.timeout = httpx.Timeout(TAVILY_TIMEOUT)
 
@@ -97,10 +105,16 @@ class XSearchClient:
             "big_account_mention": False,
             "has_buzz": False,
             "top_snippet": "",
+            "evidence": [],
+            "evidence_availability": "DISABLED" if not self.api_key else "AVAILABLE",
         }
 
+        if not self.api_key:
+            logger.info("Tavily X search disabled: MEMESCANNER_TAVILY_API_KEY is not set")
+            return result
+
         try:
-            query = f"{symbol} {name} solana"
+            query = f'"{mint}" {symbol} {name} solana'
             payload = {
                 "api_key": self.api_key,
                 "query": query,
@@ -147,6 +161,14 @@ class XSearchClient:
                     big_account_mention = True
 
             result["accounts"] = accounts
+            result["evidence"] = [
+                {
+                    "url": item.get("url", ""),
+                    "title": item.get("title", ""),
+                    "content": item.get("content", ""),
+                }
+                for item in results_list
+            ]
             result["scam_warning"] = scam_warning
             result["big_account_mention"] = big_account_mention
             result["has_buzz"] = len(results_list) >= 3
@@ -157,6 +179,7 @@ class XSearchClient:
                 result["top_snippet"] = first_content[:100]
 
         except Exception as e:
+            result["evidence_availability"] = "UNAVAILABLE"
             logger.warning("Tavily X search failed for %s: %s", symbol, str(e))
             # Return default (X_DATA_NOT_FOUND_OR_NOT_INDEXED) on error
 

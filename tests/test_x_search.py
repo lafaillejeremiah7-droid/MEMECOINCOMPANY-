@@ -17,8 +17,8 @@ from memescanner.x_search import (
 class TestConstants:
     """Test module constants."""
 
-    def test_tavily_api_key(self):
-        assert TAVILY_API_KEY == "REDACTED_TAVILY_API_KEY"
+    def test_tavily_api_key_not_hardcoded(self):
+        assert TAVILY_API_KEY == ""
 
     def test_tavily_endpoint(self):
         assert TAVILY_ENDPOINT == "https://api.tavily.com/search"
@@ -77,7 +77,7 @@ class TestXSearchClient:
     """Test the XSearchClient class."""
 
     def setup_method(self):
-        self.client = XSearchClient()
+        self.client = XSearchClient(api_key="dummy-tavily-key")
 
     @pytest.mark.asyncio
     async def test_search_token_found_results(self):
@@ -339,6 +339,7 @@ class TestXSearchClient:
             assert result["status"] == "X_DATA_NOT_FOUND_OR_NOT_INDEXED"
             assert result["result_count"] == 0
             assert result["scam_warning"] is False
+            assert result["evidence_availability"] == "UNAVAILABLE"
 
     @pytest.mark.asyncio
     async def test_search_token_no_duplicate_accounts(self):

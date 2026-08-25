@@ -2,8 +2,9 @@
 Narrative Wave Detection module for the Memescanner bot.
 
 Detects narrative waves (trending keywords) among top graduated tokens.
-Research shows HOT keywords yield 77% 2x rate vs 48% neutral (+29pp lift),
-while COLD keywords yield only 14% 2x rate (-34pp from neutral).
+Narrative labels are legacy heuristic context only. Historical predictive
+calibration is unavailable, so these labels and multipliers must not be
+presented as measured probabilities or a trading edge.
 
 Self-updating: refreshes from top tokens each cycle. Keywords decay if not
 seen in top tokens for 24 hours.
@@ -27,20 +28,21 @@ import aiosqlite
 
 logger = logging.getLogger(__name__)
 
-# HOT keywords from backtest research (77% 2x rate vs 48% neutral = ~1.6x lift)
+# Legacy narrative seeds retained for compatibility; not calibrated.
 INITIAL_HOT_KEYWORDS = [
     "fund", "trust", "united", "oil", "water", "reserve",
     "states", "world", "token", "supply", "official", "launch",
 ]
 
-# COLD keywords from backtest research (14% 2x rate vs 48% neutral = ~0.3x lift)
+# Legacy cold narrative seeds retained for compatibility; not calibrated.
 INITIAL_COLD_KEYWORDS = [
     "stonk", "narra", "idiots", "discord", "eloy", "uxento",
 ]
 
-# Multipliers based on backtest data
-HOT_MULTIPLIER = 1.6   # 77% / 48% = ~1.6x lift
-COLD_MULTIPLIER = 0.3  # 14% / 48% = ~0.3x lift
+# Legacy compatibility multipliers. The unified default pipeline does not use
+# them as probability or popularity evidence.
+HOT_MULTIPLIER = 1.6
+COLD_MULTIPLIER = 0.3
 NEUTRAL_MULTIPLIER = 1.0
 
 # Threshold: keyword must appear in 3+ top tokens to be considered HOT
@@ -54,11 +56,9 @@ class WaveDetector:
     """
     Detects narrative waves among top graduated tokens.
 
-    Tracks keyword frequency in successful tokens, identifies HOT and COLD
-    narratives, and provides multipliers for P(2x) calculation.
-
-    HOT keywords get a 1.6x multiplier (based on 77% vs 48% = ~1.6x lift).
-    COLD keywords get a 0.3x multiplier (based on 14% vs 48% = ~0.3x lift).
+    Tracks keyword frequency for compatibility and returns legacy ranking
+    multipliers. They are uncalibrated and are not used by the unified default
+    pipeline as probabilities or trading-edge claims.
 
     Self-updating: refreshes from top tokens each scan cycle.
     Keywords decay if not seen in top tokens for 24 hours.

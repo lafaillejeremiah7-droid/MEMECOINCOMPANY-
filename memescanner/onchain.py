@@ -18,14 +18,23 @@ Uses Helius RPC endpoints:
 
 import asyncio
 import logging
-from typing import Any, Dict, Optional
+import os
+import re
+from typing import Any, Dict, List, Optional, Set
 
 import httpx
 
 logger = logging.getLogger(__name__)
 
-HELIUS_API_KEY = "REDACTED_HELIUS_API_KEY"
-HELIUS_RPC = f"https://mainnet.helius-rpc.com/?api-key={HELIUS_API_KEY}"
+HELIUS_API_KEY = os.getenv("MEMESCANNER_HELIUS_API_KEY", "")
+HELIUS_RPC = os.getenv(
+    "MEMESCANNER_HELIUS_RPC_URL",
+    f"https://mainnet.helius-rpc.com/?api-key={HELIUS_API_KEY}" if HELIUS_API_KEY else "",
+)
+
+TOKEN_PROGRAM_ID = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+TOKEN_2022_PROGRAM_ID = "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"
+DEFAULT_MAX_TRANSFER_FEE_BPS = 100
 
 # Rate limit: max on-chain checks per scan cycle
 MAX_ONCHAIN_CHECKS_PER_CYCLE = 5
@@ -45,9 +54,20 @@ class OnchainAnalyzer:
     authority status, and calculates an overall safe score.
     """
 
-    def __init__(self):
-        """Initialize the OnchainAnalyzer."""
-        self.rpc_url = HELIUS_RPC
+    def __init__(
+        self,
+        rpc_url: Optional[str] = None,
+        *,
+        transfer_hook_allowlist: Optional[Set[str]] = None,
+        max_transfer_fee_bps: int = DEFAULT_MAX_TRANSFER_FEE_BPS,
+    ):
+        """Initialize evidence policy. Missing RPC means UNVERIFIED, never safe."""
+        self.rpc_url = rpc_url if rpc_url is not None else os.getenv(
+            "MEMESCANNER_HELIUS_RPC_URL", HELIUS_RPC
+        )
+        self.enabled = bool(self.rpc_url)
+        self.transfer_hook_allowlist = transfer_hook_allowlist or set()
+        self.max_transfer_fee_bps = max_transfer_fee_bps
         self.timeout = httpx.Timeout(RPC_TIMEOUT)
 
     async def _rpc_call(self, client: httpx.AsyncClient, method: str,
@@ -69,6 +89,9 @@ class OnchainAnalyzer:
             "method": method,
             "params": params,
         }
+
+        if not self.enabled:
+            return None
 
         try:
             response = await client.post(self.rpc_url, json=payload)
@@ -153,40 +176,162 @@ class OnchainAnalyzer:
 
     async def _get_mint_info(
         self, client: httpx.AsyncClient, mint: str
-    ) -> Dict[str, Optional[bool]]:
-        """
-        Get mint and freeze authority status.
-
-        Args:
-            client: httpx async client.
-            mint: Token mint address.
-
-        Returns:
-            Dict with 'mint_authority_revoked' and 'freeze_authority_revoked'.
-        """
+    ) -> Dict[str, Any]:
+        """Parse token program ownership, authorities, and Token-2022 extensions."""
         params = [mint, {"encoding": "jsonParsed"}]
         result = await self._rpc_call(client, "getAccountInfo", params)
-
-        info = {
+        info: Dict[str, Any] = {
+            "evidence_status": "UNVERIFIED",
+            "token_program": None,
             "mint_authority_revoked": None,
             "freeze_authority_revoked": None,
+            "extensions": [],
+            "unsupported_extensions": [],
+            "dangerous_capabilities": [],
+            "transfer_fee_bps": None,
         }
+        if not result or not result.get("value"):
+            return info
+        try:
+            value = result["value"]
+            owner = value.get("owner")
+            parsed = value.get("data", {}).get("parsed", {})
+            mint_info = parsed.get("info", {})
+            info["token_program"] = owner
+            authority_fields_complete = (
+                isinstance(mint_info, dict)
+                and "mintAuthority" in mint_info
+                and "freezeAuthority" in mint_info
+            )
+            if authority_fields_complete:
+                info["mint_authority_revoked"] = mint_info["mintAuthority"] is None
+                info["freeze_authority_revoked"] = mint_info["freezeAuthority"] is None
+            if "extensions" in mint_info:
+                raw_extensions = mint_info["extensions"]
+            elif "extensions" in parsed:
+                raw_extensions = parsed["extensions"]
+            else:
+                raw_extensions = []
+            malformed_extension_container = not isinstance(raw_extensions, list)
+            extensions = raw_extensions if isinstance(raw_extensions, list) else []
+            info["extensions"] = extensions
+            dangerous: List[str] = []
+            unsupported: List[str] = []
+            if not authority_fields_complete:
+                unsupported.append("INCOMPLETE_MINT_AUTHORITY_FIELDS")
+            if malformed_extension_container:
+                unsupported.append("MALFORMED_EXTENSION_CONTAINER")
+            known_extensions = {
+                "defaultaccountstate", "defaultaccountstateextension",
+                "permanentdelegate", "permanentdelegateextension",
+                "nontransferable", "nontransferableextension",
+                "transferhook", "transferhookextension",
+                "transferfeeconfig", "transferfeeconfigextension",
+            }
+            if info["mint_authority_revoked"] is False:
+                dangerous.append("ACTIVE_MINT_AUTHORITY")
+            if info["freeze_authority_revoked"] is False:
+                dangerous.append("ACTIVE_FREEZE_AUTHORITY")
 
-        if result and result.get("value"):
-            try:
-                data = result["value"]["data"]
-                parsed = data.get("parsed", {})
-                mint_info = parsed.get("info", {})
+            for extension in extensions:
+                if not isinstance(extension, dict):
+                    unsupported.append("MALFORMED_EXTENSION")
+                    continue
+                extension_type = str(
+                    extension.get("extension") or extension.get("type") or ""
+                ).lower().replace("_", "").replace("-", "")
+                if extension_type not in known_extensions:
+                    unsupported.append(extension_type or "UNNAMED_EXTENSION")
+                    continue
+                state = extension.get("state") or extension
+                if extension_type in {"defaultaccountstate", "defaultaccountstateextension"}:
+                    account_state = str(
+                        state.get("state") or state.get("accountState") or ""
+                    ).lower()
+                    if account_state == "frozen":
+                        dangerous.append("DEFAULT_ACCOUNT_FROZEN")
+                    elif account_state != "initialized":
+                        dangerous.append("UNKNOWN_DEFAULT_ACCOUNT_STATE")
+                elif extension_type in {"permanentdelegate", "permanentdelegateextension"}:
+                    delegate_values = [
+                        state[key] for key in ("delegate", "authority") if key in state
+                    ]
+                    if not delegate_values:
+                        dangerous.append("UNKNOWN_PERMANENT_DELEGATE_AUTHORITY")
+                    elif any(value is not None for value in delegate_values):
+                        dangerous.append("PERMANENT_DELEGATE")
+                elif extension_type in {"nontransferable", "nontransferableextension"}:
+                    dangerous.append("NON_TRANSFERABLE")
+                elif extension_type in {"transferhook", "transferhookextension"}:
+                    program_id = state.get("programId") or state.get("program_id")
+                    authority_values = [
+                        state[key]
+                        for key in ("authority", "transferHookAuthority")
+                        if key in state
+                    ]
+                    if not program_id or program_id not in self.transfer_hook_allowlist:
+                        dangerous.append("TRANSFER_HOOK_NOT_ALLOWLISTED")
+                    if not authority_values:
+                        dangerous.append("UNKNOWN_TRANSFER_HOOK_AUTHORITY")
+                    elif any(value is not None for value in authority_values):
+                        dangerous.append("MUTABLE_TRANSFER_HOOK")
+                elif extension_type in {"transferfeeconfig", "transferfeeconfigextension"}:
+                    authority_values = [
+                        state[key]
+                        for key in ("transferFeeConfigAuthority", "authority")
+                        if key in state
+                    ]
+                    required_schedules = (
+                        state.get("olderTransferFee"),
+                        state.get("newerTransferFee"),
+                    )
+                    schedules = [
+                        schedule for schedule in required_schedules
+                        if schedule is not None
+                    ]
+                    schedules_complete = all(
+                        schedule is not None for schedule in required_schedules
+                    )
+                    parsed_fees: List[Optional[int]] = []
+                    for schedule in schedules:
+                        fee: Optional[int] = None
+                        if isinstance(schedule, dict) and "transferFeeBasisPoints" in schedule:
+                            raw_fee = schedule["transferFeeBasisPoints"]
+                            if type(raw_fee) is int:
+                                fee = raw_fee
+                            elif isinstance(raw_fee, str) and re.fullmatch(
+                                r"-?[0-9]+", raw_fee
+                            ):
+                                fee = int(raw_fee)
+                        parsed_fees.append(fee)
+                    known_fees = [fee for fee in parsed_fees if fee is not None]
+                    info["transfer_fee_bps"] = max(known_fees) if known_fees else None
+                    if not authority_values:
+                        dangerous.append("UNKNOWN_TRANSFER_FEE_AUTHORITY")
+                    elif any(value is not None for value in authority_values):
+                        dangerous.append("MUTABLE_TRANSFER_FEE")
+                    if (
+                        not schedules_complete
+                        or len(known_fees) != len(required_schedules)
+                    ):
+                        dangerous.append("UNKNOWN_TRANSFER_FEE")
+                    if any(fee < 0 for fee in known_fees):
+                        dangerous.append("INVALID_TRANSFER_FEE")
+                    if any(fee > self.max_transfer_fee_bps for fee in known_fees):
+                        dangerous.append("EXCESSIVE_TRANSFER_FEE")
 
-                mint_authority = mint_info.get("mintAuthority")
-                freeze_authority = mint_info.get("freezeAuthority")
-
-                # null = revoked (good)
-                info["mint_authority_revoked"] = mint_authority is None
-                info["freeze_authority_revoked"] = freeze_authority is None
-            except (KeyError, TypeError, AttributeError):
-                pass
-
+            info["dangerous_capabilities"] = sorted(set(dangerous))
+            info["unsupported_extensions"] = sorted(set(unsupported))
+            if dangerous:
+                info["evidence_status"] = "REJECTED"
+            elif unsupported:
+                info["evidence_status"] = "UNVERIFIED"
+            elif owner in {TOKEN_PROGRAM_ID, TOKEN_2022_PROGRAM_ID}:
+                info["evidence_status"] = "VERIFIED"
+            else:
+                info["evidence_status"] = "UNVERIFIED"
+        except (KeyError, TypeError, AttributeError):
+            logger.warning("Unable to parse mint account evidence for %s", mint)
         return info
 
     def detect_coordinated_buys(self, largest_accounts: list,
@@ -313,8 +458,8 @@ class OnchainAnalyzer:
 
         return result
 
-    def _calculate_safe_score(self, dev_holding_pct: float,
-                              top10_concentration_pct: float,
+    def _calculate_safe_score(self, dev_holding_pct: Optional[float],
+                              top10_concentration_pct: Optional[float],
                               mint_authority_revoked: Optional[bool],
                               freeze_authority_revoked: Optional[bool],
                               lp_locked: bool,
@@ -364,27 +509,28 @@ class OnchainAnalyzer:
         elif freeze_authority_revoked is False:
             flags.append("\u26a0\ufe0f Freeze authority active")
 
-        # Dev holding
-        if dev_holding_pct < 5:
-            score += 10
-            flags.append(f"\u2705 Low dev holding ({dev_holding_pct:.1f}%)")
-        elif dev_holding_pct <= 10:
-            score += 5
-            flags.append(f"\u2705 Moderate dev holding ({dev_holding_pct:.1f}%)")
-        elif dev_holding_pct > 50:
-            score -= 40
-            flags.append(f"\ud83d\udea8 Very high dev holding ({dev_holding_pct:.1f}%)")
-        elif dev_holding_pct > 20:
-            score -= 20
-            flags.append(f"\u26a0\ufe0f High dev holding ({dev_holding_pct:.1f}%)")
+        # Unknown holder evidence is neutral, never a low-risk bonus.
+        if dev_holding_pct is not None:
+            if dev_holding_pct < 5:
+                score += 10
+                flags.append(f"\u2705 Low dev holding ({dev_holding_pct:.1f}%)")
+            elif dev_holding_pct <= 10:
+                score += 5
+                flags.append(f"\u2705 Moderate dev holding ({dev_holding_pct:.1f}%)")
+            elif dev_holding_pct > 50:
+                score -= 40
+                flags.append(f"\ud83d\udea8 Very high dev holding ({dev_holding_pct:.1f}%)")
+            elif dev_holding_pct > 20:
+                score -= 20
+                flags.append(f"\u26a0\ufe0f High dev holding ({dev_holding_pct:.1f}%)")
 
-        # Top 10 concentration
-        if top10_concentration_pct < 20:
-            score += 10
-            flags.append(f"\u2705 Low concentration ({top10_concentration_pct:.1f}%)")
-        elif top10_concentration_pct > 50:
-            score -= 10
-            flags.append(f"\u26a0\ufe0f High concentration ({top10_concentration_pct:.1f}%)")
+        if top10_concentration_pct is not None:
+            if top10_concentration_pct < 20:
+                score += 10
+                flags.append(f"\u2705 Low concentration ({top10_concentration_pct:.1f}%)")
+            elif top10_concentration_pct > 50:
+                score -= 10
+                flags.append(f"\u26a0\ufe0f High concentration ({top10_concentration_pct:.1f}%)")
 
         # LP locked
         if lp_locked:
@@ -547,6 +693,23 @@ class OnchainAnalyzer:
 
         return result
 
+    @staticmethod
+    def _holder_records_complete(largest_accounts: Any) -> bool:
+        """Require every inspected holder row to contain usable RPC evidence."""
+        if not isinstance(largest_accounts, list) or not largest_accounts:
+            return False
+        for account in largest_accounts:
+            if not isinstance(account, dict) or not account.get("address"):
+                return False
+            try:
+                raw_amount = int(account["amount"])
+                decimals = int(account["decimals"])
+            except (KeyError, TypeError, ValueError):
+                return False
+            if raw_amount <= 0 or decimals < 0:
+                return False
+        return True
+
     async def check_token(self, mint: str, creator: str) -> Dict[str, Any]:
         """
         Perform full on-chain verification for a token.
@@ -568,8 +731,14 @@ class OnchainAnalyzer:
             lp_locked, safe_score, flags.
         """
         result = {
-            "dev_holding_pct": 0.0,
-            "top10_concentration_pct": 0.0,
+            "evidence_status": "UNVERIFIED",
+            "token_program": None,
+            "extensions": [],
+            "unsupported_extensions": [],
+            "dangerous_capabilities": [],
+            "transfer_fee_bps": None,
+            "dev_holding_pct": None,
+            "top10_concentration_pct": None,
             "mint_authority_revoked": None,
             "freeze_authority_revoked": None,
             "lp_locked": False,
@@ -581,11 +750,26 @@ class OnchainAnalyzer:
             "coordinated_risk": "LOW",
         }
 
+        if not self.enabled:
+            result["flags"].append("On-chain evidence unavailable: Helius/Solana RPC disabled")
+            return result
+
         async with httpx.AsyncClient(timeout=self.timeout) as client:
-            # Step 1: Get mint/freeze authority info
+            # Step 1: Get mint/freeze authority and Token-2022 extension info
             mint_info = await self._get_mint_info(client, mint)
-            result["mint_authority_revoked"] = mint_info["mint_authority_revoked"]
-            result["freeze_authority_revoked"] = mint_info["freeze_authority_revoked"]
+            for key in (
+                "evidence_status", "token_program", "extensions",
+                "unsupported_extensions", "dangerous_capabilities", "transfer_fee_bps",
+                "mint_authority_revoked", "freeze_authority_revoked",
+            ):
+                if key in mint_info:
+                    result[key] = mint_info.get(key)
+            if "evidence_status" not in mint_info:
+                result["evidence_status"] = (
+                    "VERIFIED" if mint_info.get("mint_authority_revoked") is True
+                    and mint_info.get("freeze_authority_revoked") is True
+                    else "UNVERIFIED"
+                )
 
             await asyncio.sleep(RPC_CALL_DELAY)
 
@@ -597,7 +781,12 @@ class OnchainAnalyzer:
             # Step 3: Get top token accounts
             largest_accounts = await self._get_token_largest_accounts(client, mint)
 
-            if total_supply and total_supply > 0 and largest_accounts:
+            if (
+                total_supply
+                and total_supply > 0
+                and largest_accounts
+                and self._holder_records_complete(largest_accounts)
+            ):
                 # Calculate top 10 concentration
                 top10_amounts = []
                 for i, account in enumerate(largest_accounts[:10]):
@@ -612,19 +801,26 @@ class OnchainAnalyzer:
                 top10_total = sum(amt for _, amt in top10_amounts)
                 result["top10_concentration_pct"] = (top10_total / total_supply) * 100
 
-                # Step 4: Check which top holders are the creator (dev)
+                # Step 4: Creator holding is only known when a creator is
+                # available and every inspected token account owner resolves.
                 dev_holding = 0.0
+                owners_complete = bool(creator)
                 for address, amount in top10_amounts:
                     if not address or amount <= 0:
                         continue
-
+                    if not creator:
+                        owners_complete = False
+                        break
                     await asyncio.sleep(RPC_CALL_DELAY)
                     owner = await self._get_account_owner(client, address)
-
-                    if owner and owner == creator:
+                    if owner is None:
+                        owners_complete = False
+                    elif owner == creator:
                         dev_holding += amount
 
-                result["dev_holding_pct"] = (dev_holding / total_supply) * 100
+                result["dev_holding_pct"] = (
+                    (dev_holding / total_supply) * 100 if owners_complete else None
+                )
 
                 # Step 5: Detect coordinated/bundled buys
                 coordinated = self.detect_coordinated_buys(
@@ -635,6 +831,19 @@ class OnchainAnalyzer:
                 result["cluster_pct_of_supply"] = coordinated["cluster_pct_of_supply"]
                 result["coordinated_risk"] = coordinated["coordinated_risk"]
 
+                # Holder and extension evidence can still be complete when a
+                # source cannot identify the launcher's wallet. In that case
+                # creator concentration stays explicitly unknown/neutral; it
+                # is never converted to a zero holding or safety bonus.
+                if result["evidence_status"] != "REJECTED":
+                    result["evidence_status"] = (
+                        "VERIFIED"
+                        if result["evidence_status"] == "VERIFIED"
+                        else "UNVERIFIED"
+                    )
+            elif result["evidence_status"] != "REJECTED":
+                result["evidence_status"] = "UNVERIFIED"
+
         # Calculate safe score and flags
         safe_score, flags = self._calculate_safe_score(
             result["dev_holding_pct"],
@@ -644,6 +853,13 @@ class OnchainAnalyzer:
             result["lp_locked"],
             result["coordinated_risk"],
         )
+        if result["dangerous_capabilities"]:
+            flags.extend(
+                f"DANGEROUS: {capability}"
+                for capability in result["dangerous_capabilities"]
+            )
+        if result["evidence_status"] == "UNVERIFIED":
+            flags.append("On-chain evidence incomplete; no safety bonus")
         result["safe_score"] = safe_score
         result["flags"] = flags
 

@@ -10,7 +10,7 @@ class TestDetectCoordinatedBuys:
     """Test the detect_coordinated_buys method."""
 
     def setup_method(self):
-        self.analyzer = OnchainAnalyzer()
+        self.analyzer = OnchainAnalyzer(rpc_url="https://rpc.invalid")
 
     def test_empty_accounts_returns_low(self):
         """Empty accounts list returns LOW risk."""
@@ -221,7 +221,7 @@ class TestSafeScoreWithCoordinatedRisk:
     """Test safe score calculation with coordinated risk parameter."""
 
     def setup_method(self):
-        self.analyzer = OnchainAnalyzer()
+        self.analyzer = OnchainAnalyzer(rpc_url="https://rpc.invalid")
 
     def test_high_coordinated_risk_subtracts_25(self):
         """HIGH coordinated risk reduces safe score by 25."""
@@ -280,7 +280,7 @@ class TestCheckTokenWithCoordinatedBuys:
     """Test check_token includes coordinated buy fields."""
 
     def setup_method(self):
-        self.analyzer = OnchainAnalyzer()
+        self.analyzer = OnchainAnalyzer(rpc_url="https://rpc.invalid")
 
     @pytest.mark.asyncio
     async def test_check_token_returns_coordinated_fields(self):

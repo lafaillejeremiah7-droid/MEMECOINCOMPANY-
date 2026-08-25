@@ -1,26 +1,9 @@
-"""
-Probability calculator for the Memescanner bot.
+"""Legacy, uncalibrated target-ranking calculator.
 
-Calculates the probability of a token reaching specific market cap targets
-based on its current features and score. Uses base rates from research data
-adjusted by factor scores.
-
-For tokens already at high MC (>200k), uses trajectory data to compute
-continuation probability with relative targets (2x, 5x, 10x from current).
-
-Base rates from research:
-    - ~5% graduate to 100k MC
-    - ~2% to 300k MC
-    - ~0.5% to 1M MC
-    - ~0.1% to 5M MC
-
-Extended targets for mature tokens:
-    - ~0.05% to 10M MC
-    - ~0.02% to 50M MC
-    - ~0.01% to 100M MC
-    - ~0.005% to 300M MC
-
-Also calculates Expected Value (EV) for risk assessment.
+The numeric outputs are retained for API compatibility only. Historical
+predictive calibration is unavailable, so callers must not present them as
+probabilities, expected returns, or a measured edge. The unified default
+runtime does not use this module.
 """
 
 import logging
@@ -28,7 +11,7 @@ from typing import Any, Dict, Optional
 
 logger = logging.getLogger(__name__)
 
-# Base rates from research data (% of tokens that reach each target)
+# Legacy coefficients retained for compatibility; not observed base rates.
 BASE_RATES: Dict[str, float] = {
     "100k": 0.05,   # 5% of tokens reach $100k MC
     "300k": 0.02,   # 2% reach $300k MC
@@ -55,10 +38,10 @@ TARGET_MULTIPLES: Dict[str, float] = {
 
 class ProbabilityCalculator:
     """
-    Token probability and expected value calculator.
+    Legacy target-rank and payoff-arithmetic calculator.
 
-    Uses research-derived base rates and adjusts probabilities based
-    on the token's composite score and individual factor scores.
+    Outputs are uncalibrated compatibility heuristics, not probabilities or
+    expected returns.
 
     Usage:
         calc = ProbabilityCalculator()
@@ -73,7 +56,7 @@ class ProbabilityCalculator:
         Initialize the probability calculator.
 
         Args:
-            base_rates: Custom base rates. Uses research defaults if None.
+            base_rates: Custom compatibility coefficients.
         """
         self.base_rates = base_rates or dict(BASE_RATES)
 
@@ -253,9 +236,9 @@ class ProbabilityCalculator:
             extended_target_mc_values: MC values for extended targets.
 
         Returns:
-            Dictionary with EV per $100 and description.
+            Dictionary with legacy payoff arithmetic and description.
         """
-        risk_amount = 100.0  # $100 risked
+        risk_amount = 100.0  # compatibility arithmetic baseline
 
         # Target MC values
         target_mc_values = {

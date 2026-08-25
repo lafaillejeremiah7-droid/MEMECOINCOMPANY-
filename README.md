@@ -1,137 +1,65 @@
-# Memescanner - Solana Memecoin Scanner Bot
+# Memescanner — Solana Signal Scanner
 
-A signal-only memecoin scanner that monitors Pump.fun and DEXScreener for newly launched Solana tokens, scores them using research-backed metrics, and sends Telegram alerts with probability estimates.
+Memescanner is a **signal-only** Solana token discovery and safety-screening service. The default `python -m memescanner` runtime never loads wallet keys, signs transactions, submits transactions, or executes live trades. Optional PaperTrader behavior is virtual accounting only, is disabled by default, and is capped at three open positions.
 
-> **IMPORTANT: This is a SIGNAL-ONLY system. It NEVER auto-executes trades. It scans, scores, calculates probability, and alerts. You decide whether to trade.**
+## Default architecture
 
-## Features
+The default runtime uses one normalized pipeline:
 
-- **Real-time Pump.fun scanning** - Monitors new token launches and graduations every 10 seconds
-- **DEXScreener integration** - Fetches comprehensive trading data (price, volume, liquidity, buy/sell counts)
-- **Research-backed scoring** - 6-factor scoring engine with weights derived from actual data on winning vs losing tokens
-- **Probability estimates** - Calculates probability of reaching target market caps (100k, 300k, 1M, 5M)
-- **Expected Value (EV)** - Shows whether a token has positive or negative EV per dollar risked
-- **Hard filters** - Eliminates obvious rugs and dumps before scoring (liquidity, buy/sell ratio, dev holdings)
-- **Narrative matching** - Identifies trending themes (AI, political, celebrity, meme) with temperature ratings
-- **Self-adaptation** - Tracks outcomes and adjusts scoring weights based on what actually predicts pumps
-- **Telegram alerts** - Formatted alerts with all metrics, probabilities, and risk assessment
-- **SQLite persistence** - Tracks all scanned tokens, narratives, and weight history
+1. Discover recent Solana candidates independently from DEXScreener token profiles, DEXScreener latest paid boosts, CoinGecko/GeckoTerminal Solana new pools, and Pump.fun.
+2. Normalize and merge duplicates by `(chain_id, mint)`, unioning source membership and preserving social, creator, creation-time, and paid-boost metadata.
+3. Select only a Solana DEX pair—there is no cross-chain fallback.
+4. Apply the same age, X-presence, liquidity, trading-flow, on-chain, holder, rug/scam-evidence, and evidence-availability checks to every source.
+5. Persist every observation and decision (qualified, rejected, or deferred) in SQLite, then emit at most one deduplicated alert per mint.
 
-## Architecture
+“All-platform” means launchpad-neutral discovery across supported Solana DEX data sources. It is not a guarantee that every token will be discovered. A public source can be unavailable or rate-limited; failures are isolated and other adapters continue. DEX market enrichment is capped per cycle (40 by default); over-budget candidates are persisted as deferred and rotate into later cycles rather than being discarded.
 
-```
-memescanner/
-  __init__.py          - Package metadata
-  config.py            - YAML config loading with typed access
-  database.py          - Async SQLite via aiosqlite
-  pump_fun.py          - Pump.fun API client
-  dexscreener.py       - DEXScreener API client
-  scoring.py           - 6-factor scoring engine
-  probability.py       - Probability and EV calculator
-  filters.py           - Hard rejection filters
-  narrative.py         - Narrative matching and temperature tracking
-  telegram_bot.py      - Telegram alert formatting and sending
-  adaptation.py        - Self-adapting weight optimization
-  main.py              - Async main loop orchestrator
-```
+## Evidence semantics
 
-## Scoring Methodology
-
-Weights derived from actual research data comparing winning and losing tokens:
-
-| Factor | Weight | Multiplier | Signal |
-|--------|--------|-----------|--------|
-| Buy/Sell Ratio | 25% | 4.9x | Buyers dominating = bullish |
-| Liquidity | 25% | 11.9x | Strongest signal of all |
-| Volume Turnover | 20% | 4.1x | High volume vs MC = interest |
-| Engagement Velocity | 15% | 4.8x | Replies per hour on Pump.fun |
-| Narrative Match | 10% | +3-11pp | Hot narratives outperform |
-| Momentum | 5% | - | Near ATH = still pumping |
-
-## Self-Adaptation
-
-The bot tracks every alerted token and checks its price at 1h, 6h, and 24h after alert. After 50 tracked tokens:
-
-1. Computes which score factors correlated with actual pumps
-2. Adjusts weights accordingly (increase what predicted, decrease what did not)
-3. Updates narrative temperatures based on which themes produced winners
-4. Sends a weekly performance report to Telegram
-
-## Setup
-
-### 1. Install dependencies
-
-```bash
-pip install -r requirements.txt
-```
-
-### 2. Configure
-
-```bash
-cp config.example.yaml config.yaml
-```
-
-Edit `config.yaml` with your settings:
-- `telegram.bot_token` - Get from @BotFather on Telegram
-- `telegram.chat_id` - Your chat or group ID
-
-### 3. Run
-
-```bash
-python -m memescanner.main
-```
-
-Or:
-
-```bash
-python -c "import asyncio; from memescanner.main import main; asyncio.run(main())"
-```
+- “New” requires a known token/pair timestamp and an age of 10–60 minutes. Unknown age is rejected as `AGE_UNKNOWN_NOT_NEW`.
+- An X link is required. A completed public search with no result is recorded as `X_DATA_NOT_FOUND_OR_NOT_INDEXED`; that is partial OSINT, not proof that a token has no attention. A missing credential or search outage is separately marked unavailable and defers the candidate.
+- Paid DEXScreener boosts are retained as metadata and never counted as organic popularity or predictive evidence.
+- Celebrity names and generic buzz are neutral. `VERIFIED` requires an exact canonical X handle whose evidence contains the exact mint address. Fan/copycat handles, Unicode confusables, unrelated results, and keywords do not verify a link. Scam evidence prevents verification and positive classification.
+- Missing critical mint, extension, supply, or holder evidence is `UNVERIFIED`; it earns no safety bonus and cannot alert or open a virtual paper position. Some launchpad-neutral feeds do not expose a creator wallet. In that case creator holdings remain explicitly unknown and neutral—never converted to 0%—while verified authority, extension, supply, concentration, and coordination checks can still qualify the candidate. If a source does provide a creator but that wallet cannot be resolved, evaluation is deferred.
+- Token-2022 checks reject active mint/freeze control, default-frozen state, permanent delegates, non-transferable tokens, and transfer hooks unless the program is explicitly allowlisted **and** its mutation authority is explicitly revoked (the default allowlist is empty). Transfer fees default to a maximum of 100 basis points (1%); mutable, excessive, or unknown fee configurations are rejected.
 
 ## Configuration
 
-See `config.example.yaml` for all available settings:
+Install dependencies and copy the example:
 
-- **scanner** - Check interval, minimum score threshold, max token age
-- **filters** - Hard filter thresholds (liquidity, buy/sell ratio, dev holdings)
-- **scoring.weights** - Factor weights (adjust or let the bot self-adapt)
-- **adaptation** - Outcome tracking intervals, reweight schedule
-- **database** - SQLite database file path
-- **logging** - Log level and file path
-
-## Alert Format
-
+```bash
+pip install -r requirements.txt
+cp config.example.yaml config.yaml
+python -m memescanner
 ```
-HIGH CONVICTION (Score: 82/100)
 
-$CATALORIAN | Elon's Space Cat
-CA: 4cvZwC17oM...
-Age: 16 minutes
+`MEMESCANNER_CONFIG` selects another YAML file. Secrets should normally be supplied as environment variables:
 
-Metrics:
-MC: $142,000 | Liq: $28,000
-Buy/Sell: 3.2 (buyers dominating)
-Volume: $95,000 (turnover: 0.67x)
-Engagement: 34 replies/hr
-Narrative: "cat + elon" (HOT)
-Momentum: 91% of ATH
+- `MEMESCANNER_TELEGRAM_BOT_TOKEN`
+- `MEMESCANNER_TELEGRAM_CHAT_ID`
+- `MEMESCANNER_TAVILY_API_KEY`
+- `MEMESCANNER_HELIUS_RPC_URL` (preferred complete RPC endpoint)
+- `MEMESCANNER_HELIUS_API_KEY` (used only when no complete RPC URL is set)
+- `MEMESCANNER_TRANSFER_HOOK_ALLOWLIST` (comma-separated exact Token-2022 hook program IDs; empty rejects hooks)
+- `MEMESCANNER_ENABLE_PAPER_TRADING=true` enables virtual PaperTrader accounting, five-minute position checks, hourly portfolio updates, and daily P&L summaries
 
-Probability Estimates:
--> 100k MC (from here): 18.2%
--> 300k MC: 6.4%
--> 1M MC: 1.2%
--> EV per $100 risked: +$47.20
+Missing Telegram credentials disable delivery clearly. A completed Tavily search with no indexed result remains partial OSINT, while a missing Tavily credential or outage defers candidates. Missing Helius/Solana RPC evidence also defers candidates and prevents alerts rather than silently treating them as safe.
 
-Risk: MEDIUM
-- LP not burned
-- Top holder: 8.2%
+## Persistence
 
-https://dexscreener.com/solana/4cvZwC17oM...
+SQLite’s `candidate_observations` table stores observation time, outcome-ready `(chain_id, mint)` identity, source memberships, boost metadata, age provenance, decision-time market data and screening rank, evidence availability, filter decision/reasons, and alert state. `discovery_cycles` separately stores source health even when every adapter is unavailable and no candidate exists. The tables and indexes are created with backward-compatible additive migration behavior alongside existing tables.
+
+## Research and calibration limitation
+
+Historical predictive calibration is unavailable for this repository. Screening scores are ranking heuristics, **not probabilities**. Narrative, deployer, celebrity, and paid-boost signals are not calibrated probability multipliers and must not be presented as an edge or expected return. See [`docs/evidence-and-calibration.md`](docs/evidence-and-calibration.md).
+
+## Tests
+
+```bash
+python3 -m pytest tests/test_unified_scanner.py tests/test_onchain.py tests/test_x_search.py tests/test_celebrity_scanner.py -q
+python3 -m pytest -q
 ```
 
 ## Disclaimer
 
-This bot provides SIGNALS ONLY. It does NOT execute trades. All trading decisions are yours. Cryptocurrency trading, especially memecoins, carries extreme risk. Most memecoins go to zero. Never risk more than you can afford to lose.
-
-## License
-
-MIT
+Signals are informational only. Memecoins are extremely risky and many become worthless. The scanner does not provide financial advice or execute trades; users make all trading and risk decisions.

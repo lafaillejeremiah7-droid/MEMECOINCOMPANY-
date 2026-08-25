@@ -27,9 +27,33 @@ class TelegramConfig:
 class ScannerConfig:
     """Scanner loop configuration."""
 
-    check_interval_seconds: int = 10
+    check_interval_seconds: int = 15
     min_score: int = 60
     max_token_age_hours: int = 6
+    min_candidate_age_minutes: int = 10
+    max_candidate_age_minutes: int = 60
+    max_market_checks_per_cycle: int = 40
+    enable_paper_trading: bool = False
+
+
+@dataclass
+class SourcesConfig:
+    """Independent Solana discovery source switches."""
+
+    dexscreener_profiles: bool = True
+    dexscreener_latest_boosts: bool = True
+    geckoterminal_new_pools: bool = True
+    pump_fun: bool = True
+
+
+@dataclass
+class EvidenceConfig:
+    """Optional external evidence credentials and Token-2022 policy."""
+
+    tavily_api_key: str = ""
+    helius_rpc_url: str = ""
+    max_transfer_fee_bps: int = 100
+    transfer_hook_allowlist: List[str] = field(default_factory=list)
 
 
 @dataclass
@@ -38,12 +62,12 @@ class FiltersConfig:
 
     min_liquidity_usd: float = 5000.0
     min_buy_sell_ratio: float = 1.0
-    max_dev_holding_pct: float = 50.0
+    max_dev_holding_pct: float = 30.0
 
 
 @dataclass
 class ScoringWeights:
-    """Scoring engine weights derived from research data."""
+    """Legacy compatibility scoring weights; not predictively calibrated."""
 
     buy_sell_ratio: float = 0.25
     liquidity: float = 0.25
@@ -95,6 +119,8 @@ class Config:
 
     telegram: TelegramConfig = field(default_factory=TelegramConfig)
     scanner: ScannerConfig = field(default_factory=ScannerConfig)
+    sources: SourcesConfig = field(default_factory=SourcesConfig)
+    evidence: EvidenceConfig = field(default_factory=EvidenceConfig)
     filters: FiltersConfig = field(default_factory=FiltersConfig)
     scoring: ScoringWeights = field(default_factory=ScoringWeights)
     adaptation: AdaptationConfig = field(default_factory=AdaptationConfig)
@@ -123,7 +149,7 @@ class Config:
         with open(config_path, "r") as f:
             data: Dict[str, Any] = yaml.safe_load(f) or {}
 
-        return cls._from_dict(data)
+        return cls._from_dict(data)._with_environment_overrides()
 
     @classmethod
     def from_env(cls) -> "Config":
@@ -136,13 +162,17 @@ class Config:
             Config instance.
         """
         config_path = os.environ.get("MEMESCANNER_CONFIG", "config.yaml")
-        return cls.from_yaml(config_path)
+        if Path(config_path).exists():
+            return cls.from_yaml(config_path)
+        return cls()._with_environment_overrides()
 
     @classmethod
     def _from_dict(cls, data: Dict[str, Any]) -> "Config":
         """Parse configuration dictionary into typed dataclasses."""
         telegram_data = data.get("telegram", {})
         scanner_data = data.get("scanner", {})
+        sources_data = data.get("sources", {})
+        evidence_data = data.get("evidence", {})
         filters_data = data.get("filters", {})
         scoring_data = data.get("scoring", {}).get("weights", {})
         adaptation_data = data.get("adaptation", {})
@@ -156,15 +186,33 @@ class Config:
             ),
             scanner=ScannerConfig(
                 check_interval_seconds=scanner_data.get(
-                    "check_interval_seconds", 10
+                    "check_interval_seconds", 15
                 ),
                 min_score=scanner_data.get("min_score", 60),
                 max_token_age_hours=scanner_data.get("max_token_age_hours", 6),
+                min_candidate_age_minutes=scanner_data.get("min_candidate_age_minutes", 10),
+                max_candidate_age_minutes=scanner_data.get("max_candidate_age_minutes", 60),
+                max_market_checks_per_cycle=scanner_data.get("max_market_checks_per_cycle", 40),
+                enable_paper_trading=scanner_data.get("enable_paper_trading", False),
+            ),
+            sources=SourcesConfig(
+                dexscreener_profiles=sources_data.get("dexscreener_profiles", True),
+                dexscreener_latest_boosts=sources_data.get("dexscreener_latest_boosts", True),
+                geckoterminal_new_pools=sources_data.get("geckoterminal_new_pools", True),
+                pump_fun=sources_data.get("pump_fun", True),
+            ),
+            evidence=EvidenceConfig(
+                tavily_api_key=evidence_data.get("tavily_api_key", ""),
+                helius_rpc_url=evidence_data.get("helius_rpc_url", ""),
+                max_transfer_fee_bps=evidence_data.get("max_transfer_fee_bps", 100),
+                transfer_hook_allowlist=list(
+                    evidence_data.get("transfer_hook_allowlist", []) or []
+                ),
             ),
             filters=FiltersConfig(
                 min_liquidity_usd=filters_data.get("min_liquidity_usd", 5000.0),
                 min_buy_sell_ratio=filters_data.get("min_buy_sell_ratio", 1.0),
-                max_dev_holding_pct=filters_data.get("max_dev_holding_pct", 50.0),
+                max_dev_holding_pct=filters_data.get("max_dev_holding_pct", 30.0),
             ),
             scoring=ScoringWeights(
                 buy_sell_ratio=scoring_data.get("buy_sell_ratio", 0.25),
@@ -192,6 +240,35 @@ class Config:
                 file=logging_data.get("file", "memescanner.log"),
             ),
         )
+
+    def _with_environment_overrides(self) -> "Config":
+        """Apply documented secret/runtime environment variables over YAML."""
+        self.telegram.bot_token = os.getenv(
+            "MEMESCANNER_TELEGRAM_BOT_TOKEN", self.telegram.bot_token
+        )
+        self.telegram.chat_id = os.getenv(
+            "MEMESCANNER_TELEGRAM_CHAT_ID", self.telegram.chat_id
+        )
+        self.evidence.tavily_api_key = os.getenv(
+            "MEMESCANNER_TAVILY_API_KEY", self.evidence.tavily_api_key
+        )
+        self.evidence.helius_rpc_url = os.getenv(
+            "MEMESCANNER_HELIUS_RPC_URL", self.evidence.helius_rpc_url
+        )
+        helius_key = os.getenv("MEMESCANNER_HELIUS_API_KEY", "")
+        if helius_key and not self.evidence.helius_rpc_url:
+            self.evidence.helius_rpc_url = (
+                f"https://mainnet.helius-rpc.com/?api-key={helius_key}"
+            )
+        allowlist = os.getenv("MEMESCANNER_TRANSFER_HOOK_ALLOWLIST")
+        if allowlist is not None:
+            self.evidence.transfer_hook_allowlist = [
+                item.strip() for item in allowlist.split(",") if item.strip()
+            ]
+        paper = os.getenv("MEMESCANNER_ENABLE_PAPER_TRADING")
+        if paper is not None:
+            self.scanner.enable_paper_trading = paper.lower() in {"1", "true", "yes", "on"}
+        return self
 
     def setup_logging(self) -> None:
         """Configure logging based on the logging settings."""

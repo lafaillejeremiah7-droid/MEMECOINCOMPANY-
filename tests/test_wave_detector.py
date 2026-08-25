@@ -35,7 +35,7 @@ async def detector(tmp_path):
 # --- Constant Tests ---
 
 def test_hot_multiplier_value():
-    """HOT multiplier should be 1.6 (77% / 48% lift)."""
+    """Legacy compatibility HOT multiplier remains 1.6 (uncalibrated)."""
     assert HOT_MULTIPLIER == 1.6
 
 

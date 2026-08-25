@@ -8,7 +8,7 @@ and trailing stop. Persists positions via aiosqlite.
 import logging
 import time
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Awaitable, Callable, Dict, List, Optional
 
 import aiosqlite
 import httpx
@@ -42,7 +42,13 @@ class PaperTrader:
         closed_trades: List of closed trades.
     """
 
-    def __init__(self, starting_balance: float = 1000.0, trade_size: float = 50.0):
+    def __init__(
+        self,
+        starting_balance: float = 1000.0,
+        trade_size: float = 50.0,
+        db_path: Optional[str] = None,
+        message_sender: Optional[Callable[[str], Awaitable[bool]]] = None,
+    ):
         """
         Initialize the paper trader.
 
@@ -52,18 +58,26 @@ class PaperTrader:
         """
         self.starting_balance = starting_balance
         self.trade_size = trade_size
+        self.db_path = db_path or DB_PATH
+        self._message_sender = message_sender
         self.balance = starting_balance
         self.positions: List[Dict[str, Any]] = []
         self.closed_trades: List[Dict[str, Any]] = []
         self._db: Optional[aiosqlite.Connection] = None
         self._initialized = False
 
+    async def _notify(self, message: str) -> bool:
+        """Use the configured sender, with the legacy sender only for compatibility."""
+        if self._message_sender is not None:
+            return await self._message_sender(message)
+        return await send_telegram_message(message)
+
     async def initialize(self) -> None:
         """Initialize database and load existing positions."""
         if self._initialized:
             return
 
-        self._db = await aiosqlite.connect(DB_PATH)
+        self._db = await aiosqlite.connect(self.db_path)
         await self._db.execute("PRAGMA journal_mode=WAL")
 
         # Create paper_positions table
@@ -286,7 +300,7 @@ class PaperTrader:
             f"\U0001f4b0 Balance: ${self.balance:.0f} remaining\n"
             f"\U0001f4ca Open positions: {len(self.positions)}/{MAX_OPEN_POSITIONS}"
         )
-        await send_telegram_message(msg)
+        await self._notify(msg)
 
         logger.info("Paper BUY: $%s at MC %s, balance: $%.2f", symbol, mc_str, self.balance)
         return position
@@ -439,16 +453,16 @@ class PaperTrader:
         recovery_msg = (
             f"\U0001f50d RECOVERY CHECK: ${symbol}\n"
             f"\U0001f4c9 Position at {pnl_pct:.0f}%\n"
-            f"\U0001f3b2 Recovery P: {prob_pct:.1f}%\n"
+            f"\U0001f3b2 Recovery heuristic score: {prob_pct:.1f}/100 (not calibrated)\n"
             f"\U0001f4ca Signals: {signals_str}\n"
             f"\u27a1\ufe0f Decision: {decision}\n"
             f"\U0001f4dd Reason: {reason}"
         )
-        await send_telegram_message(recovery_msg)
+        await self._notify(recovery_msg)
 
         if decision == "SELL":
             closed = await self._close_position(
-                pos, current_price, f"Recovery check: SELL (P={prob_pct:.0f}%)"
+                pos, current_price, f"Recovery heuristic: SELL (score={prob_pct:.0f}/100)"
             )
             return "CLOSED"
 
@@ -514,7 +528,7 @@ class PaperTrader:
             f"\U0001f6d1 Hard stop: -70% from original entry\n"
             f"\U0001f4b0 Balance: ${self.balance:.0f} remaining"
         )
-        await send_telegram_message(msg)
+        await self._notify(msg)
 
         logger.info("Paper DCA: $%s +$%.0f, total: $%.0f, balance: $%.2f",
                     symbol, DCA_AMOUNT, pos["amount_usd"], self.balance)
@@ -583,7 +597,7 @@ class PaperTrader:
             f"\U0001f3af Reason: Take profit (2x)\n"
             f"\U0001f4b0 Balance: ${self.balance:.0f}"
         )
-        await send_telegram_message(msg)
+        await self._notify(msg)
 
         logger.info("Paper TP: $%s +%.0f%% ($%.2f profit on half)", pos["symbol"], pnl_pct, half_pnl_usd)
         return closed_trade
@@ -652,7 +666,7 @@ class PaperTrader:
             f"\U0001f3af Reason: {reason}\n"
             f"\U0001f4b0 Balance: ${self.balance:.0f}"
         )
-        await send_telegram_message(msg)
+        await self._notify(msg)
 
         logger.info("Paper CLOSE: $%s %s%.0f%% ($%.2f), reason: %s",
                     pos["symbol"], pnl_pct_sign, pnl_pct, pnl_usd, reason)

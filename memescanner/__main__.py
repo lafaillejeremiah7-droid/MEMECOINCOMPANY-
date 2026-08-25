@@ -1,276 +1,194 @@
+"""Default all-platform Solana signal scanner.
+
+``python -m memescanner`` discovers platform-neutral Solana DEX candidates,
+normalizes/deduplicates them, and sends every source through one evidence-gated
+pipeline. It contains no wallet, signing, transaction submission, or live-trade
+path. Virtual PaperTrader behavior is disabled by default and capped at three
+positions by ``paper_trader.MAX_OPEN_POSITIONS``.
 """
-Entry point for the memescanner strict signal bot.
 
-Run with: python -m memescanner
-
-Scans every 15 seconds for graduated tokens matching strict criteria:
-- Must have Twitter/X link
-- Must be 10min-1h old
-- Must have liquidity >= $5k and buys > sells
-- Must have rug estimate <= 50%
-- Must have P(2x) >= 20%
-
-Also runs paper trading mode:
-- Buys $50 virtual on each signal
-- Checks positions every 5 minutes
-- Sends hourly portfolio updates
-- Sends daily summary at midnight ET
-
-Only sends alerts for tokens not previously alerted (tracked by mint).
-"""
+from __future__ import annotations
 
 import asyncio
 import logging
-import sys
-import time
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone
+from typing import Any, List, Optional
 
-from memescanner.celebrity_scanner import (
-    CelebrityScanner,
-    format_celebrity_alert,
-    send_celebrity_alert,
-)
-from memescanner.paper_trader import PaperTrader
-from memescanner.scanner import run_scan_cycle, send_telegram_message
+import httpx
 
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-    handlers=[logging.StreamHandler()],
+from memescanner.config import Config
+from memescanner.database import Database
+from memescanner.discovery import (
+    DexScreenerBoostsSource,
+    DexScreenerPairClient,
+    DexScreenerProfilesSource,
+    DiscoveryCoordinator,
+    GeckoTerminalNewPoolsSource,
+    PumpFunSource,
+    ResilientHttpClient,
+    SourceAdapter,
 )
+from memescanner.onchain import OnchainAnalyzer
+from memescanner.paper_trader import MAX_OPEN_POSITIONS, PaperTrader
+from memescanner.unified_scanner import CommonEvaluator, UnifiedSolanaScanner
+from memescanner.x_search import XSearchClient
+
 logger = logging.getLogger(__name__)
 
-SCAN_INTERVAL = 15  # seconds between scan cycles
-CELEBRITY_SCAN_INTERVAL = 30  # seconds between celebrity scan cycles
-POSITION_CHECK_INTERVAL = 300  # 5 minutes
-PORTFOLIO_UPDATE_INTERVAL = 3600  # 1 hour
 
-# Eastern Time offset (UTC-5, or UTC-4 during DST)
-ET_OFFSET = timedelta(hours=-5)
+def build_default_sources(config: Config, http: ResilientHttpClient) -> List[SourceAdapter]:
+    """Build the normalized all-platform default source set."""
+    sources: List[SourceAdapter] = []
+    if config.sources.dexscreener_profiles:
+        sources.append(DexScreenerProfilesSource(http))
+    if config.sources.dexscreener_latest_boosts:
+        sources.append(DexScreenerBoostsSource(http))
+    if config.sources.geckoterminal_new_pools:
+        sources.append(GeckoTerminalNewPoolsSource(http))
+    if config.sources.pump_fun:
+        sources.append(PumpFunSource(http))
+    return sources
 
 
-def _get_et_now() -> datetime:
-    """Get current time in Eastern Time (approximate, no DST handling)."""
-    return datetime.now(timezone.utc) + ET_OFFSET
+class TelegramSender:
+    """Optional signal delivery; absent credentials disable alerts clearly."""
 
+    def __init__(self, bot_token: str, chat_id: str) -> None:
+        self.bot_token = bot_token
+        self.chat_id = chat_id
 
-async def celebrity_scan_loop(
-    celebrity_scanner: CelebrityScanner,
-    alerted_mints: set,
-    paper_trader: PaperTrader,
-) -> None:
-    """
-    Celebrity scanner loop. Runs every 30 seconds (separate from main Pump.fun scan).
-
-    Scans DEXScreener token-profiles and token-boosts for celebrity/viral launches.
-    Shares alerted_mints and paper_trader with the main scanner.
-
-    Args:
-        celebrity_scanner: CelebrityScanner instance.
-        alerted_mints: Shared set of already-alerted mint addresses.
-        paper_trader: Shared PaperTrader instance.
-    """
-    while True:
-        try:
-            results = await celebrity_scanner.scan_cycle(alerted_mints)
-
-            # Print summary
-            print(
-                f"  [Celebrity] Scanned {results['new_profiles_scanned']} new profiles, "
-                f"{results['trending_scanned']} trending..."
+    async def send(self, text: str) -> bool:
+        if not self.bot_token or not self.chat_id:
+            logger.info(
+                "Telegram disabled: configure MEMESCANNER_TELEGRAM_BOT_TOKEN "
+                "and MEMESCANNER_TELEGRAM_CHAT_ID (or YAML)"
             )
-
-            if results["celebrity_detected"] and results["alert"]:
-                signal = results["alert"]
-                address = signal["address"]
-
-                # Format and send alert
-                message = format_celebrity_alert(signal)
-                success = await send_celebrity_alert(message)
-
-                if success:
-                    alerted_mints.add(address)
-                    print(
-                        f"  [Celebrity] ALERT SENT: @{signal['x_handle']} "
-                        f"({signal['verification']})"
-                    )
-
-                    # Paper trade: buy on celebrity signal
-                    token_data = {
-                        "mint": address,
-                        "symbol": signal.get("celebrity_keyword", address[:8]).upper(),
-                    }
-                    dex_data = signal.get("dex_data", {})
-                    position = await paper_trader.buy(token_data, dex_data)
-                    if position:
-                        mc = dex_data.get("market_cap", 0)
-                        print(
-                            f"  [Celebrity] Paper bought at MC ${mc:,.0f}"
-                        )
-                else:
-                    print("  [Celebrity] Failed to send alert")
-
-        except Exception as e:
-            logger.error("Celebrity scan error: %s", str(e), exc_info=True)
-            print(f"  [Celebrity] Scan error: {e}")
-
-        await asyncio.sleep(CELEBRITY_SCAN_INTERVAL)
+            return False
+        url = f"https://api.telegram.org/bot{self.bot_token}/sendMessage"
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            response = await client.post(url, json={
+                "chat_id": self.chat_id,
+                "text": text,
+                "disable_web_page_preview": True,
+            })
+        # A 4xx response is a definitive rejection and can be retried only
+        # after configuration is fixed. Transport failures and 5xx responses
+        # are allowed to propagate so the scanner retains its PENDING claim:
+        # Telegram may have accepted the message before the connection failed.
+        if 400 <= response.status_code < 500:
+            logger.warning(
+                "Telegram definitively rejected alert delivery: HTTP %d",
+                response.status_code,
+            )
+            return False
+        response.raise_for_status()
+        return bool(response.json().get("ok"))
 
 
-async def main_loop() -> None:
-    """
-    Main scanning loop. Runs every 15 seconds.
-
-    Tracks alerted mints in a set to avoid duplicate alerts.
-    Integrates paper trading with position checks and periodic updates.
-    Also launches celebrity scanner loop (every 30s) as a background task.
-    """
-    alerted_mints: set = set()
-    cycle_count = 0
-
-    # Initialize paper trader
-    paper_trader = PaperTrader(starting_balance=1000.0, trade_size=50.0)
-    await paper_trader.initialize()
-
-    # Initialize celebrity scanner
-    celebrity_scanner = CelebrityScanner()
-
-    # Timing trackers
-    last_position_check = time.time()
-    last_portfolio_update = time.time()
-    last_daily_summary_date: str = ""
-
-    print("=" * 60)
-    print("  MEMESCANNER - Strict Signal Bot + Paper Trading")
-    print("  Filters: X only | 10min-1h age | High P(2x) only")
-    print(f"  Scan interval: {SCAN_INTERVAL}s | Celebrity: {CELEBRITY_SCAN_INTERVAL}s")
-    print(f"  Paper trading: ${paper_trader.trade_size:.0f}/trade, "
-          f"${paper_trader.balance:.0f} balance")
-    print("=" * 60)
-    print()
-
-    # Launch celebrity scanner as a background task
-    celebrity_task = asyncio.create_task(
-        celebrity_scan_loop(celebrity_scanner, alerted_mints, paper_trader)
+async def _paper_buyer(
+    trader: PaperTrader, candidate: Any, market: dict[str, Any]
+) -> Any:
+    """Open a virtual-only position after an alerted common-pipeline decision."""
+    return await trader.buy(
+        {"mint": candidate.mint, "symbol": candidate.symbol or "UNKNOWN"},
+        {"market_cap": market.get("market_cap", 0)},
     )
 
+
+async def main_loop(config: Optional[Config] = None) -> None:
+    config = config or Config.from_env()
+    config.setup_logging()
+    database = Database(config.database.path)
+    await database.initialize()
+    http = ResilientHttpClient()
+    paper_trader: Optional[PaperTrader] = None
     try:
+        sender = TelegramSender(config.telegram.bot_token, config.telegram.chat_id)
+        onchain = OnchainAnalyzer(
+            rpc_url=config.evidence.helius_rpc_url,
+            max_transfer_fee_bps=config.evidence.max_transfer_fee_bps,
+            transfer_hook_allowlist=set(config.evidence.transfer_hook_allowlist),
+        )
+        evaluator = CommonEvaluator(
+            DexScreenerPairClient(http),
+            onchain,
+            XSearchClient(config.evidence.tavily_api_key),
+            min_age_minutes=config.scanner.min_candidate_age_minutes,
+            max_age_minutes=config.scanner.max_candidate_age_minutes,
+            min_liquidity_usd=config.filters.min_liquidity_usd,
+            min_buy_sell_ratio=config.filters.min_buy_sell_ratio,
+            max_dev_holding_pct=config.filters.max_dev_holding_pct,
+        )
+        paper_callback = None
+        if config.scanner.enable_paper_trading:
+            paper_trader = PaperTrader(
+                starting_balance=1000.0,
+                trade_size=50.0,
+                db_path=config.database.path,
+                message_sender=sender.send,
+            )
+            await paper_trader.initialize()
+            paper_callback = lambda candidate, market: _paper_buyer(
+                paper_trader, candidate, market  # type: ignore[arg-type]
+            )
+
+        scanner = UnifiedSolanaScanner(
+            DiscoveryCoordinator(build_default_sources(config, http)),
+            evaluator,
+            database,
+            sender.send,
+            paper_buyer=paper_callback,
+            max_market_checks=config.scanner.max_market_checks_per_cycle,
+        )
+        logger.info(
+            "Starting unified Solana signal scanner with %d sources; paper=%s "
+            "(virtual max positions=%d)",
+            len(scanner.discovery.sources),
+            "enabled" if paper_trader else "disabled",
+            MAX_OPEN_POSITIONS,
+        )
+        loop = asyncio.get_running_loop()
+        next_paper_check = loop.time() + 300.0
+        next_portfolio_update = loop.time() + 3600.0
+        paper_summary_date = datetime.now(timezone.utc).date()
         while True:
-            cycle_count += 1
-            now = time.time()
-            timestamp = datetime.now().strftime("%H:%M:%S")
-            print(f"\n{'='*60}")
-            print(f"  Cycle #{cycle_count} @ {timestamp}")
-            print(f"  Already alerted: {len(alerted_mints)} tokens")
-            print(f"  Paper positions: {len(paper_trader.positions)}/20 | "
-                  f"Balance: ${paper_trader.balance:.0f}")
-            print(f"{'='*60}")
-
             try:
-                results = await run_scan_cycle(alerted_mints)
-
-                # Print summary
-                print(f"\n  --- Cycle #{cycle_count} Summary ---")
-                print(f"  Fetched: {results['total_fetched']}")
-                print(f"  Passed Twitter/X: {results['passed_twitter_filter']}")
-                print(f"  Passed Age (10m-1h): {results['passed_age_filter']}")
-                print(f"  Passed DEX: {results['passed_dex_filter']}")
-                print(f"  Passed Rug: {results['passed_rug_filter']}")
-                print(f"  Passed P(2x)>=20%: {results['passed_p2x_filter']}")
-
-                if results["alerted"]:
-                    alert = results["alerted"]
-                    print(f"\n  >>> ALERTED: ${alert['symbol']}")
-                    print(f"      P(2x): {alert['p2x']:.0f}% | Rug: {alert['rug_pct']:.0f}%")
-                    print(f"      MC: ${alert['market_cap']:,.0f}")
-
-                    # Paper trade: buy on signal
-                    token_data = {
-                        "mint": alert["mint"],
-                        "symbol": alert["symbol"],
-                    }
-                    dex_data = {
-                        "market_cap": alert["market_cap"],
-                    }
-                    position = await paper_trader.buy(token_data, dex_data)
-                    if position:
-                        print(f"  \U0001f4dd Paper bought ${alert['symbol']} "
-                              f"at MC ${alert['market_cap']:,.0f}")
-                    else:
-                        print(f"  \u26a0\ufe0f Paper trade skipped (balance/limit)")
-                else:
-                    print(f"\n  No qualifying signals this cycle.")
-
-                # Show some filter reasons (top 5)
-                if results.get("filtered_reasons"):
-                    reasons = results["filtered_reasons"][:5]
-                    if reasons:
-                        print(f"\n  Filter reasons (sample):")
-                        for r in reasons:
-                            print(f"    {r}")
-
-            except Exception as e:
-                logger.error("Scan cycle error: %s", str(e), exc_info=True)
-                print(f"\n  [ERROR] Scan cycle failed: {e}")
-
-            # Check positions every 5 minutes
-            if now - last_position_check >= POSITION_CHECK_INTERVAL:
-                try:
-                    print("\n  [Paper] Checking open positions...")
-                    closed = await paper_trader.check_positions()
-                    if closed:
-                        print(f"  [Paper] Closed {len(closed)} positions this check")
-                    else:
-                        print(f"  [Paper] All {len(paper_trader.positions)} positions holding")
-                    last_position_check = now
-                except Exception as e:
-                    logger.error("Position check error: %s", str(e))
-                    print(f"  [Paper] Position check failed: {e}")
-
-            # Send hourly portfolio update
-            if now - last_portfolio_update >= PORTFOLIO_UPDATE_INTERVAL:
-                try:
-                    if paper_trader.positions:
-                        summary = await paper_trader.get_portfolio_summary()
-                        await send_telegram_message(summary)
-                        print(f"\n  [Paper] Sent hourly portfolio update")
-                    last_portfolio_update = now
-                except Exception as e:
-                    logger.error("Portfolio update error: %s", str(e))
-
-            # Send daily summary at midnight ET
-            et_now = _get_et_now()
-            today_str = et_now.strftime("%Y-%m-%d")
-            if et_now.hour == 0 and et_now.minute < 1 and today_str != last_daily_summary_date:
-                try:
-                    daily = await paper_trader.get_daily_summary()
-                    await send_telegram_message(daily)
-                    last_daily_summary_date = today_str
-                    print(f"\n  [Paper] Sent daily summary for {today_str}")
-                except Exception as e:
-                    logger.error("Daily summary error: %s", str(e))
-
-            # Wait for next cycle
-            print(f"\n  Waiting {SCAN_INTERVAL}s until next scan...")
-            await asyncio.sleep(SCAN_INTERVAL)
-
+                result = await scanner.run_cycle()
+                logger.info(
+                    "Cycle: discovered=%d alerted=%s source_failures=%s",
+                    result["discovered"],
+                    bool(result["alerted"]),
+                    sorted(result["source_failures"]),
+                )
+                if paper_trader is not None:
+                    now = loop.time()
+                    if now >= next_paper_check:
+                        await paper_trader.check_positions()
+                        next_paper_check = now + 300.0
+                    if now >= next_portfolio_update:
+                        await sender.send(await paper_trader.get_portfolio_summary())
+                        next_portfolio_update = now + 3600.0
+                    today = datetime.now(timezone.utc).date()
+                    if today != paper_summary_date:
+                        await sender.send(await paper_trader.get_daily_summary())
+                        paper_summary_date = today
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.exception("Unified scan cycle failed")
+            await asyncio.sleep(config.scanner.check_interval_seconds)
     finally:
-        celebrity_task.cancel()
-        try:
-            await celebrity_task
-        except asyncio.CancelledError:
-            pass
-        await paper_trader.close()
+        await http.close()
+        if paper_trader is not None:
+            await paper_trader.close()
+        await database.close()
 
 
 def main() -> None:
-    """Entry point for python -m memescanner."""
     try:
         asyncio.run(main_loop())
     except KeyboardInterrupt:
-        print("\n\nShutting down scanner...")
-        sys.exit(0)
+        pass
 
 
 if __name__ == "__main__":

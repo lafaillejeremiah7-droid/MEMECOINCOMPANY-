@@ -16,8 +16,10 @@ Rate limiting:
 """
 
 import logging
+import os
 import re
 from typing import Any, Dict, List, Optional, Set, Tuple
+from urllib.parse import urlparse
 
 import httpx
 
@@ -28,13 +30,11 @@ TOKEN_PROFILES_URL = "https://api.dexscreener.com/token-profiles/latest/v1"
 TOKEN_BOOSTS_URL = "https://api.dexscreener.com/token-boosts/top/v1"
 DEX_TOKEN_URL = "https://api.dexscreener.com/latest/dex/tokens"
 
-# Tavily config
-TAVILY_API_KEY = "REDACTED_TAVILY_API_KEY"
+# Optional credentials are resolved at runtime. Empty means disabled.
+TAVILY_API_KEY = os.getenv("MEMESCANNER_TAVILY_API_KEY", "")
 TAVILY_ENDPOINT = "https://api.tavily.com/search"
-
-# Telegram config
-TELEGRAM_BOT_TOKEN = "REDACTED_TELEGRAM_BOT_TOKEN"
-TELEGRAM_CHAT_ID = "REDACTED_TELEGRAM_CHAT_ID"
+TELEGRAM_BOT_TOKEN = os.getenv("MEMESCANNER_TELEGRAM_BOT_TOKEN", "")
+TELEGRAM_CHAT_ID = os.getenv("MEMESCANNER_TELEGRAM_CHAT_ID", "")
 
 # Celebrity keywords to detect in token name/description
 CELEBRITY_KEYWORDS = {
@@ -45,8 +45,7 @@ CELEBRITY_KEYWORDS = {
 # Known celebrity X handles (lowercase) for verification
 CELEBRITY_HANDLES = {
     "realdonaldtrump", "elonmusk", "kanyewest", "drake",
-    "joebiden", "barackobama", "zaborowsky", "jeffbezos",
-    "potus", "donaldtrump", "ye",
+    "joebiden", "barackobama", "jeffbezos", "potus", "ye",
 }
 
 # Rate limits per scan cycle
@@ -92,13 +91,32 @@ def _extract_handle_from_url(url: str) -> str:
     """
     if not url:
         return ""
-    match = re.search(r'(?:x\.com|twitter\.com)/([A-Za-z0-9_]+)', url)
-    if match:
-        handle = match.group(1).lower()
-        if handle in ("search", "home", "explore", "hashtag", "i"):
-            return ""
-        return handle
-    return ""
+    try:
+        parsed = urlparse(url)
+    except ValueError:
+        return ""
+    if parsed.scheme.lower() != "https" or (parsed.hostname or "").lower() not in {
+        "x.com", "www.x.com", "twitter.com", "www.twitter.com",
+    }:
+        return ""
+    parts = [part for part in parsed.path.split("/") if part]
+    if not parts or not re.fullmatch(r"[A-Za-z0-9_]+", parts[0]):
+        return ""
+    handle = parts[0].lower()
+    if handle in ("search", "home", "explore", "hashtag", "i"):
+        return ""
+    return handle
+
+
+def _evidence_contains_exact_mint(title: str, content: str, mint: str) -> bool:
+    """Match a mint as an exact alphanumeric token in post text, never its URL."""
+    if not mint:
+        return False
+    evidence_text = f"{title or ''} {content or ''}"
+    return re.search(
+        rf"(?<![A-Za-z0-9]){re.escape(mint)}(?![A-Za-z0-9])",
+        evidence_text,
+    ) is not None
 
 
 def _has_celebrity_keyword(name: str, description: str) -> Optional[str]:
@@ -129,16 +147,7 @@ def _is_celebrity_handle(handle: str) -> bool:
     Returns:
         True if the handle matches a known celebrity.
     """
-    if not handle:
-        return False
-    # Direct match
-    if handle in CELEBRITY_HANDLES:
-        return True
-    # Check if any celebrity keyword is in the handle
-    for keyword in CELEBRITY_KEYWORDS:
-        if keyword in handle:
-            return True
-    return False
+    return bool(handle) and handle.isascii() and handle in CELEBRITY_HANDLES
 
 
 class CelebrityScanner:
@@ -245,6 +254,11 @@ class CelebrityScanner:
             x_buzz_count = 0
             is_viral = False
             celebrity_confirmed = False
+            x_result: Dict[str, Any] = {
+                "result_count": 0,
+                "celebrity_confirmed": False,
+                "scam_warning": False,
+            }
 
             if tavily_calls_used < MAX_TAVILY_SEARCHES_PER_CYCLE:
                 search_query = celebrity_keyword or x_handle or token_name[:20]
@@ -286,26 +300,20 @@ class CelebrityScanner:
                 # No DEX data available, skip (can't verify liquidity)
                 continue
 
-            # Determine verification level
-            if celebrity_confirmed:
+            # VERIFIED requires evidence from an exact canonical account that
+            # contains this exact mint. Names, fan handles, and generic buzz are neutral.
+            if celebrity_confirmed and not x_result.get("scam_warning", False):
                 verification = "VERIFIED"
-            elif is_celeb_handle and celebrity_keyword:
-                verification = "VERIFIED"
-            elif is_celeb_handle or celebrity_keyword:
-                verification = "UNVERIFIED"
             else:
                 verification = "UNVERIFIED"
 
-            # Calculate signal strength
-            signal_score = 0
-            if celebrity_keyword:
-                signal_score += 2
-            if is_celeb_handle:
-                signal_score += 3
-            if is_viral:
-                signal_score += 3
-            if celebrity_confirmed:
-                signal_score += 5
+            # Celebrity/name/boost context is not a calibrated popularity or
+            # probability multiplier. Only exact mint-bound evidence affects
+            # this compatibility scanner's ordering, never safety gates.
+            signal_score = 1 if celebrity_confirmed else 0
+            if x_result.get("scam_warning", False):
+                verification = "UNVERIFIED"
+                signal_score = -1
 
             # Check for scam signals (fake celebrity tokens)
             is_likely_fake = False
@@ -340,9 +348,14 @@ class CelebrityScanner:
                     "is_likely_fake": is_likely_fake,
                 }
 
+        # Compatibility-only evidence collector: direct celebrity alerts are
+        # disabled because they would bypass the unified safety evaluator.
         if best_signal:
-            results["celebrity_detected"] = True
-            results["alert"] = best_signal
+            results["candidate_context"] = best_signal
+            logger.info(
+                "Celebrity context collected for %s; route through UnifiedSolanaScanner",
+                best_signal["address"],
+            )
 
         return results
 
@@ -408,7 +421,7 @@ class CelebrityScanner:
                 # Use best Solana pair by liquidity
                 solana_pairs = [p for p in pairs if p.get("chainId") == "solana"]
                 if not solana_pairs:
-                    solana_pairs = pairs
+                    return None
 
                 best_pair = max(
                     solana_pairs,
@@ -462,13 +475,20 @@ class CelebrityScanner:
             Dict with result_count, celebrity_confirmed, scam_warning.
         """
         result = {
+            "status": "X_DATA_NOT_FOUND_OR_NOT_INDEXED",
             "result_count": 0,
             "celebrity_confirmed": False,
             "scam_warning": False,
         }
 
+        if not TAVILY_API_KEY:
+            result["status"] = "X_DATA_NOT_FOUND_OR_NOT_INDEXED"
+            return result
+
         try:
-            search_query = f"{query} solana token crypto"
+            # Mint binding is mandatory: broad celebrity/token search results do
+            # not verify an association.
+            search_query = f'"{mint}" {query} site:x.com'
             payload = {
                 "api_key": TAVILY_API_KEY,
                 "query": search_query,
@@ -483,19 +503,41 @@ class CelebrityScanner:
 
             results_list = data.get("results", [])
             result["result_count"] = len(results_list)
+            result["status"] = "FOUND" if results_list else "X_DATA_NOT_FOUND_OR_NOT_INDEXED"
 
-            # Check if actual celebrity account posted about it
+            # Exact canonical handle plus exact mint in that post/evidence is
+            # required. Unicode-confusable/fan handles and unrelated results fail.
             for item in results_list:
                 url = item.get("url", "")
                 handle = _extract_handle_from_url(url)
-                if handle in CELEBRITY_HANDLES:
-                    result["celebrity_confirmed"] = True
-                    break
+                content = item.get("content", "") or ""
+                title = item.get("title", "") or ""
+                evidence_text = f"{content} {title}"
+                try:
+                    path_parts = [part for part in urlparse(url).path.split("/") if part]
+                except ValueError:
+                    path_parts = []
+                is_status_post = (
+                    len(path_parts) >= 3
+                    and path_parts[0].lower() == handle
+                    and path_parts[1].lower() == "status"
+                    and path_parts[2].isdigit()
+                )
 
-                # Check content for scam warnings
-                content = (item.get("content", "") or "").lower()
-                if any(w in content for w in ("scam", "fake", "rug", "copycat")):
+                if (
+                    handle in CELEBRITY_HANDLES
+                    and is_status_post
+                    and _evidence_contains_exact_mint(title, content, mint)
+                ):
+                    result["celebrity_confirmed"] = True
+
+                content_lower = evidence_text.lower()
+                if any(w in content_lower for w in ("scam", "fake", "rug", "copycat")):
                     result["scam_warning"] = True
+
+            # Scam evidence always prevents positive verification.
+            if result["scam_warning"]:
+                result["celebrity_confirmed"] = False
 
         except Exception as e:
             logger.warning("Tavily celebrity search failed: %s", str(e))
@@ -589,6 +631,9 @@ async def send_celebrity_alert(message: str) -> bool:
     Returns:
         True if message was sent successfully.
     """
+    if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
+        logger.info("Celebrity Telegram alert disabled: credentials not configured")
+        return False
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
     payload = {
         "chat_id": TELEGRAM_CHAT_ID,

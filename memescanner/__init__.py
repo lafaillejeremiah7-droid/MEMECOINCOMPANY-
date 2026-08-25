@@ -1,12 +1,9 @@
-"""
-Memescanner - Solana Memecoin Scanner Bot
+"""Memescanner — unified, signal-only Solana candidate screening.
 
-A signal-only memecoin scanner that monitors Pump.fun and DEXScreener for
-newly launched Solana tokens, scores them using research-backed metrics,
-and sends Telegram alerts with probability estimates.
-
-IMPORTANT: This is a SIGNAL-ONLY system. It NEVER auto-executes trades.
-It scans, scores, calculates probability, and alerts. The user decides.
+The default runtime discovers across supported Solana DEX/launch sources,
+applies evidence-gated safety checks, and can send alerts. It has no wallet,
+signing, transaction submission, or live trade execution path. Numeric screening
+ranks are uncalibrated and are not predictive probabilities.
 """
 
 __version__ = "1.0.0"

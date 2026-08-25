@@ -107,6 +107,44 @@ class Database:
                 price REAL
             );
 
+            CREATE TABLE IF NOT EXISTS discovery_cycles (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                observed_at TEXT NOT NULL,
+                source_status_json TEXT NOT NULL,
+                candidate_count INTEGER NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS candidate_observations (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                chain_id TEXT NOT NULL,
+                mint TEXT NOT NULL,
+                observed_at TEXT NOT NULL,
+                name TEXT,
+                symbol TEXT,
+                candidate_json TEXT,
+                pair_created_at REAL,
+                age_minutes REAL,
+                age_provenance TEXT,
+                sources_json TEXT NOT NULL,
+                boost_json TEXT,
+                evidence_json TEXT,
+                market_json TEXT,
+                screening_score REAL,
+                decision TEXT NOT NULL,
+                reasons_json TEXT NOT NULL,
+                alerted INTEGER NOT NULL DEFAULT 0,
+                outcome_identity TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS candidate_alert_claims (
+                chain_id TEXT NOT NULL,
+                mint TEXT NOT NULL,
+                status TEXT NOT NULL,
+                claimed_at TEXT NOT NULL,
+                completed_at TEXT,
+                PRIMARY KEY (chain_id, mint)
+            );
+
             CREATE INDEX IF NOT EXISTS idx_tokens_alerted
                 ON tokens(alerted);
             CREATE INDEX IF NOT EXISTS idx_tokens_first_seen
@@ -119,9 +157,33 @@ class Database:
                 ON token_snapshots(timestamp);
             CREATE INDEX IF NOT EXISTS idx_snapshots_mint_ts
                 ON token_snapshots(token_mint, timestamp);
+            CREATE INDEX IF NOT EXISTS idx_discovery_cycles_observed
+                ON discovery_cycles(observed_at);
+            CREATE INDEX IF NOT EXISTS idx_observations_identity
+                ON candidate_observations(chain_id, mint, observed_at);
+            CREATE INDEX IF NOT EXISTS idx_observations_decision
+                ON candidate_observations(decision, observed_at);
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_observations_single_alert
+                ON candidate_observations(chain_id, mint)
+                WHERE alerted = 1;
             """
         )
+        # Forward-compatible additive migration for databases created by an
+        # earlier task-4 build. Existing legacy tables remain untouched.
+        await self._ensure_column("candidate_observations", "market_json", "TEXT")
+        await self._ensure_column("candidate_observations", "screening_score", "REAL")
+        await self._ensure_column("candidate_observations", "candidate_json", "TEXT")
         await self._db.commit()
+
+    async def _ensure_column(self, table: str, column: str, declaration: str) -> None:
+        """Add a nullable column when upgrading an existing SQLite schema."""
+        assert self._db is not None
+        async with self._db.execute(f"PRAGMA table_info({table})") as cursor:
+            columns = {row[1] for row in await cursor.fetchall()}
+        if column not in columns:
+            await self._db.execute(
+                f"ALTER TABLE {table} ADD COLUMN {column} {declaration}"
+            )
 
     async def close(self) -> None:
         """Close the database connection."""
@@ -129,6 +191,128 @@ class Database:
             await self._db.close()
             self._db = None
             logger.info("Database connection closed")
+
+    # --- Discovery observation operations ---
+
+    async def record_discovery_cycle(
+        self, source_status: Dict[str, str], candidate_count: int
+    ) -> None:
+        """Persist source availability even when no candidate is returned."""
+        assert self._db is not None
+        await self._db.execute(
+            """INSERT INTO discovery_cycles
+               (observed_at, source_status_json, candidate_count)
+               VALUES (?, ?, ?)""",
+            (
+                datetime.utcnow().isoformat(),
+                json.dumps(source_status, sort_keys=True),
+                candidate_count,
+            ),
+        )
+        await self._db.commit()
+
+    async def record_candidate_observation(self, observation: Dict[str, Any]) -> None:
+        """Persist every discovered candidate decision, including rejects/deferred."""
+        assert self._db is not None
+        await self._db.execute(
+            """
+            INSERT INTO candidate_observations (
+                chain_id, mint, observed_at, name, symbol, candidate_json,
+                pair_created_at, age_minutes, age_provenance, sources_json, boost_json,
+                evidence_json, market_json, screening_score, decision,
+                reasons_json, alerted, outcome_identity
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                observation["chain_id"], observation["mint"],
+                observation.get("observed_at", datetime.utcnow().isoformat()),
+                observation.get("name"), observation.get("symbol"),
+                json.dumps(observation.get("candidate", {}), sort_keys=True),
+                observation.get("pair_created_at"), observation.get("age_minutes"),
+                observation.get("age_provenance"),
+                json.dumps(sorted(observation.get("sources", []))),
+                json.dumps(observation.get("boost", {}), sort_keys=True),
+                json.dumps(observation.get("evidence", {}), sort_keys=True),
+                json.dumps(observation.get("market", {}), sort_keys=True),
+                observation.get("screening_score"),
+                observation["decision"],
+                json.dumps(observation.get("reasons", [])),
+                int(bool(observation.get("alerted", False))),
+                observation.get("outcome_identity")
+                or f"{observation['chain_id']}:{observation['mint']}",
+            ),
+        )
+        await self._db.commit()
+
+    async def try_claim_candidate_alert(self, chain_id: str, mint: str) -> bool:
+        """Atomically claim an identity; pending claims require explicit resolution."""
+        assert self._db is not None
+        cursor = await self._db.execute(
+            """INSERT OR IGNORE INTO candidate_alert_claims
+               (chain_id, mint, status, claimed_at)
+               VALUES (?, ?, 'PENDING', ?)""",
+            (chain_id, mint, datetime.utcnow().isoformat()),
+        )
+        await self._db.commit()
+        return cursor.rowcount == 1
+
+    async def complete_candidate_alert(self, chain_id: str, mint: str) -> None:
+        """Mark an atomic alert claim as successfully delivered."""
+        assert self._db is not None
+        await self._db.execute(
+            """UPDATE candidate_alert_claims
+               SET status = 'SENT', completed_at = ?
+               WHERE chain_id = ? AND mint = ?""",
+            (datetime.utcnow().isoformat(), chain_id, mint),
+        )
+        await self._db.commit()
+
+    async def release_candidate_alert(self, chain_id: str, mint: str) -> None:
+        """Release a failed pending delivery so a later cycle can retry."""
+        assert self._db is not None
+        await self._db.execute(
+            """DELETE FROM candidate_alert_claims
+               WHERE chain_id = ? AND mint = ? AND status = 'PENDING'""",
+            (chain_id, mint),
+        )
+        await self._db.commit()
+
+    async def has_alerted_candidate(self, chain_id: str, mint: str) -> bool:
+        """Return whether this identity already produced a successful alert."""
+        assert self._db is not None
+        async with self._db.execute(
+            """SELECT 1 FROM candidate_alert_claims
+               WHERE chain_id = ? AND mint = ? AND status = 'SENT' LIMIT 1""",
+            (chain_id, mint),
+        ) as cursor:
+            if await cursor.fetchone() is not None:
+                return True
+        async with self._db.execute(
+            """SELECT 1 FROM candidate_observations
+               WHERE chain_id = ? AND mint = ? AND alerted = 1 LIMIT 1""",
+            (chain_id, mint),
+        ) as cursor:
+            return await cursor.fetchone() is not None
+
+    async def get_candidate_observations(
+        self, chain_id: Optional[str] = None, mint: Optional[str] = None
+    ) -> List[Dict[str, Any]]:
+        """Read cohort-ready observations, optionally filtered by identity."""
+        assert self._db is not None
+        query = "SELECT * FROM candidate_observations"
+        params: List[Any] = []
+        clauses = []
+        if chain_id is not None:
+            clauses.append("chain_id = ?")
+            params.append(chain_id)
+        if mint is not None:
+            clauses.append("mint = ?")
+            params.append(mint)
+        if clauses:
+            query += " WHERE " + " AND ".join(clauses)
+        query += " ORDER BY observed_at"
+        async with self._db.execute(query, tuple(params)) as cursor:
+            return [dict(row) for row in await cursor.fetchall()]
 
     # --- Token Operations ---
 

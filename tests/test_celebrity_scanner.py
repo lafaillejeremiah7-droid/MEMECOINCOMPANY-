@@ -132,10 +132,11 @@ class TestIsCelebrityHandle:
         assert _is_celebrity_handle("realdonaldtrump") is True
         assert _is_celebrity_handle("elonmusk") is True
 
-    def test_recognizes_keyword_in_handle(self):
-        """Should recognize celebrity keyword embedded in handle."""
-        assert _is_celebrity_handle("trump2024official") is True
-        assert _is_celebrity_handle("elonmuskfan") is True
+    def test_rejects_keyword_in_fake_handles(self):
+        """Fan/copycat handle substrings are not canonical accounts."""
+        assert _is_celebrity_handle("trump2024official") is False
+        assert _is_celebrity_handle("elonmuskfan") is False
+        assert _is_celebrity_handle("trumpcoinofficial") is False
 
     def test_rejects_random_handle(self):
         """Should reject unrelated handles."""
@@ -294,11 +295,11 @@ class TestCelebrityScanner:
                     with patch.object(scanner, '_search_x_buzz', return_value=x_result):
                         results = await scanner.scan_cycle(set())
 
-        assert results["celebrity_detected"] is True
-        assert results["alert"] is not None
-        assert results["alert"]["address"] == "TrumpToken123"
-        assert results["alert"]["verification"] == "VERIFIED"
-        assert results["alert"]["is_viral"] is True
+        # The compatibility collector cannot alert outside the common pipeline.
+        assert results["celebrity_detected"] is False
+        assert results["alert"] is None
+        assert results["candidate_context"]["address"] == "TrumpToken123"
+        assert results["candidate_context"]["verification"] == "VERIFIED"
 
     @pytest.mark.asyncio
     async def test_scan_cycle_rejects_low_liquidity(self):
@@ -603,10 +604,9 @@ class TestCelebrityScanner:
                     with patch.object(scanner, '_search_x_buzz', return_value=x_result):
                         results = await scanner.scan_cycle(set())
 
-        # Should alert (celebrity keyword in handle + buzz)
-        assert results["celebrity_detected"] is True
-        assert results["alert"]["verification"] == "VERIFIED"
-        assert results["alert"]["is_viral"] is True
+        # Generic buzz and a fake handle never produce a positive signal.
+        assert results["celebrity_detected"] is False
+        assert results["alert"] is None
 
 
 # --- Alert formatting tests ---

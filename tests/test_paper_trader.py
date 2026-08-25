@@ -285,7 +285,7 @@ class TestPaperTraderCheckPositions:
             closed = await pt.check_positions()
 
         assert len(closed) == 1
-        assert "Recovery check: SELL" in closed[0]["reason"]
+        assert "Recovery heuristic: SELL" in closed[0]["reason"]
         assert closed[0]["pnl_pct"] == pytest.approx(-50.0, abs=0.1)
         assert closed[0]["pnl_usd"] == pytest.approx(-25.0, abs=0.1)
         assert len(pt.positions) == 0
@@ -573,7 +573,7 @@ class TestPaperTraderPersistence:
         await pt2.initialize()
         assert len(pt2.closed_trades) == 1
         assert pt2.closed_trades[0]["mint"] == "close_mint"
-        assert "Recovery check: SELL" in pt2.closed_trades[0]["reason"]
+        assert "Recovery heuristic: SELL" in pt2.closed_trades[0]["reason"]
         await pt2.close()
 
 
@@ -926,7 +926,8 @@ class TestPaperTraderRecoveryChecker:
         recovery_msg = telegram_calls[0][0][0]
         assert "RECOVERY CHECK" in recovery_msg
         assert "$MSG" in recovery_msg
-        assert "30.0%" in recovery_msg
+        assert "30.0/100" in recovery_msg
+        assert "not calibrated" in recovery_msg
         assert "HOLD" in recovery_msg
 
         await pt.close()
@@ -959,7 +960,7 @@ class TestPaperTraderRecoveryChecker:
             closed = await pt.check_positions()
 
         assert len(closed) == 1
-        assert "Recovery check: SELL" in closed[0]["reason"]
+        assert "Recovery heuristic: SELL" in closed[0]["reason"]
         assert len(pt.positions) == 0
 
         await pt.close()

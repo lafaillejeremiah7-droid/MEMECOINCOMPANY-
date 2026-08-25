@@ -1,8 +1,8 @@
 """
 Scoring engine for the Memescanner bot.
 
-Scores tokens from 0-100 based on research-backed metrics with weights
-derived from actual data showing multipliers between winning and losing tokens.
+Produces a heuristic 0-100 compatibility score. Historical predictive
+calibration is unavailable; the score is not a probability or measured edge.
 
 Weights (derived from research multipliers):
     - Buy/Sell Ratio: 25% (4.9x multiplier)
@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 
 class ScoringEngine:
     """
-    Research-backed token scoring engine.
+    Legacy heuristic token scoring engine.
 
     Calculates a composite score from 0-100 based on multiple factors,
     each with thresholds derived from actual data comparing winning and
@@ -44,7 +44,7 @@ class ScoringEngine:
         Initialize the scoring engine.
 
         Args:
-            weights: Custom scoring weights. Uses research-backed defaults if None.
+            weights: Custom heuristic weights. Uses compatibility defaults if None.
             narrative_engine: NarrativeEngine instance. Creates default if None.
         """
         self.weights = weights or {

@@ -250,16 +250,16 @@ class TelegramBot:
             f"\U0001f3af Narrative: {narrative_desc}",
             f"\U0001f4ca Momentum: {momentum_pct:.0f}% of ATH",
             "",
-            "\U0001f3b2 Probability Estimates:",
-            f"\u2192 100k MC (from here): {probs.get('100k', 0):.1f}%",
-            f"\u2192 300k MC: {probs.get('300k', 0):.1f}%",
-            f"\u2192 1M MC: {probs.get('1M', 0):.1f}%",
+            "\U0001f3b2 Uncalibrated target ranks (not probabilities):",
+            f"\u2192 100k MC rank: {probs.get('100k', 0):.1f}/100",
+            f"\u2192 300k MC rank: {probs.get('300k', 0):.1f}/100",
+            f"\u2192 1M MC rank: {probs.get('1M', 0):.1f}/100",
         ]
 
         ev_emoji = "\u2705" if ev_positive else "\u274c"
         lines.append(
-            f"\u2192 EV per $100 risked: {'+' if ev_positive else ''}"
-            f"${ev_per_100:.2f} {ev_emoji}"
+            f"\u2192 Legacy payoff arithmetic (not expected value): "
+            f"{'+' if ev_positive else ''}${ev_per_100:.2f} {ev_emoji}"
         )
 
         lines.append("")
@@ -293,11 +293,11 @@ class TelegramBot:
                 accel_desc = "FLAT"
             lines.append(f"\u26a1 Acceleration: {accel_desc}")
 
-            # Relative probability targets
+            # Relative uncalibrated target ranks
             p_2x = relative_targets.get("2x", 0)
             p_5x = relative_targets.get("5x", 0)
-            lines.append(f"\U0001f3af P(2\u00d7 from here): {p_2x:.0f}%")
-            lines.append(f"\U0001f3af P(5\u00d7 from here): {p_5x:.0f}%")
+            lines.append(f"\U0001f3af 2x target rank: {p_2x:.0f}/100 (uncalibrated)")
+            lines.append(f"\U0001f3af 5x target rank: {p_5x:.0f}/100 (uncalibrated)")
 
             # Time since graduation
             lines.append(f"\u23f1 Time since graduation: {time_grad:.0f} min")

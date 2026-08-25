@@ -1,5 +1,6 @@
 """
-Strict signal scanner for the Memescanner bot.
+Legacy compatibility scanner. Its numeric target ranks are uncalibrated
+heuristics, not probabilities. The package default uses unified_scanner.py.
 
 Implements the focused scanning pipeline:
 1. Fetch recently graduated tokens from Pump.fun (sort by last_trade_timestamp)
@@ -40,6 +41,7 @@ Rug estimation:
 
 import asyncio
 import logging
+import os
 import time
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -55,15 +57,15 @@ logger = logging.getLogger(__name__)
 PUMP_FUN_URL = "https://frontend-api-v3.pump.fun"
 DEXSCREENER_URL = "https://api.dexscreener.com"
 
-# Telegram config
-TELEGRAM_BOT_TOKEN = "REDACTED_TELEGRAM_BOT_TOKEN"
-TELEGRAM_CHAT_ID = "REDACTED_TELEGRAM_CHAT_ID"
+# Optional alert credentials; the unified default runtime also supports YAML.
+TELEGRAM_BOT_TOKEN = os.getenv("MEMESCANNER_TELEGRAM_BOT_TOKEN", "")
+TELEGRAM_CHAT_ID = os.getenv("MEMESCANNER_TELEGRAM_CHAT_ID", "")
 
 
 def calculate_p2x(market_cap: float, buy_sell_ratio: float, turnover: float,
                   age_minutes: float, momentum_1h: float, twitter: str) -> float:
     """
-    Calculate P(2x) probability using the research-backed rubric.
+    Calculate a legacy uncalibrated 2x ranking heuristic.
 
     Args:
         market_cap: Current market cap in USD.
@@ -300,12 +302,12 @@ def format_onchain_line(onchain_data: Optional[Dict[str, Any]]) -> Optional[str]
     if onchain_data is None:
         return None
 
-    dev_pct = onchain_data.get("dev_holding_pct", 0.0)
+    dev_pct = onchain_data.get("dev_holding_pct")
     mint_revoked = onchain_data.get("mint_authority_revoked")
     freeze_revoked = onchain_data.get("freeze_authority_revoked")
 
     # Dev holding
-    dev_str = f"Dev: {dev_pct:.1f}%"
+    dev_str = f"Dev: {dev_pct:.1f}%" if dev_pct is not None else "Dev: ❓ unknown"
 
     # Mint authority
     if mint_revoked is True:
@@ -401,9 +403,9 @@ def format_telegram_message(token: Dict[str, Any], dex_data: Dict[str, Any],
         f"\u23f1 Age: {age_str}",
         f"\U0001f4b0 MC: {mc_str}",
         "",
-        f"\U0001f3b2 P(2\u00d7): {p2x * 100:.0f}%",
-        f"\U0001f3b2 P(5\u00d7): {p5x * 100:.0f}%",
-        f"\U0001f3b2 P(10\u00d7): {p10x * 100:.0f}%",
+        f"\U0001f3b2 Legacy 2x rank: {p2x * 100:.0f}/100 (uncalibrated)",
+        f"\U0001f3b2 Legacy 5x rank: {p5x * 100:.0f}/100 (uncalibrated)",
+        f"\U0001f3b2 Legacy 10x rank: {p10x * 100:.0f}/100 (uncalibrated)",
         "",
         f"\u26a0\ufe0f Rug: {rug_pct:.0f}%",
     ]
@@ -510,7 +512,7 @@ async def fetch_dex_data(mint: str) -> Optional[Dict[str, Any]]:
             # Use best Solana pair by liquidity
             solana_pairs = [p for p in pairs if p.get("chainId") == "solana"]
             if not solana_pairs:
-                solana_pairs = pairs
+                return None
 
             best_pair = max(
                 solana_pairs,
@@ -560,6 +562,9 @@ async def send_telegram_message(text: str) -> bool:
     Returns:
         True if message was sent successfully.
     """
+    if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
+        logger.info("Telegram alerts disabled: credentials not configured")
+        return False
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
     payload = {
         "chat_id": TELEGRAM_CHAT_ID,

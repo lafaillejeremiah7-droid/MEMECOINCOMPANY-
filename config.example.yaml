@@ -1,17 +1,45 @@
+# Secrets may be left empty here and supplied through environment variables.
 telegram:
-  bot_token: "YOUR_BOT_TOKEN"
-  chat_id: "YOUR_CHAT_ID"
+  bot_token: ""  # MEMESCANNER_TELEGRAM_BOT_TOKEN
+  chat_id: ""    # MEMESCANNER_TELEGRAM_CHAT_ID
 
 scanner:
-  check_interval_seconds: 10
-  min_score: 60
-  max_token_age_hours: 6
+  check_interval_seconds: 15
+  min_candidate_age_minutes: 10
+  max_candidate_age_minutes: 60
+  # Bounds DEX pair calls so the 15-second loop remains below public API limits.
+  # Unchecked candidates are persisted as deferred and rotate into later cycles.
+  max_market_checks_per_cycle: 40
+  # Virtual accounting only; no wallet/signing/submission exists. Default off.
+  enable_paper_trading: false  # MEMESCANNER_ENABLE_PAPER_TRADING
+
+# All enabled adapters discover Solana candidates independently. Pump.fun is
+# additive; DEX discovery is launchpad-neutral, not a promise of every token.
+sources:
+  dexscreener_profiles: true
+  dexscreener_latest_boosts: true
+  geckoterminal_new_pools: true
+  pump_fun: true
+
+evidence:
+  tavily_api_key: ""  # MEMESCANNER_TAVILY_API_KEY
+  # Prefer a complete endpoint via MEMESCANNER_HELIUS_RPC_URL. Alternatively,
+  # MEMESCANNER_HELIUS_API_KEY builds the standard Helius endpoint at runtime.
+  helius_rpc_url: ""
+  # Token-2022 transfer fees above 100 basis points (1%) are rejected.
+  # Mutable or unknown fee configuration is also rejected.
+  max_transfer_fee_bps: 100
+  # Optional exact Token-2022 transfer-hook program IDs. Empty is fail-closed;
+  # allowlisted hooks still require an explicitly revoked mutation authority.
+  transfer_hook_allowlist: []  # MEMESCANNER_TRANSFER_HOOK_ALLOWLIST=id1,id2
 
 filters:
   min_liquidity_usd: 5000
   min_buy_sell_ratio: 1.0
-  max_dev_holding_pct: 50
+  max_dev_holding_pct: 30
 
+# Retained for compatibility with `python -m memescanner.main`; these legacy
+# weights are heuristic and are not calibrated predictive probabilities.
 scoring:
   weights:
     buy_sell_ratio: 0.25

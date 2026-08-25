@@ -1,9 +1,9 @@
 """
 Serial Deployer Tracker module for the Memescanner bot.
 
-Tracks how many tokens each Twitter/X account has deployed. Accounts that
-repeatedly launch tokens (serial deployers) have a significantly lower
-hit rate: only 22% vs 73% for one-off deployers (-50pp edge from backtest).
+Tracks repeated X accounts as one risk context. Historical predictive
+calibration is unavailable; account frequency is not a measured probability
+edge and the unified default pipeline does not use it as a positive bypass.
 
 Uses aiosqlite for async SQLite persistence. Pre-seeded with known serial
 deployers identified during backtest research.
@@ -26,7 +26,7 @@ import aiosqlite
 
 logger = logging.getLogger(__name__)
 
-# Known serial deployers from backtest research (22% hit rate vs 73% one-off)
+# Legacy compatibility denylist; no calibrated hit-rate claim is available.
 KNOWN_SERIAL_DEPLOYERS = [
     "narrafinder",
     "thetrencherya",
@@ -42,10 +42,8 @@ class DeployerTracker:
     """
     Tracks token deployments per Twitter/X account.
 
-    Serial deployers (accounts that repeatedly launch tokens) have a
-    significantly lower hit rate (22% vs 73% for one-off deployers).
-    This module identifies them early to save API calls and avoid
-    low-probability signals.
+    Repeated deployment is retained as legacy risk context only. It is not a
+    calibrated probability and is not a positive signal or bypass.
 
     Usage:
         tracker = DeployerTracker("memescanner.db")

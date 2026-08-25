@@ -16,11 +16,14 @@ from memescanner.onchain import (
 class TestOnchainAnalyzerConstants:
     """Test module constants."""
 
-    def test_helius_api_key_set(self):
-        assert HELIUS_API_KEY == "169e7741-629e-49bf-ba50-84fa0437bfb2"
+    def test_helius_credentials_are_not_hardcoded(self):
+        assert HELIUS_API_KEY == ""
+        assert HELIUS_RPC == ""
 
-    def test_helius_rpc_url(self):
-        assert HELIUS_RPC == f"https://mainnet.helius-rpc.com/?api-key={HELIUS_API_KEY}"
+    def test_environment_rpc_is_injected(self, monkeypatch):
+        monkeypatch.setenv("MEMESCANNER_HELIUS_RPC_URL", "https://rpc.example.invalid")
+        analyzer = OnchainAnalyzer()
+        assert analyzer.rpc_url == "https://rpc.example.invalid"
 
     def test_max_checks_per_cycle(self):
         assert MAX_ONCHAIN_CHECKS_PER_CYCLE == 5
@@ -36,7 +39,7 @@ class TestSafeScoreCalculation:
     """Test safe score calculation logic."""
 
     def setup_method(self):
-        self.analyzer = OnchainAnalyzer()
+        self.analyzer = OnchainAnalyzer(rpc_url="https://rpc.invalid")
 
     def test_base_score_is_50(self):
         """Score starts at 50 with no modifiers."""
@@ -262,7 +265,7 @@ class TestCheckToken:
     """Test the check_token method with mocked RPC calls."""
 
     def setup_method(self):
-        self.analyzer = OnchainAnalyzer()
+        self.analyzer = OnchainAnalyzer(rpc_url="https://rpc.invalid")
 
     @pytest.mark.asyncio
     async def test_check_token_returns_expected_keys(self):
@@ -366,9 +369,10 @@ class TestCheckToken:
             # Should still have mint/freeze info
             assert result["mint_authority_revoked"] is True
             assert result["freeze_authority_revoked"] is False
-            # Dev holding defaults to 0 since we couldn't check
-            assert result["dev_holding_pct"] == 0.0
-            assert result["top10_concentration_pct"] == 0.0
+            # Holder evidence is unknown rather than a false zero/safety bonus.
+            assert result["dev_holding_pct"] is None
+            assert result["top10_concentration_pct"] is None
+            assert result["evidence_status"] == "UNVERIFIED"
 
     @pytest.mark.asyncio
     async def test_check_token_with_decimals(self):
@@ -417,15 +421,15 @@ class TestCheckToken:
 
             result = await self.analyzer.check_token("mint123", "")
 
-            # No creator match possible, dev holding should be 0
-            assert result["dev_holding_pct"] == 0.0
+            # Creator-specific holding evidence is unavailable, not false zero.
+            assert result["dev_holding_pct"] is None
 
 
 class TestRPCCall:
     """Test the _rpc_call method."""
 
     def setup_method(self):
-        self.analyzer = OnchainAnalyzer()
+        self.analyzer = OnchainAnalyzer(rpc_url="https://rpc.invalid")
 
     @pytest.mark.asyncio
     async def test_rpc_call_success(self):
@@ -477,7 +481,7 @@ class TestGetMintInfo:
     """Test _get_mint_info method."""
 
     def setup_method(self):
-        self.analyzer = OnchainAnalyzer()
+        self.analyzer = OnchainAnalyzer(rpc_url="https://rpc.invalid")
 
     @pytest.mark.asyncio
     async def test_mint_info_both_revoked(self):
