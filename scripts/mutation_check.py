@@ -110,6 +110,44 @@ MUTATIONS: List[Mutation] = [
         ),
     ),
     Mutation(
+        name="concentration-gate-disabled",
+        path="memescanner/unified_scanner.py",
+        old="        if concentration is not None and concentration > self.max_top10_concentration_pct:",
+        new="        if False and concentration is not None:",
+        tests="tests/test_gate_rejections.py",
+        defect=(
+            "A safety gate that silently stops rejecting. Nothing raises and no "
+            "log appears; the candidates it should have caught are simply judged "
+            "by the next rule down."
+        ),
+    ),
+    Mutation(
+        name="age-revalidation-removed",
+        path="memescanner/unified_scanner.py",
+        old='                if current_age is None or current_age > self.evaluator.max_age_minutes:',
+        new="                if False:",
+        tests="tests/test_gate_rejections.py",
+        defect=(
+            "Dropping the age re-check before delivery, which widens the age "
+            "window by however long a cycle happens to take."
+        ),
+    ),
+    Mutation(
+        name="uncertain-delivery-releases-claim",
+        path="memescanner/unified_scanner.py",
+        old='                winner.decision = "ALERT_DELIVERY_UNCERTAIN"',
+        new='                winner.decision = "ALERT_DELIVERY_UNCERTAIN"\n'
+            "                await self.database.release_candidate_alert(\n"
+            "                    *winner.candidate.identity\n"
+            "                )",
+        tests="tests/test_gate_rejections.py",
+        defect=(
+            "Releasing the claim after an uncertain delivery. The message may "
+            "already have reached the operator, so retrying risks a duplicate "
+            "alert on a signal they act on with real money."
+        ),
+    ),
+    Mutation(
         name="baseline-outcome-unguarded",
         path="memescanner/database.py",
         old="                if baseline is not None and float(baseline[\"price_usd\"]) > 0:",
