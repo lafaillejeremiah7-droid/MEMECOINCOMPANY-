@@ -68,24 +68,6 @@ filters:
   # uncalibrated in this pipeline until the prospective cohort can test it.
   reference_avg_trade_size_usd: 50
 
-# Retained for compatibility with `python -m memescanner.main`; these legacy
-# weights are heuristic and are not calibrated predictive probabilities.
-scoring:
-  weights:
-    buy_sell_ratio: 0.25
-    liquidity: 0.25
-    volume_turnover: 0.20
-    engagement_velocity: 0.15
-    narrative: 0.10
-    momentum: 0.05
-
-adaptation:
-  # Legacy compatibility only. The unified runtime never auto-reweights signals.
-  track_outcomes: true
-  outcome_check_intervals_hours: [1, 6, 24]
-  min_samples_for_reweight: 50
-  reweight_day: "sunday"
-
 # Prospective research collection is observation-only and enabled by default.
 # It never changes signals, paper positions, real risk, or execution behavior.
 calibration:

@@ -4,7 +4,6 @@ import pytest
 from unittest.mock import AsyncMock, patch, MagicMock
 
 from memescanner.onchain import OnchainAnalyzer
-from memescanner.scanner import format_holder_line, format_telegram_message
 
 
 class TestAnalyzeHolderRiskCalculations:
@@ -298,150 +297,6 @@ class TestAnalyzeHolderRiskCalculations:
             assert len(result["holder_details"]) == 10
 
 
-class TestFormatHolderLine:
-    """Test format_holder_line function."""
-
-    def test_with_whale_data(self):
-        """Format holder line with whale data."""
-        holder_risk = {
-            "whale_count": 3,
-            "top_holder_usd": 25000.0,
-            "top10_pct_of_mc": 35.0,
-        }
-        line = format_holder_line(holder_risk)
-        assert "\U0001f40b" in line  # whale emoji
-        assert "Whales: 3" in line
-        assert "$25k largest" in line
-        assert "Top10: 35% of MC" in line
-
-    def test_with_small_holder(self):
-        """Format holder line when largest is < $1k."""
-        holder_risk = {
-            "whale_count": 0,
-            "top_holder_usd": 500.0,
-            "top10_pct_of_mc": 8.0,
-        }
-        line = format_holder_line(holder_risk)
-        assert "Whales: 0" in line
-        assert "$500 largest" in line
-        assert "Top10: 8% of MC" in line
-
-    def test_none_data(self):
-        """Returns None when no holder data."""
-        line = format_holder_line(None)
-        assert line is None
-
-
-class TestScannerHolderIntegration:
-    """Test holder risk integration in scanner format_telegram_message."""
-
-    def test_telegram_message_includes_holder_line(self):
-        """Telegram message includes whale/holder line."""
-        token = {"symbol": "TEST", "name": "TestCoin", "mint": "abc123",
-                 "twitter": "https://x.com/test"}
-        dex_data = {"market_cap": 100000}
-        holder_risk = {
-            "whale_count": 2,
-            "top_holder_usd": 18000.0,
-            "top10_pct_of_mc": 28.0,
-        }
-
-        message = format_telegram_message(
-            token, dex_data, 0.25, 0.08, 0.03, 30.0, 20.0,
-            holder_risk=holder_risk,
-        )
-
-        assert "Whales: 2" in message
-        assert "$18k largest" in message
-        assert "Top10: 28% of MC" in message
-
-    def test_telegram_message_without_holder_data(self):
-        """Telegram message works without holder data."""
-        token = {"symbol": "TEST", "name": "TestCoin", "mint": "abc123",
-                 "twitter": "https://x.com/test"}
-        dex_data = {"market_cap": 100000}
-
-        message = format_telegram_message(
-            token, dex_data, 0.25, 0.08, 0.03, 30.0, 20.0,
-            holder_risk=None,
-        )
-
-        assert "Whales:" not in message
-
-    def test_holder_line_after_onchain_line(self):
-        """Holder line appears after on-chain line in Telegram message."""
-        token = {"symbol": "TEST", "name": "TestCoin", "mint": "abc123",
-                 "twitter": "https://x.com/test"}
-        dex_data = {"market_cap": 100000}
-        onchain_data = {
-            "dev_holding_pct": 3.0,
-            "mint_authority_revoked": True,
-            "freeze_authority_revoked": True,
-        }
-        holder_risk = {
-            "whale_count": 2,
-            "top_holder_usd": 15000.0,
-            "top10_pct_of_mc": 22.0,
-        }
-
-        message = format_telegram_message(
-            token, dex_data, 0.25, 0.08, 0.03, 30.0, 20.0,
-            onchain_data=onchain_data, holder_risk=holder_risk,
-        )
-
-        lines = message.split("\n")
-        onchain_idx = None
-        holder_idx = None
-        for i, line in enumerate(lines):
-            if "Dev:" in line and "Mint:" in line:
-                onchain_idx = i
-            if "Whales:" in line:
-                holder_idx = i
-
-        assert onchain_idx is not None
-        assert holder_idx is not None
-        assert holder_idx > onchain_idx
-
-
-class TestScannerP2xHolderRiskMultiplier:
-    """Test P(2x) multiplier based on holder risk."""
-
-    def test_high_concentration_halves_p2x(self):
-        """HIGH concentration_risk multiplies P(2x) by 0.5."""
-        from memescanner.scanner import calculate_p2x
-
-        base_p2x = calculate_p2x(50000, 3.0, 0.5, 20, 30.0, "")
-
-        # Simulate HIGH concentration risk
-        adjusted_p2x = base_p2x * 0.5
-        adjusted_p2x = max(0.01, min(0.45, adjusted_p2x))
-
-        assert adjusted_p2x < base_p2x
-        assert abs(adjusted_p2x - base_p2x * 0.5) < 0.001
-
-    def test_low_risk_distributed_whales_boosts_p2x(self):
-        """LOW risk + whale_count >= 2 multiplies P(2x) by 1.3."""
-        from memescanner.scanner import calculate_p2x
-
-        base_p2x = calculate_p2x(50000, 3.0, 0.5, 20, 30.0, "")
-
-        # Simulate LOW concentration + distributed whales
-        adjusted_p2x = base_p2x * 1.3
-        adjusted_p2x = max(0.01, min(0.45, adjusted_p2x))
-
-        assert adjusted_p2x > base_p2x or adjusted_p2x == 0.45  # Capped
-
-    def test_top_holder_above_30pct_rejects(self):
-        """Token with top_holder_pct_of_mc > 30% should be rejected."""
-        holder_risk = {
-            "top_holder_pct_of_mc": 35.0,
-            "concentration_risk": "HIGH",
-            "whale_count": 1,
-        }
-        # This is tested in the pipeline; verify the logic check
-        assert holder_risk["top_holder_pct_of_mc"] > 30
-
-
 class TestRecoveryCheckerWhaleMultiplier:
     """Test whale multiplier in recovery probability."""
 
@@ -606,14 +461,3 @@ class TestRecoveryCheckerWhaleMultiplier:
         # Verify it's higher than it would be without whale boost
         # (base prob for these signals * 1.5 should give DCA range)
         assert result["recovery_probability"] > 0.20
-
-
-class TestRateLimiting:
-    """Test max 5 holder analyses per scan cycle."""
-
-    def test_max_holder_analyses_constant(self):
-        """MAX_HOLDER_ANALYSES_PER_CYCLE is defined as 5 in scanner logic."""
-        # This is an inline constant in run_scan_cycle
-        # Verified by the pipeline code: holder_analyses_done < MAX_HOLDER_ANALYSES_PER_CYCLE
-        # where MAX_HOLDER_ANALYSES_PER_CYCLE = 5
-        assert True  # Structural test - constant is set in code
