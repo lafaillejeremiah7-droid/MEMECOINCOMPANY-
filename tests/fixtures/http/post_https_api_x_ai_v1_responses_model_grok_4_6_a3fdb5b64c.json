@@ -1,0 +1,212 @@
+{
+  "headers": {
+    "content-type": "application/json"
+  },
+  "json": {
+    "background": false,
+    "completed_at": 1787731902,
+    "created_at": 1787731902,
+    "error": null,
+    "frequency_penalty": 0.0,
+    "id": "a226d308-ddc8-9af0-8b92-7374f776d52c",
+    "incomplete_details": null,
+    "instructions": null,
+    "max_output_tokens": null,
+    "max_tool_calls": null,
+    "metadata": {
+      "system_fingerprint": "fp_a7b4933f4a93564d"
+    },
+    "model": "grok-4.6",
+    "object": "response",
+    "output": [
+      {
+        "id": "rs_a226d308-ddc8-9af0-8b92-7374f776d52c",
+        "status": "completed",
+        "summary": [
+          {
+            "text": "The user wants me to search X for posts from the last 24 hours mentioning the Solana token BONK (Bonk) or its mint address DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263.\nNONE  The search returned no posts in the last 24 hours that mention BONK, Bonk, or the mint address DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263.",
+            "type": "summary_text"
+          }
+        ],
+        "type": "reasoning"
+      },
+      {
+        "call_id": "xs_call-c7f4feca-ae20-41d1-bd26-c1639c058f95-0",
+        "id": "ctc_a226d308-ddc8-9af0-8b92-7374f776d52c_call-c7f4feca-ae20-41d1-bd26-c1639c058f95-0",
+        "input": "{\"query\":\"DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263 within_time:24h\",\"limit\":\"10\",\"mode\":\"Latest\"}",
+        "name": "x_keyword_search",
+        "status": "completed",
+        "type": "custom_tool_call"
+      },
+      {
+        "call_id": "xs_call-c7f4feca-ae20-41d1-bd26-c1639c058f95-1",
+        "id": "ctc_a226d308-ddc8-9af0-8b92-7374f776d52c_call-c7f4feca-ae20-41d1-bd26-c1639c058f95-1",
+        "input": "{\"query\":\"($BONK OR BONK OR Bonk) (solana OR token OR meme OR coin) within_time:24h\",\"limit\":\"10\",\"mode\":\"Latest\"}",
+        "name": "x_keyword_search",
+        "status": "completed",
+        "type": "custom_tool_call"
+      },
+      {
+        "id": "tco_a226d308-ddc8-9af0-8b92-7374f776d52c_call-c7f4feca-ae20-41d1-bd26-c1639c058f95-0",
+        "status": "completed",
+        "summary": [],
+        "type": "reasoning"
+      },
+      {
+        "id": "tco_a226d308-ddc8-9af0-8b92-7374f776d52c_call-c7f4feca-ae20-41d1-bd26-c1639c058f95-1",
+        "status": "completed",
+        "summary": [],
+        "type": "reasoning"
+      },
+      {
+        "content": [
+          {
+            "annotations": [
+              {
+                "end_index": 0,
+                "start_index": 0,
+                "title": "https://x.com/i/status/2092508428640141781",
+                "type": "url_citation",
+                "url": "https://x.com/i/status/2092508428640141781"
+              },
+              {
+                "end_index": 0,
+                "start_index": 0,
+                "title": "https://x.com/i/status/2092524301648007236",
+                "type": "url_citation",
+                "url": "https://x.com/i/status/2092524301648007236"
+              },
+              {
+                "end_index": 0,
+                "start_index": 0,
+                "title": "https://x.com/i/status/2092524543122485454",
+                "type": "url_citation",
+                "url": "https://x.com/i/status/2092524543122485454"
+              },
+              {
+                "end_index": 0,
+                "start_index": 0,
+                "title": "https://x.com/i/status/2092506924290023539",
+                "type": "url_citation",
+                "url": "https://x.com/i/status/2092506924290023539"
+              },
+              {
+                "end_index": 0,
+                "start_index": 0,
+                "title": "https://x.com/i/status/2092325429155684540",
+                "type": "url_citation",
+                "url": "https://x.com/i/status/2092325429155684540"
+              },
+              {
+                "end_index": 0,
+                "start_index": 0,
+                "title": "https://x.com/i/status/2092283343895171154",
+                "type": "url_citation",
+                "url": "https://x.com/i/status/2092283343895171154"
+              },
+              {
+                "end_index": 0,
+                "start_index": 0,
+                "title": "https://x.com/i/status/2092525138474410268",
+                "type": "url_citation",
+                "url": "https://x.com/i/status/2092525138474410268"
+              },
+              {
+                "end_index": 0,
+                "start_index": 0,
+                "title": "https://x.com/i/status/2092520805854744948",
+                "type": "url_citation",
+                "url": "https://x.com/i/status/2092520805854744948"
+              },
+              {
+                "end_index": 0,
+                "start_index": 0,
+                "title": "https://x.com/i/status/2092518933551329593",
+                "type": "url_citation",
+                "url": "https://x.com/i/status/2092518933551329593"
+              },
+              {
+                "end_index": 0,
+                "start_index": 0,
+                "title": "https://x.com/i/status/2092524909989613695",
+                "type": "url_citation",
+                "url": "https://x.com/i/status/2092524909989613695"
+              },
+              {
+                "end_index": 0,
+                "start_index": 0,
+                "title": "https://x.com/i/status/2092514800219906344",
+                "type": "url_citation",
+                "url": "https://x.com/i/status/2092514800219906344"
+              }
+            ],
+            "logprobs": [],
+            "text": "@BSCNews https://x.com/BSCNews/status/2092508428640141781\n@0xellastis https://x.com/0xellastis/status/2092506924290023539\n@AounOnRise https://x.com/AounOnRise/status/2092325429155684540\n@justdream https://x.com/justdream/status/2092283343895171154\n@nymbyte_ https://x.com/nymbyte_/status/2092525138474410268\n@BonkHunterib https://x.com/BonkHunterib/status/2092524909989613695\n@AD160324 https://x.com/AD160324/status/2092524543122485454\n@AlwfbWww https://x.com/AlwfbWww/status/2092524301648007236\n@Thoughtsbyyoung https://x.com/Thoughtsbyyoung/status/2092520805854744948\n@weedseedshop1 https://x.com/weedseedshop1/status/2092518933551329593\n@KiranDesai_44 https://x.com/KiranDesai_44/status/2092514800219906344",
+            "type": "output_text"
+          }
+        ],
+        "id": "msg_a226d308-ddc8-9af0-8b92-7374f776d52c",
+        "role": "assistant",
+        "status": "completed",
+        "type": "message"
+      }
+    ],
+    "parallel_tool_calls": true,
+    "presence_penalty": 0.0,
+    "previous_response_id": null,
+    "prompt_cache_key": null,
+    "reasoning": {
+      "effort": "high",
+      "summary": "detailed"
+    },
+    "safety_identifier": null,
+    "service_tier": "default",
+    "status": "completed",
+    "store": true,
+    "temperature": 0.7,
+    "text": {
+      "format": {
+        "type": "text"
+      }
+    },
+    "tool_choice": "auto",
+    "tools": [
+      {
+        "type": "x_search"
+      }
+    ],
+    "top_logprobs": 0,
+    "top_p": 0.95,
+    "truncation": "disabled",
+    "usage": {
+      "context_details": {
+        "input_tokens": 6658,
+        "output_tokens": 2361
+      },
+      "cost_in_usd_ticks": 463300000,
+      "input_tokens": 8826,
+      "input_tokens_details": {
+        "cached_tokens": 4096
+      },
+      "num_server_side_tools_used": 2,
+      "num_sources_used": 0,
+      "output_tokens": 4137,
+      "output_tokens_details": {
+        "reasoning_tokens": 3864
+      },
+      "server_side_tool_usage_details": {
+        "code_interpreter_calls": 0,
+        "document_search_calls": 0,
+        "file_search_calls": 0,
+        "image_generation_calls": 0,
+        "mcp_calls": 0,
+        "web_search_calls": 0,
+        "x_search_calls": 2
+      },
+      "total_tokens": 12963
+    },
+    "user": null
+  },
+  "signature": "POST https://api.x.ai/v1/responses model=grok-4.6",
+  "status": 200
+}

@@ -1,0 +1,48 @@
+{
+  "headers": {
+    "content-type": "application/json"
+  },
+  "json": {
+    "id": 1,
+    "jsonrpc": "2.0",
+    "result": {
+      "context": {
+        "apiVersion": "4.3.0-alpha.2",
+        "slot": 441824471
+      },
+      "value": {
+        "data": {
+          "parsed": {
+            "info": {
+              "extensions": [
+                {
+                  "extension": "immutableOwner"
+                }
+              ],
+              "isNative": false,
+              "mint": "VkGwWUW2wCmTkWreyE8eNAXENNrD46EVf9i27LHpump",
+              "owner": "3psFsiY1yo7GpREfqKjR1GybWFGkvAGzZjbD9GBpcGcM",
+              "state": "initialized",
+              "tokenAmount": {
+                "amount": "129831677529932",
+                "decimals": 6,
+                "uiAmount": 129831677.529932,
+                "uiAmountString": "129831677.529932"
+              }
+            },
+            "type": "account"
+          },
+          "program": "spl-token-2022",
+          "space": 170
+        },
+        "executable": false,
+        "lamports": 2074080,
+        "owner": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb",
+        "rentEpoch": 18446744073709551615,
+        "space": 170
+      }
+    }
+  },
+  "signature": "POST https://mainnet.helius-rpc.com/?api-key=REDACTED getAccountInfo:HxvPUUtWCNpXHskJhPXc5Fugvt8UMTVFZZ2h5r1giAv1",
+  "status": 200
+}

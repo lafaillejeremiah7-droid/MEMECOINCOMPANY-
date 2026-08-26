@@ -1,0 +1,80 @@
+{
+  "headers": {
+    "content-type": "application/json; charset=utf-8"
+  },
+  "json": {
+    "pairs": [
+      {
+        "baseToken": {
+          "address": "9oVF6Y3ZLYLUbE4Y1stnrg2dPVgRFaiuiLXvQmW9pump",
+          "name": "Benny",
+          "symbol": "BENNY"
+        },
+        "chainId": "solana",
+        "dexId": "pumpfun",
+        "fdv": 21258.9,
+        "info": {
+          "header": "https://cdn.dexscreener.com/cms/images/y2a32BG7RCoph5GZ?width=1500&height=500&quality=95&format=auto",
+          "imageUrl": "https://cdn.dexscreener.com/cms/images/JYf9SimeUWUjKSy7?width=800&height=800&quality=95&format=auto",
+          "openGraph": "https://cdn.dexscreener.com/token-images/og/solana/9oVF6Y3ZLYLUbE4Y1stnrg2dPVgRFaiuiLXvQmW9pump?timestamp=1787731800000",
+          "socials": [
+            {
+              "type": "twitter",
+              "url": "https://x.com/thequantski/status/2092520074192027891?s=20"
+            }
+          ],
+          "websites": [
+            {
+              "label": "Website",
+              "url": "https://github.com/poteto/benny-avatars"
+            }
+          ]
+        },
+        "marketCap": 21258.9,
+        "pairAddress": "DDPLGCZWDMcH3U9g2gE3Rkr9g9GEa76F9eiiFAcSjBpu",
+        "pairCreatedAt": 1787730637000,
+        "priceChange": {
+          "h1": 548,
+          "h24": 548,
+          "h6": 548,
+          "m5": -12.4
+        },
+        "priceNative": "0.0000002186",
+        "priceUsd": "0.00002125",
+        "quoteToken": {
+          "address": "So11111111111111111111111111111111111111112",
+          "name": "Wrapped SOL",
+          "symbol": "SOL"
+        },
+        "txns": {
+          "h1": {
+            "buys": 580,
+            "sells": 398
+          },
+          "h24": {
+            "buys": 580,
+            "sells": 398
+          },
+          "h6": {
+            "buys": 580,
+            "sells": 398
+          },
+          "m5": {
+            "buys": 154,
+            "sells": 94
+          }
+        },
+        "url": "https://dexscreener.com/solana/ddplgczwdmch3u9g2ge3rkr9g9gea76f9eiifacsjbpu",
+        "volume": {
+          "h1": 53415.31,
+          "h24": 53415.31,
+          "h6": 53415.31,
+          "m5": 14458.33
+        }
+      }
+    ],
+    "schemaVersion": "1.0.0"
+  },
+  "signature": "GET https://api.dexscreener.com/latest/dex/tokens/9oVF6Y3ZLYLUbE4Y1stnrg2dPVgRFaiuiLXvQmW9pump",
+  "status": 200
+}

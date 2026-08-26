@@ -1,0 +1,80 @@
+{
+  "headers": {
+    "content-type": "application/json; charset=utf-8"
+  },
+  "json": {
+    "pairs": [
+      {
+        "baseToken": {
+          "address": "GxMtp4neZT4SEfXWdn6TdtaqoE2VSKzgPdcR4rWUpump",
+          "name": "Alon Cohen",
+          "symbol": "ALONCOHEN"
+        },
+        "chainId": "solana",
+        "dexId": "pumpfun",
+        "fdv": 11701.68,
+        "info": {
+          "header": "https://cdn.dexscreener.com/cms/images/7dQ2jJcR04Z_TVYf?width=1500&height=500&quality=95&format=auto",
+          "imageUrl": "https://cdn.dexscreener.com/cms/images/oxVU6BdxJ4Dgg0BM?width=800&height=800&quality=95&format=auto",
+          "openGraph": "https://cdn.dexscreener.com/token-images/og/solana/GxMtp4neZT4SEfXWdn6TdtaqoE2VSKzgPdcR4rWUpump?timestamp=1787731800000",
+          "socials": [
+            {
+              "type": "twitter",
+              "url": "https://x.com/theAlonCoHEN/status/2092523663660589513?s=20"
+            }
+          ],
+          "websites": [
+            {
+              "label": "Website",
+              "url": "https://www.google.com/search?q=alon+cohen+pumpfun&oq=alon+cohen&gs_lcrp=EgZjaHJvbWUqBggAEEUYOzIGCAAQRRg7MgYIARBFGDsyBggCEEUYPTIGCAMQRRg9MgYIBBBFGD3SAQgxMzk1ajBqNKgCALACAQ&sourceid=chrome&source=chrome.ob&ie=UTF-8"
+            }
+          ]
+        },
+        "marketCap": 11701.68,
+        "pairAddress": "HmZmfNNseUuD4fFDEv2e8CDT8KLrEb1zBykxBnKJXCjt",
+        "pairCreatedAt": 1787731500000,
+        "priceChange": {
+          "h1": 217,
+          "h24": 217,
+          "h6": 217,
+          "m5": 217
+        },
+        "priceNative": "0.0000001205",
+        "priceUsd": "0.00001170",
+        "quoteToken": {
+          "address": "So11111111111111111111111111111111111111112",
+          "name": "Wrapped SOL",
+          "symbol": "SOL"
+        },
+        "txns": {
+          "h1": {
+            "buys": 582,
+            "sells": 400
+          },
+          "h24": {
+            "buys": 582,
+            "sells": 400
+          },
+          "h6": {
+            "buys": 582,
+            "sells": 400
+          },
+          "m5": {
+            "buys": 582,
+            "sells": 400
+          }
+        },
+        "url": "https://dexscreener.com/solana/hmzmfnnseuud4ffdev2e8cdt8klreb1zbykxbnkjxcjt",
+        "volume": {
+          "h1": 43944.86,
+          "h24": 43944.86,
+          "h6": 43944.86,
+          "m5": 43944.86
+        }
+      }
+    ],
+    "schemaVersion": "1.0.0"
+  },
+  "signature": "GET https://api.dexscreener.com/latest/dex/tokens/GxMtp4neZT4SEfXWdn6TdtaqoE2VSKzgPdcR4rWUpump",
+  "status": 200
+}
