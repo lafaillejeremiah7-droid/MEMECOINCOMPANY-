@@ -6,11 +6,18 @@ Searches for token mentions on X/Twitter using either:
 - The Tavily search API (legacy fallback for tvly- prefixed keys)
 
 The X.ai backend uses the OpenAI-compatible Responses API format with
-the ``x_search`` tool, model ``grok-3-mini``, and Bearer token auth.
+the ``x_search`` tool and Bearer token auth.
 
 Detects scam warnings, big account mentions, and general buzz.
+
+``result_count`` is the number of distinct posts the search tool actually
+returned as citations. It is the quantity ``min_x_mentions`` is compared
+against, so it must never be inflated: an earlier version floored it at 1
+whenever the model produced any text, which reported one mention for tokens
+that had none.
 """
 
+import asyncio
 import logging
 import os
 import re
@@ -22,9 +29,29 @@ import httpx
 logger = logging.getLogger(__name__)
 
 TAVILY_API_KEY = os.getenv("MEMESCANNER_TAVILY_API_KEY", "")
+XAI_API_KEY = os.getenv("MEMESCANNER_XAI_API_KEY", "")
 TAVILY_ENDPOINT = "https://api.tavily.com/search"
 XAI_ENDPOINT = "https://api.x.ai/v1/responses"
 TAVILY_TIMEOUT = 15.0
+
+# ``grok-3-mini`` does not reliably invoke the x_search tool: it answers from its
+# own knowledge and returned a single citation for BONK, one of the most-discussed
+# tokens on Solana. ``grok-4.6`` runs the tool and returns real post citations.
+XAI_MODEL = "grok-4.6"
+
+# A genuine X search through the x_search tool is slow: measured at 40-86 seconds
+# across repeated runs, against 2 seconds for a prompt that needs no search. The
+# 15-second Tavily timeout silently turned every X.ai lookup into a ReadTimeout,
+# which surfaced as X_EVIDENCE_UNAVAILABLE and deferred every candidate. Tavily is
+# a plain search API and stays on its own much shorter budget.
+XAI_TIMEOUT = 90.0
+
+# Tavily caps how many results it returns, which also caps ``result_count``. This
+# must stay comfortably above ``min_x_mentions`` or the gate becomes unreachable:
+# at the previous value of 5, against a threshold of 5, only a token that
+# saturated the cap exactly could ever pass, and any higher threshold rejected
+# everything.
+TAVILY_MAX_RESULTS = 25
 
 # Known big accounts that signal legitimacy
 BIG_ACCOUNTS = {
@@ -38,6 +65,32 @@ BIG_ACCOUNTS = {
 
 # Scam warning keywords
 SCAM_KEYWORDS = {"scam", "rug", "honeypot", "beware", "avoid"}
+
+
+def build_x_search_query(symbol: str, name: str, mint: str) -> str:
+    """Build a query that asks for an enumeration of posts, not a question.
+
+    The previous query was the bare string ``"{mint} {symbol} {name} solana"``.
+    Grok read that as an identity question and replied that yes, this is the
+    official mint address for the token -- never searching X at all. It produced
+    one citation for BONK.
+
+    Asking explicitly for one author handle and post URL per line makes the model
+    invoke the search tool: the same BONK query returned 12-15 citations, and
+    freshly launched tokens returned 3-10. The 24-hour bound matters because this
+    scanner only evaluates tokens aged 10-120 minutes, so older chatter about a
+    recycled ticker is not evidence about this mint.
+    """
+    label = symbol or ""
+    if name and name != symbol:
+        label = f"{label} ({name})".strip()
+    subject = f"the Solana token {label}".strip() if label else "the Solana token"
+    return (
+        f"Search X for posts from the last 24 hours mentioning {subject} "
+        f"or its mint address {mint}. Enumerate each distinct post you find as the "
+        f"author's @handle followed by the post URL, one per line. Do not "
+        f"summarise and do not add commentary. If you find none, reply NONE."
+    )
 
 
 def _extract_handle_from_url(url: str) -> str:
@@ -78,9 +131,13 @@ class XSearchClient:
     """
     Client for searching X/Twitter mentions via X.ai Responses API or Tavily.
 
-    When the configured API key starts with 'xai-', uses the X.ai Responses
-    API with the x_search tool (model: grok-3-mini). Otherwise falls back to
-    the legacy Tavily search endpoint.
+    Keys are assigned to roles by prefix: an ``xai-`` key drives the X.ai
+    Responses API, any other key drives Tavily. Both may be configured at once,
+    in which case the two backends are split by what each is actually good at:
+    Tavily returns a plain list of matching x.com pages and so gives the more
+    trustworthy *count*, while X.ai reads post text and so gives the better
+    *scam and big-account* judgement. Results are merged, and either backend
+    alone is sufficient.
 
     Searches for token-related tweets and analyzes them for:
     - Scam warnings (keywords like 'scam', 'rug', 'honeypot')
@@ -88,12 +145,29 @@ class XSearchClient:
     - General buzz (3+ results = token has attention)
     """
 
-    def __init__(self, api_key: Optional[str] = None):
-        """Initialize the client; a missing key leaves OSINT explicitly unavailable."""
-        self.api_key = api_key if api_key is not None else os.getenv(
+    def __init__(
+        self, api_key: Optional[str] = None, xai_api_key: Optional[str] = None
+    ):
+        """Initialize the client; no key at all leaves OSINT explicitly unavailable.
+
+        ``api_key`` keeps its historical meaning and may hold either kind of key,
+        so existing configuration that put an ``xai-`` key in the Tavily field
+        continues to work. ``xai_api_key`` is the explicit slot, which is what
+        makes running both backends together possible.
+        """
+        primary = api_key if api_key is not None else os.getenv(
             "MEMESCANNER_TAVILY_API_KEY", TAVILY_API_KEY
         )
+        explicit_xai = xai_api_key if xai_api_key is not None else os.getenv(
+            "MEMESCANNER_XAI_API_KEY", XAI_API_KEY
+        )
+        # Route by prefix so a key placed in either field lands in the right role.
+        primary_is_xai = bool(primary) and _is_xai_key(primary)
+        self.api_key = primary
+        self.xai_key = explicit_xai or (primary if primary_is_xai else "")
+        self.tavily_key = "" if primary_is_xai else (primary or "")
         self.timeout = httpx.Timeout(TAVILY_TIMEOUT)
+        self.xai_timeout = httpx.Timeout(XAI_TIMEOUT)
 
     async def search_token(self, symbol: str, name: str, mint: str) -> Dict[str, Any]:
         """
@@ -111,37 +185,93 @@ class XSearchClient:
             big_account_mention, has_buzz, top_snippet, evidence,
             evidence_availability.
         """
-        if self.api_key and _is_xai_key(self.api_key):
+        if self.xai_key and self.tavily_key:
+            return await self._search_both(symbol, name, mint)
+        if self.xai_key:
             return await self._search_xai(symbol, name, mint)
         return await self._search_tavily(symbol, name, mint)
+
+    async def _search_both(self, symbol: str, name: str, mint: str) -> Dict[str, Any]:
+        """Run both backends concurrently and merge them by role.
+
+        Tavily supplies ``result_count`` because it returns a plain list of
+        matching x.com pages, which is what the ``min_x_mentions`` threshold is
+        meant to compare against. X.ai supplies the scam and big-account
+        judgement because it reads post text. If one backend fails the other
+        still answers, so a single outage does not blank out the evidence and
+        strand every candidate on ``X_EVIDENCE_UNAVAILABLE``.
+        """
+        tavily_result, xai_result = await asyncio.gather(
+            self._search_tavily(symbol, name, mint),
+            self._search_xai(symbol, name, mint),
+            return_exceptions=True,
+        )
+        if isinstance(tavily_result, BaseException):
+            tavily_result = self._empty_result()
+        if isinstance(xai_result, BaseException):
+            xai_result = self._empty_result()
+
+        tavily_ok = tavily_result.get("evidence_availability") == "AVAILABLE"
+        xai_ok = xai_result.get("evidence_availability") == "AVAILABLE"
+        if not tavily_ok and not xai_ok:
+            return tavily_result
+
+        counter, other = (
+            (tavily_result, xai_result) if tavily_ok else (xai_result, tavily_result)
+        )
+        merged = dict(counter)
+        merged["result_count"] = int(counter.get("result_count") or 0)
+        # Safety signals are unioned rather than taken from one backend: scam
+        # evidence found by either must still reject the candidate.
+        merged["scam_warning"] = bool(
+            tavily_result.get("scam_warning") or xai_result.get("scam_warning")
+        )
+        merged["big_account_mention"] = bool(
+            tavily_result.get("big_account_mention")
+            or xai_result.get("big_account_mention")
+        )
+        accounts = list(counter.get("accounts") or [])
+        for account in other.get("accounts") or []:
+            if account not in accounts:
+                accounts.append(account)
+        merged["accounts"] = accounts
+        merged["evidence"] = list(tavily_result.get("evidence") or []) + list(
+            xai_result.get("evidence") or []
+        )
+        merged["has_buzz"] = merged["result_count"] >= 3
+        merged["status"] = "FOUND"
+        merged["evidence_availability"] = "AVAILABLE"
+        merged["top_snippet"] = (
+            counter.get("top_snippet") or other.get("top_snippet") or ""
+        )
+        return merged
 
     async def _search_xai(self, symbol: str, name: str, mint: str) -> Dict[str, Any]:
         """
         Search using the X.ai Responses API with the x_search tool.
 
         POST https://api.x.ai/v1/responses
-        Body: model grok-3-mini, tools [{"type": "x_search", "x_search": {}}],
-              input: search query string.
+        Body: model XAI_MODEL, tools [{"type": "x_search", "x_search": {}}],
+              input: an enumeration request (see build_x_search_query).
         """
         result = self._empty_result()
 
-        if not self.api_key:
-            logger.info("X search disabled: MEMESCANNER_TAVILY_API_KEY is not set")
+        if not self.xai_key:
+            logger.info("X.ai search disabled: no 'xai-' API key is configured")
             return result
 
         try:
-            query = f"{mint} {symbol} {name} solana"
             payload = {
-                "model": "grok-3-mini",
+                "model": XAI_MODEL,
                 "tools": [{"type": "x_search", "x_search": {}}],
-                "input": query,
+                "input": build_x_search_query(symbol, name, mint),
             }
             headers = {
-                "Authorization": f"Bearer {self.api_key}",
+                "Authorization": f"Bearer {self.xai_key}",
                 "Content-Type": "application/json",
             }
 
-            async with httpx.AsyncClient(timeout=self.timeout) as client:
+            async with httpx.AsyncClient(timeout=self.xai_timeout) as client:
                 response = await client.post(
                     XAI_ENDPOINT, json=payload, headers=headers
                 )
@@ -184,7 +314,14 @@ class XSearchClient:
 
             result["accounts"] = accounts
             result["evidence"] = evidence
-            result["result_count"] = max(len(citations), 1) if output_text else 0
+            # Count distinct posts the search tool actually returned. Previously
+            # this was max(len(citations), 1), which reported one mention whenever
+            # the model replied at all -- so a token with zero posts scored 1, and
+            # min_x_mentions could never be met on merit because the real citation
+            # count was capped at 1 by the model that was being used.
+            result["result_count"] = len(
+                {citation.get("url") for citation in citations if citation.get("url")}
+            )
 
             # Check for scam warnings in output text and citations
             scam_warning = False
@@ -215,7 +352,15 @@ class XSearchClient:
 
         except Exception as e:
             result["evidence_availability"] = "UNAVAILABLE"
-            logger.warning("X.ai search failed for %s: %s", symbol, str(e))
+            # The exception type matters: httpx timeout errors stringify to an
+            # empty message, so logging only str(e) produced a blank reason and
+            # made a systematic timeout look like an unexplained failure.
+            logger.warning(
+                "X.ai search failed for %s: %s: %s",
+                symbol,
+                type(e).__name__,
+                str(e) or "(no message)",
+            )
 
         return result
 
@@ -277,17 +422,17 @@ class XSearchClient:
         """
         result = self._empty_result()
 
-        if not self.api_key:
-            logger.info("Tavily X search disabled: MEMESCANNER_TAVILY_API_KEY is not set")
+        if not self.tavily_key:
+            logger.info("Tavily X search disabled: no Tavily API key is configured")
             return result
 
         try:
             query = f'"{mint}" {symbol} {name} solana'
             payload = {
-                "api_key": self.api_key,
+                "api_key": self.tavily_key,
                 "query": query,
                 "include_domains": ["x.com"],
-                "max_results": 5,
+                "max_results": TAVILY_MAX_RESULTS,
             }
 
             async with httpx.AsyncClient(timeout=self.timeout) as client:

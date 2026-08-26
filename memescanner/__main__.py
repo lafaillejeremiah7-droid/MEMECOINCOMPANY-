@@ -173,7 +173,10 @@ async def main_loop(config: Optional[Config] = None) -> None:
         evaluator = CommonEvaluator(
             pair_client,
             onchain,
-            XSearchClient(config.evidence.tavily_api_key),
+            XSearchClient(
+                config.evidence.tavily_api_key,
+                config.evidence.xai_api_key,
+            ),
             min_age_minutes=config.scanner.min_candidate_age_minutes,
             max_age_minutes=config.scanner.max_candidate_age_minutes,
             min_liquidity_usd=config.filters.min_liquidity_usd,
@@ -196,7 +199,10 @@ async def main_loop(config: Optional[Config] = None) -> None:
                 db_path=config.database.path,
                 message_sender=sender.send,
                 onchain_analyzer=onchain,
-                x_client=XSearchClient(config.evidence.tavily_api_key),
+                x_client=XSearchClient(
+                    config.evidence.tavily_api_key,
+                    config.evidence.xai_api_key,
+                ),
             )
             await paper_trader.initialize()
             paper_callback = lambda candidate, market, take_profit_target: _paper_buyer(

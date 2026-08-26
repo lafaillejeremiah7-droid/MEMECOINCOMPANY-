@@ -17,7 +17,9 @@ async def run():
     evaluator = CommonEvaluator(
         pair_client,
         OnchainAnalyzer(rpc_url=config.evidence.helius_rpc_url),
-        XSearchClient(config.evidence.tavily_api_key),
+        XSearchClient(
+            config.evidence.tavily_api_key, config.evidence.xai_api_key
+        ),
         min_age_minutes=1,
         max_age_minutes=1440,
         min_liquidity_usd=1000,

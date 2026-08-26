@@ -55,9 +55,15 @@ class EvidenceConfig:
     requests to the X.ai Responses API instead of Tavily. The environment
     variable name (MEMESCANNER_TAVILY_API_KEY) is unchanged for backward
     compatibility with existing deployments.
+
+    ``xai_api_key`` (MEMESCANNER_XAI_API_KEY) is the explicit slot for an X.ai
+    key. Setting it alongside a real Tavily key runs both backends and splits
+    them by role: Tavily counts matching x.com pages, X.ai reads post text for
+    scam and big-account signals. Either one alone is sufficient.
     """
 
     tavily_api_key: str = ""
+    xai_api_key: str = ""
     helius_rpc_url: str = ""
     max_transfer_fee_bps: int = 100
     transfer_hook_allowlist: List[str] = field(default_factory=list)
@@ -228,6 +234,7 @@ class Config:
             ),
             evidence=EvidenceConfig(
                 tavily_api_key=evidence_data.get("tavily_api_key", ""),
+                xai_api_key=evidence_data.get("xai_api_key", ""),
                 helius_rpc_url=evidence_data.get("helius_rpc_url", ""),
                 max_transfer_fee_bps=evidence_data.get("max_transfer_fee_bps", 100),
                 transfer_hook_allowlist=list(
@@ -320,6 +327,9 @@ class Config:
         )
         self.telegram.chat_id = os.getenv(
             "MEMESCANNER_TELEGRAM_CHAT_ID", self.telegram.chat_id
+        )
+        self.evidence.xai_api_key = os.getenv(
+            "MEMESCANNER_XAI_API_KEY", self.evidence.xai_api_key
         )
         self.evidence.tavily_api_key = os.getenv(
             "MEMESCANNER_TAVILY_API_KEY", self.evidence.tavily_api_key

@@ -7,10 +7,13 @@ from memescanner.x_search import (
     XSearchClient,
     TAVILY_API_KEY,
     TAVILY_ENDPOINT,
+    TAVILY_MAX_RESULTS,
     XAI_ENDPOINT,
+    XAI_MODEL,
     TAVILY_TIMEOUT,
     BIG_ACCOUNTS,
     SCAM_KEYWORDS,
+    build_x_search_query,
     _extract_handle_from_url,
     _is_xai_key,
 )
@@ -161,7 +164,7 @@ class TestXSearchClientXai:
             call_args = mock_client.post.call_args
             assert call_args[0][0] == "https://api.x.ai/v1/responses"
             payload = call_args[1]["json"]
-            assert payload["model"] == "grok-3-mini"
+            assert payload["model"] == XAI_MODEL
             assert {"type": "x_search", "x_search": {}} in payload["tools"]
             headers = call_args[1]["headers"]
             assert headers["Authorization"] == "Bearer xai-test-key-123"
@@ -780,3 +783,201 @@ class TestXSearchClientDisabled:
 
             call_args = mock_client.post.call_args
             assert call_args[0][0] == "https://api.x.ai/v1/responses"
+
+
+
+def _xai_payload(text, citation_urls):
+    """Build an X.ai Responses API body with the given text and citation URLs."""
+    return {
+        "output": [
+            {
+                "type": "message",
+                "content": [
+                    {
+                        "type": "output_text",
+                        "text": text,
+                        "annotations": [
+                            {"url": url, "title": "t", "text": "c"}
+                            for url in citation_urls
+                        ],
+                    }
+                ],
+            }
+        ]
+    }
+
+
+def _mock_http(dispatch):
+    """Patch httpx.AsyncClient, routing post() by URL through ``dispatch``."""
+
+    async def post(url, **kwargs):
+        response = MagicMock()
+        response.status_code = 200
+        response.raise_for_status = MagicMock()
+        response.json.return_value = dispatch(url, kwargs)
+        return response
+
+    client = AsyncMock()
+    client.post = AsyncMock(side_effect=post)
+    client.__aenter__ = AsyncMock(return_value=client)
+    client.__aexit__ = AsyncMock(return_value=False)
+    patcher = patch("httpx.AsyncClient", return_value=client)
+    return patcher, client
+
+
+class TestMentionCountIsNotInflated:
+    """``result_count`` feeds the min_x_mentions gate and must never be invented.
+
+    The previous implementation used ``max(len(citations), 1) if output_text``,
+    which reported one mention for a token with zero posts, and simultaneously
+    capped the achievable count at 1 whenever the model returned no citations --
+    so the threshold could not be met on merit.
+    """
+
+    @pytest.mark.asyncio
+    async def test_text_without_citations_counts_zero(self):
+        client = XSearchClient(api_key="xai-key")
+        patcher, _ = _mock_http(
+            lambda url, kw: _xai_payload("Yes, that is the official mint address.", [])
+        )
+        with patcher:
+            result = await client.search_token("BONK", "Bonk", "mint123")
+        assert result["result_count"] == 0, "a mention was fabricated from prose"
+        assert result["has_buzz"] is False
+
+    @pytest.mark.asyncio
+    async def test_duplicate_citation_urls_count_once(self):
+        client = XSearchClient(api_key="xai-key")
+        urls = [
+            "https://x.com/a/status/1",
+            "https://x.com/a/status/1",
+            "https://x.com/b/status/2",
+        ]
+        patcher, _ = _mock_http(lambda url, kw: _xai_payload("posts", urls))
+        with patcher:
+            result = await client.search_token("T", "T", "mint123")
+        assert result["result_count"] == 2
+
+    @pytest.mark.asyncio
+    async def test_counts_handleless_status_urls(self):
+        """X.ai returns 'https://x.com/i/status/<id>' with no handle in the path.
+
+        Those are still real distinct posts and must count, even though no
+        account can be extracted from them.
+        """
+        client = XSearchClient(api_key="xai-key")
+        urls = [f"https://x.com/i/status/{n}" for n in range(7)]
+        patcher, _ = _mock_http(lambda url, kw: _xai_payload("posts", urls))
+        with patcher:
+            result = await client.search_token("T", "T", "mint123")
+        assert result["result_count"] == 7
+        assert result["accounts"] == []
+
+
+class TestSearchQuery:
+    """The query must ask X.ai to search and enumerate, not answer a question."""
+
+    def test_query_requests_enumeration_and_contains_mint(self):
+        query = build_x_search_query("BONK", "Bonk", "MINTADDR")
+        assert "MINTADDR" in query
+        assert "BONK" in query
+        lowered = query.lower()
+        assert "search x" in lowered
+        assert "enumerate" in lowered
+        # The old bare-identifier form was read as an identity question.
+        assert query != "MINTADDR BONK Bonk solana"
+
+    def test_query_survives_missing_symbol_and_name(self):
+        query = build_x_search_query("", "", "MINTADDR")
+        assert "MINTADDR" in query
+        assert "the Solana token" in query
+
+    def test_query_does_not_duplicate_symbol_when_name_matches(self):
+        query = build_x_search_query("WIF", "WIF", "MINTADDR")
+        assert query.count("WIF") == 1
+
+
+class TestTavilyCapAllowsThreshold:
+    """Tavily's max_results caps result_count, so it must exceed the threshold."""
+
+    def test_max_results_above_default_min_x_mentions(self):
+        from memescanner.config import FiltersConfig
+
+        assert TAVILY_MAX_RESULTS > FiltersConfig().min_x_mentions, (
+            "Tavily cannot return enough results to satisfy min_x_mentions, so "
+            "the gate is unreachable"
+        )
+
+    @pytest.mark.asyncio
+    async def test_max_results_is_sent(self):
+        client = XSearchClient(api_key="tvly-key")
+        patcher, mock_client = _mock_http(lambda url, kw: {"results": []})
+        with patcher:
+            await client.search_token("T", "T", "mint123")
+        payload = mock_client.post.call_args[1]["json"]
+        assert payload["max_results"] == TAVILY_MAX_RESULTS
+
+
+class TestBackendRoleSplit:
+    """Keys route by prefix; both together split counting from judgement."""
+
+    def test_xai_key_in_legacy_field_still_routes_to_xai(self):
+        client = XSearchClient(api_key="xai-abc")
+        assert client.xai_key == "xai-abc"
+        assert client.tavily_key == ""
+
+    def test_tavily_key_stays_tavily(self):
+        client = XSearchClient(api_key="tvly-abc")
+        assert client.tavily_key == "tvly-abc"
+        assert client.xai_key == ""
+
+    def test_both_keys_are_held_separately(self):
+        client = XSearchClient(api_key="tvly-abc", xai_api_key="xai-abc")
+        assert client.tavily_key == "tvly-abc"
+        assert client.xai_key == "xai-abc"
+
+    @pytest.mark.asyncio
+    async def test_both_backends_merge_count_from_tavily_and_scam_from_xai(self):
+        client = XSearchClient(api_key="tvly-abc", xai_api_key="xai-abc")
+
+        def dispatch(url, kwargs):
+            if url == TAVILY_ENDPOINT:
+                # Tavily supplies the count.
+                return {
+                    "results": [
+                        {"url": f"https://x.com/u{n}/status/{n}", "content": "clean"}
+                        for n in range(9)
+                    ]
+                }
+            # X.ai supplies the scam judgement, and a smaller count.
+            return _xai_payload(
+                "This looks like a rug", ["https://x.com/i/status/1"]
+            )
+
+        patcher, mock_client = _mock_http(dispatch)
+        with patcher:
+            result = await client.search_token("T", "T", "mint123")
+
+        assert mock_client.post.await_count == 2, "both backends should be queried"
+        assert result["result_count"] == 9, "count must come from Tavily"
+        assert result["scam_warning"] is True, "scam evidence from X.ai must survive"
+        assert result["evidence_availability"] == "AVAILABLE"
+
+    @pytest.mark.asyncio
+    async def test_one_backend_failing_does_not_blank_the_evidence(self):
+        """A single outage must not strand candidates on X_EVIDENCE_UNAVAILABLE."""
+        client = XSearchClient(api_key="tvly-abc", xai_api_key="xai-abc")
+
+        def dispatch(url, kwargs):
+            if url == TAVILY_ENDPOINT:
+                raise RuntimeError("tavily down")
+            return _xai_payload(
+                "posts", [f"https://x.com/i/status/{n}" for n in range(6)]
+            )
+
+        patcher, _ = _mock_http(dispatch)
+        with patcher:
+            result = await client.search_token("T", "T", "mint123")
+
+        assert result["evidence_availability"] == "AVAILABLE"
+        assert result["result_count"] == 6, "X.ai count used when Tavily is down"
