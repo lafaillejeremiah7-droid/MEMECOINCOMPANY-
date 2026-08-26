@@ -35,12 +35,88 @@ TAKE_PROFIT_TARGET_BASE = 2.0
 TAKE_PROFIT_TARGET_MIN = 1.5
 TAKE_PROFIT_TARGET_MAX = 4.0
 
+# Average trade size reference point, in USD.
+#
+# A study of 655,770 pump.fun tokens (arXiv 2602.14860) reported that the
+# single strongest predictor of token success was the number of trades needed
+# to accumulate a given amount of liquidity: few larger trades (concentrated,
+# committed capital) preceded success, while many tiny fragmented trades
+# (bot/algorithmic churn) preceded failure, with higher bot share lowering
+# success probability at every stage. We have no per-trade data, so
+# volume_24h / (buys_24h + sells_24h) is used as a directly computable proxy
+# for the same underlying signal.
+#
+# This reference is a SCALE for scoring, not a calibrated threshold: no value
+# of average trade size rejects a candidate, and its predictive value in this
+# pipeline is unvalidated until the prospective cohort has measured outcomes.
+DEFAULT_REFERENCE_AVG_TRADE_SIZE_USD = 50.0
+
+# Maximum points the average-trade-size term may contribute to the screening
+# rank. The term is saturating, so it reaches half of this at the reference.
+AVG_TRADE_SIZE_SCORE_MAX = 15.0
+
+# Take-profit multipliers of the reference at which the target is adjusted.
+AVG_TRADE_SIZE_STRONG_MULTIPLE = 3.0
+AVG_TRADE_SIZE_BOT_CHURN_MULTIPLE = 0.4
+
 # Indicators in X evidence content that suggest viral reach (high views/impressions).
 _VIRAL_INDICATORS = (
     "views", "impressions", "viral", "trending", "million views",
     "100k views", "500k views", "1m views", "10m views",
     "100k impressions", "500k impressions", "1m impressions",
 )
+
+
+def average_trade_size_usd(market: Dict[str, Any]) -> Optional[float]:
+    """
+    Average USD size of a 24h trade, as a bot-churn / capital-commitment proxy.
+
+    Derived from DEXScreener aggregates only: ``volume_24h`` divided by the
+    total 24h transaction count (``buys_24h + sells_24h``). This is a proxy for
+    the per-trade concentration signal described above, not a measurement of
+    individual trades.
+
+    Args:
+        market: Market evidence dict, possibly incomplete or missing keys.
+
+    Returns:
+        Average trade size in USD, or None when volume is not positive, the
+        transaction count is not positive, or the inputs are missing/unusable.
+        None means unknown and must never be treated as a passing value or
+        substituted with a default.
+    """
+    if not isinstance(market, dict):
+        return None
+    try:
+        volume = float(market.get("volume_24h") or 0)
+        buys = float(market.get("buys_24h") or 0)
+        sells = float(market.get("sells_24h") or 0)
+    except (TypeError, ValueError):
+        return None
+    transactions = buys + sells
+    if volume <= 0 or transactions <= 0:
+        return None
+    return volume / transactions
+
+
+def _avg_trade_size_score_points(
+    market: Dict[str, Any], reference_avg_trade_size_usd: float
+) -> float:
+    """
+    Bounded, additive screening-rank contribution for average trade size.
+
+    Uses a saturating curve so the term rises monotonically with average trade
+    size, reaches roughly its midpoint at the configured reference, and can
+    never exceed ``AVG_TRADE_SIZE_SCORE_MAX``. An unknown average trade size
+    contributes exactly zero rather than an imputed value.
+    """
+    average = average_trade_size_usd(market)
+    if average is None:
+        return 0.0
+    reference = float(reference_avg_trade_size_usd or 0)
+    if reference <= 0:
+        return 0.0
+    return AVG_TRADE_SIZE_SCORE_MAX * average / (average + reference)
 
 
 def _evidence_has_viral_indicators(evidence: List[Dict[str, Any]]) -> bool:
@@ -104,16 +180,23 @@ def celebrity_mint_evidence(x_data: Dict[str, Any], mint: str) -> Dict[str, Any]
     }
 
 
-def compute_take_profit_target(decision: CandidateDecision) -> float:
+def compute_take_profit_target(
+    decision: CandidateDecision,
+    *,
+    reference_avg_trade_size_usd: float = DEFAULT_REFERENCE_AVG_TRADE_SIZE_USD,
+) -> float:
     """
     Derive a per-token take-profit multiple from evidence already on the decision.
 
     This is a heuristic sizing aid, not a price prediction: deeper liquidity,
-    wider holder distribution, and volume-confirmed turnover earn a higher
-    target, while thin pools, concentration, and coordination flags pull it down.
+    wider holder distribution, volume-confirmed turnover, and larger average
+    trade size earn a higher target, while thin pools, concentration,
+    coordination flags, and a bot-churn-sized average trade pull it down.
 
     Args:
         decision: An evaluated candidate decision with market and evidence data.
+        reference_avg_trade_size_usd: Average trade size scale in USD. Defaults
+            to the module reference so existing callers keep working unchanged.
 
     Returns:
         Take-profit multiple clamped to [1.5, 4.0] and rounded to 2 decimals.
@@ -161,6 +244,19 @@ def compute_take_profit_target(decision: CandidateDecision) -> float:
     elif volume_to_mcap_ratio < 0.5:
         target -= 0.25
 
+    # Average trade size: larger average trades suggest committed capital,
+    # while a very small average is the bot-churn signature. Unknown values
+    # adjust nothing.
+    average_trade_size = average_trade_size_usd(market)
+    reference = float(reference_avg_trade_size_usd or 0)
+    if average_trade_size is not None and reference > 0:
+        if average_trade_size >= AVG_TRADE_SIZE_STRONG_MULTIPLE * reference:
+            target += 0.5
+        elif average_trade_size >= reference:
+            target += 0.25
+        elif average_trade_size < AVG_TRADE_SIZE_BOT_CHURN_MULTIPLE * reference:
+            target -= 0.5
+
     if decision.screening_score >= 80:
         target += 0.25
 
@@ -191,6 +287,7 @@ class CommonEvaluator:
         min_liquidity_to_mcap_ratio: float = 0.08,
         max_spike_price_change_1h_pct: float = 100.0,
         min_spike_volume_to_mcap_ratio: float = 0.5,
+        reference_avg_trade_size_usd: float = DEFAULT_REFERENCE_AVG_TRADE_SIZE_USD,
     ) -> None:
         self.pair_client = pair_client
         self.onchain = onchain
@@ -207,6 +304,8 @@ class CommonEvaluator:
         self.min_liquidity_to_mcap_ratio = min_liquidity_to_mcap_ratio
         self.max_spike_price_change_1h_pct = max_spike_price_change_1h_pct
         self.min_spike_volume_to_mcap_ratio = min_spike_volume_to_mcap_ratio
+        # Scoring scale only. Average trade size never rejects a candidate.
+        self.reference_avg_trade_size_usd = reference_avg_trade_size_usd
 
     async def evaluate(
         self, candidate: NormalizedCandidate, *, onchain_budget_available: bool
@@ -367,7 +466,20 @@ class CommonEvaluator:
         # This is an explainable screening rank, not a calibrated probability.
         # Paid boosts, narrative names, deployer identity, and celebrity context
         # deliberately contribute zero points.
-        score = min(100.0, 35.0 + min(liquidity / 1000.0, 30.0) + min(ratio * 5.0, 25.0))
+        #
+        # Average trade size adds a bounded, saturating term (at most
+        # +AVG_TRADE_SIZE_SCORE_MAX) because the pump.fun cohort study found
+        # trade fragmentation to be its strongest success discriminator. It is
+        # an uncalibrated input: it only reorders candidates within the set that
+        # already passed every hard gate, it never rejects anything, and an
+        # unknown average trade size adds nothing at all.
+        score = min(
+            100.0,
+            35.0
+            + min(liquidity / 1000.0, 30.0)
+            + min(ratio * 5.0, 25.0)
+            + _avg_trade_size_score_points(market, self.reference_avg_trade_size_usd),
+        )
         qualified = CandidateDecision(
             candidate,
             "QUALIFIED",
@@ -378,7 +490,10 @@ class CommonEvaluator:
             evaluated_at=datetime.now(timezone.utc).isoformat(),
             evaluated_age_minutes=age,
         )
-        qualified.take_profit_target = compute_take_profit_target(qualified)
+        qualified.take_profit_target = compute_take_profit_target(
+            qualified,
+            reference_avg_trade_size_usd=self.reference_avg_trade_size_usd,
+        )
         return qualified
 
     async def _forensic_x_search(self, mint: str) -> Dict[str, Any]:
@@ -478,6 +593,12 @@ def format_signal(decision: CandidateDecision) -> str:
             holder_flags_lines.append(
                 f"  - Funding sources: {', '.join(s[:12] + '...' for s in top_sources)}"
             )
+    # Reported as a descriptive observation only: it is neither a probability
+    # nor a prediction, and an unknown value is shown as unknown.
+    average_trade_size = average_trade_size_usd(market)
+    avg_trade_text = (
+        f"${average_trade_size:,.0f}" if average_trade_size is not None else "unknown"
+    )
     bubblemaps_link = f"https://app.bubblemaps.io/sol/token/{candidate.mint}"
     return "\n".join([
         "SOLANA CANDIDATE PASSED AVAILABLE SAFETY CHECKS",
@@ -487,6 +608,7 @@ def format_signal(decision: CandidateDecision) -> str:
         f"Market cap: ${float(market.get('market_cap') or 0):,.0f}",
         f"Liquidity: ${float(market.get('liquidity_usd') or 0):,.0f}",
         f"24h buys/sells (transaction counts, not USD flow): {market.get('buys_24h', 0)}/{market.get('sells_24h', 0)}",
+        f"Avg trade size: {avg_trade_text} (bot-churn proxy; higher is better)",
         f"Creator holding: {dev_text}",
         f"Top-10 concentration: {top10_text}",
     ] + (holder_flags_lines if holder_flags_lines else []) + [

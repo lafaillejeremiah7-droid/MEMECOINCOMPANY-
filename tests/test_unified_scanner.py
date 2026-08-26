@@ -1438,10 +1438,22 @@ async def test_lpi_gates_run_before_onchain_budget_is_spent():
 
 
 def _decision_for_target(market_overrides=None, onchain=None, x_data=None, score=70.0):
-    from memescanner.unified_scanner import CandidateDecision
+    from memescanner.unified_scanner import (
+        DEFAULT_REFERENCE_AVG_TRADE_SIZE_USD,
+        CandidateDecision,
+    )
 
     market = valid_pair()
-    market.update(market_overrides or {})
+    overrides = market_overrides or {}
+    market.update(overrides)
+    # Pin average trade size into the neutral band (at least 0.4x and under 1x
+    # the reference) unless a case sets the volume or transaction counts itself,
+    # so every assertion below isolates the one factor it names.
+    if not {"volume_24h", "buys_24h", "sells_24h"} & set(overrides):
+        neutral_average = 0.6 * DEFAULT_REFERENCE_AVG_TRADE_SIZE_USD
+        transactions = round(float(market["volume_24h"]) / neutral_average)
+        market["sells_24h"] = transactions // 3
+        market["buys_24h"] = transactions - market["sells_24h"]
     evidence = {
         "onchain": onchain if onchain is not None else {
             "top10_concentration_pct": 20.0,
@@ -1728,3 +1740,369 @@ async def test_main_paper_buyer_forwards_real_price():
     _, dex_data = trader.buy.await_args[0]
     assert dex_data["price_usd"] == 0.001
     assert dex_data["market_cap"] == 100_000
+
+
+
+# --- Tests for average trade size (bot-churn / capital-commitment proxy) ---
+
+
+def test_average_trade_size_divides_volume_by_transaction_count():
+    """Average trade size is 24h volume over total 24h transactions."""
+    from memescanner.unified_scanner import average_trade_size_usd
+
+    market = {"volume_24h": 60_000.0, "buys_24h": 400, "sells_24h": 200}
+    assert average_trade_size_usd(market) == 100.0
+
+
+def test_average_trade_size_is_none_when_volume_is_zero():
+    """Zero volume is unknown, not a zero-sized trade."""
+    from memescanner.unified_scanner import average_trade_size_usd
+
+    assert average_trade_size_usd(
+        {"volume_24h": 0, "buys_24h": 100, "sells_24h": 50}
+    ) is None
+
+
+def test_average_trade_size_is_none_when_transaction_count_is_zero():
+    """A zero transaction count never divides by zero; it stays unknown."""
+    from memescanner.unified_scanner import average_trade_size_usd
+
+    assert average_trade_size_usd(
+        {"volume_24h": 50_000, "buys_24h": 0, "sells_24h": 0}
+    ) is None
+
+
+def test_average_trade_size_is_none_when_keys_are_missing():
+    """Missing or None inputs stay unknown rather than being imputed."""
+    from memescanner.unified_scanner import average_trade_size_usd
+
+    assert average_trade_size_usd({}) is None
+    assert average_trade_size_usd({"volume_24h": 50_000}) is None
+    assert average_trade_size_usd({"buys_24h": 100, "sells_24h": 50}) is None
+    assert average_trade_size_usd(
+        {"volume_24h": None, "buys_24h": None, "sells_24h": None}
+    ) is None
+
+
+def test_average_trade_size_never_raises_on_unusable_input():
+    """Unusable values return None instead of propagating an exception."""
+    from memescanner.unified_scanner import average_trade_size_usd
+
+    assert average_trade_size_usd({"volume_24h": "abc", "buys_24h": 10}) is None
+    assert average_trade_size_usd(None) is None
+    assert average_trade_size_usd(
+        {"volume_24h": -100, "buys_24h": 10, "sells_24h": 5}
+    ) is None
+
+
+def test_avg_trade_size_score_term_is_zero_when_unknown():
+    """An unknown average trade size adds nothing at all to the rank."""
+    from memescanner.unified_scanner import _avg_trade_size_score_points
+
+    assert _avg_trade_size_score_points({}, 50.0) == 0.0
+    assert _avg_trade_size_score_points(
+        {"volume_24h": 0, "buys_24h": 0, "sells_24h": 0}, 50.0
+    ) == 0.0
+
+
+def test_avg_trade_size_score_term_reaches_midpoint_at_reference():
+    """At the configured reference the term is about half its maximum."""
+    from memescanner.unified_scanner import (
+        AVG_TRADE_SIZE_SCORE_MAX,
+        _avg_trade_size_score_points,
+    )
+
+    market = {"volume_24h": 50_000.0, "buys_24h": 700, "sells_24h": 300}
+    assert _avg_trade_size_score_points(market, 50.0) == pytest.approx(
+        AVG_TRADE_SIZE_SCORE_MAX / 2
+    )
+
+
+def test_avg_trade_size_score_term_is_bounded_and_monotonic():
+    """Larger average trades score higher, but never beyond the cap."""
+    from memescanner.unified_scanner import (
+        AVG_TRADE_SIZE_SCORE_MAX,
+        _avg_trade_size_score_points,
+    )
+
+    def points(average):
+        return _avg_trade_size_score_points(
+            {"volume_24h": average * 100, "buys_24h": 60, "sells_24h": 40}, 50.0
+        )
+
+    values = [points(average) for average in (1, 10, 50, 500, 5_000, 10_000_000)]
+    assert values == sorted(values)
+    assert all(0.0 < value < AVG_TRADE_SIZE_SCORE_MAX for value in values)
+    assert values[-1] == pytest.approx(AVG_TRADE_SIZE_SCORE_MAX, abs=0.01)
+
+
+@pytest.mark.asyncio
+async def test_screening_score_adds_bounded_avg_trade_size_term():
+    """The qualified score is the legacy rank plus the bounded new term."""
+    from memescanner.unified_scanner import _avg_trade_size_score_points
+
+    pair = valid_pair()
+    result = await CommonEvaluator(
+        StubPairClient(pair), StubOnchain(), StubX()
+    ).evaluate(candidate(), onchain_budget_available=True)
+
+    legacy = 35.0 + min(20_000 / 1000.0, 30.0) + min(2.0 * 5.0, 25.0)
+    expected = legacy + _avg_trade_size_score_points(pair, 50.0)
+    assert result.decision == "QUALIFIED"
+    assert result.screening_score == pytest.approx(expected)
+    assert result.screening_score > legacy
+
+
+@pytest.mark.asyncio
+async def test_screening_score_uses_configured_reference_scale():
+    """A larger reference makes the same average trade size score lower."""
+    pair = valid_pair()
+    strict = await CommonEvaluator(
+        StubPairClient(pair), StubOnchain(), StubX(),
+        reference_avg_trade_size_usd=5_000.0,
+    ).evaluate(candidate(), onchain_budget_available=True)
+    lenient = await CommonEvaluator(
+        StubPairClient(pair), StubOnchain(), StubX(),
+        reference_avg_trade_size_usd=50.0,
+    ).evaluate(candidate(), onchain_budget_available=True)
+
+    assert strict.screening_score < lenient.screening_score
+
+
+@pytest.mark.asyncio
+async def test_screening_score_stays_clamped_to_100():
+    """A huge average trade size cannot push the rank above 100."""
+    pair = valid_pair()
+    pair.update({
+        "liquidity_usd": 40_000,
+        "buy_sell_ratio": 8.0,
+        "volume_24h": 6_000_000,
+        "buys_24h": 500,
+        "sells_24h": 100,
+    })
+    result = await CommonEvaluator(
+        StubPairClient(pair), StubOnchain(), StubX()
+    ).evaluate(candidate(), onchain_budget_available=True)
+    assert result.decision == "QUALIFIED"
+    assert result.screening_score == 100.0
+
+
+@pytest.mark.asyncio
+async def test_tiny_average_trade_size_never_rejects_a_candidate():
+    """Bot-churn-sized average trades lower the rank but never reject."""
+    pair = valid_pair()
+    # 30k volume across 30,000 trades is a $1 average: pure fragmentation.
+    pair.update({"volume_24h": 30_000, "buys_24h": 20_000, "sells_24h": 10_000})
+    result = await CommonEvaluator(
+        StubPairClient(pair), StubOnchain(), StubX()
+    ).evaluate(candidate(), onchain_budget_available=True)
+    assert result.decision == "QUALIFIED"
+    assert result.reasons == []
+
+
+def test_take_profit_target_rewards_large_average_trades():
+    """An average trade at or above 3x the reference adds 0.5."""
+    from memescanner.unified_scanner import compute_take_profit_target
+
+    decision = _decision_for_target(
+        market_overrides={
+            "liquidity_usd": 11_000,
+            "volume_to_mcap_ratio": 1.0,
+            "volume_24h": 150_000,
+            "buys_24h": 600,
+            "sells_24h": 400,
+        }
+    )
+    # 150k / 1000 trades = $150 average = 3x the 50.0 reference.
+    assert compute_take_profit_target(decision) == 2.5
+
+
+def test_take_profit_target_rewards_average_trades_at_reference():
+    """An average trade between 1x and 3x the reference adds 0.25."""
+    from memescanner.unified_scanner import compute_take_profit_target
+
+    decision = _decision_for_target(
+        market_overrides={
+            "liquidity_usd": 11_000,
+            "volume_to_mcap_ratio": 1.0,
+            "volume_24h": 50_000,
+            "buys_24h": 600,
+            "sells_24h": 400,
+        }
+    )
+    # 50k / 1000 trades = $50 average = exactly the reference.
+    assert compute_take_profit_target(decision) == 2.25
+
+
+def test_take_profit_target_is_neutral_in_the_middle_band():
+    """Between 0.4x and 1x the reference nothing is added or subtracted."""
+    from memescanner.unified_scanner import compute_take_profit_target
+
+    decision = _decision_for_target(
+        market_overrides={
+            "liquidity_usd": 11_000,
+            "volume_to_mcap_ratio": 1.0,
+            "volume_24h": 30_000,
+            "buys_24h": 600,
+            "sells_24h": 400,
+        }
+    )
+    # 30k / 1000 trades = $30 average: under the reference, above bot churn.
+    assert compute_take_profit_target(decision) == 2.0
+
+
+def test_take_profit_target_penalizes_bot_churn_trade_size():
+    """Below 0.4x the reference the bot-churn signature subtracts 0.5."""
+    from memescanner.unified_scanner import compute_take_profit_target
+
+    decision = _decision_for_target(
+        market_overrides={
+            "liquidity_usd": 11_000,
+            "volume_to_mcap_ratio": 1.0,
+            "volume_24h": 15_000,
+            "buys_24h": 600,
+            "sells_24h": 400,
+        }
+    )
+    # 15k / 1000 trades = $15 average, below the $20 bot-churn floor.
+    assert compute_take_profit_target(decision) == 1.5
+
+
+def test_take_profit_target_ignores_unknown_average_trade_size():
+    """An unknown average trade size adjusts the target by nothing."""
+    from memescanner.unified_scanner import compute_take_profit_target
+
+    known = _decision_for_target(
+        market_overrides={
+            "liquidity_usd": 11_000,
+            "volume_to_mcap_ratio": 1.0,
+            "volume_24h": 30_000,
+            "buys_24h": 600,
+            "sells_24h": 400,
+        }
+    )
+    unknown = _decision_for_target(
+        market_overrides={
+            "liquidity_usd": 11_000,
+            "volume_to_mcap_ratio": 1.0,
+            "volume_24h": 30_000,
+            "buys_24h": 0,
+            "sells_24h": 0,
+        }
+    )
+    # The neutral known case and the unknown case both land on the base target.
+    assert compute_take_profit_target(unknown) == compute_take_profit_target(known)
+    assert compute_take_profit_target(unknown) == 2.0
+
+
+def test_take_profit_target_honours_custom_reference():
+    """The reference scale shifts which band an average trade size falls in."""
+    from memescanner.unified_scanner import compute_take_profit_target
+
+    decision = _decision_for_target(
+        market_overrides={
+            "liquidity_usd": 11_000,
+            "volume_to_mcap_ratio": 1.0,
+            "volume_24h": 50_000,
+            "buys_24h": 600,
+            "sells_24h": 400,
+        }
+    )
+    # $50 average: a reward at the default reference, bot churn at $200.
+    assert compute_take_profit_target(decision) == 2.25
+    assert compute_take_profit_target(
+        decision, reference_avg_trade_size_usd=200.0
+    ) == 1.5
+
+
+def test_format_signal_shows_known_average_trade_size():
+    """The alert reports average trade size as a labelled proxy observation."""
+    from memescanner.unified_scanner import format_signal, CandidateDecision
+
+    market = valid_pair()
+    market.update({"volume_24h": 84_000, "buys_24h": 600, "sells_24h": 400})
+    decision = CandidateDecision(
+        candidate(), "QUALIFIED", [],
+        {"onchain": {"dev_holding_pct": 5.0, "top10_concentration_pct": 20.0},
+         "x": {"status": "FOUND"},
+         "celebrity": {"status": "UNVERIFIED"}},
+        market=market,
+        screening_score=70.0,
+        evaluated_age_minutes=45.0,
+    )
+    signal = format_signal(decision)
+    assert "Avg trade size: $84 (bot-churn proxy; higher is better)" in signal
+
+
+def test_format_signal_shows_unknown_average_trade_size():
+    """An unknown average trade size prints unknown, not a substitute value."""
+    from memescanner.unified_scanner import format_signal, CandidateDecision
+
+    market = valid_pair()
+    market.update({"volume_24h": 50_000, "buys_24h": 0, "sells_24h": 0})
+    decision = CandidateDecision(
+        candidate(), "QUALIFIED", [],
+        {"onchain": {"dev_holding_pct": 5.0, "top10_concentration_pct": 20.0},
+         "x": {"status": "FOUND"},
+         "celebrity": {"status": "UNVERIFIED"}},
+        market=market,
+        screening_score=70.0,
+        evaluated_age_minutes=45.0,
+    )
+    signal = format_signal(decision)
+    assert "Avg trade size: unknown (bot-churn proxy; higher is better)" in signal
+
+
+@pytest.mark.asyncio
+async def test_get_pair_captures_average_trade_size():
+    """The DEX client persists average trade size with the market evidence."""
+    async def handler(request):
+        return httpx.Response(200, request=request, json={"pairs": [{
+            "chainId": "solana",
+            "baseToken": {"address": "Mint111", "name": "Token", "symbol": "TOK"},
+            "quoteToken": {"address": "So11111111111111111111111111111111111111112"},
+            "liquidity": {"usd": 20_000},
+            "marketCap": 100_000,
+            "volume": {"h24": 60_000},
+            "txns": {"h24": {"buys": 400, "sells": 200}},
+            "priceUsd": "0.001",
+            "pairAddress": "Pair111",
+        }]})
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    pair = await DexScreenerPairClient(ResilientHttpClient(client)).get_pair("Mint111")
+    await client.aclose()
+    assert pair["avg_trade_size_usd"] == 100.0
+
+
+@pytest.mark.asyncio
+async def test_get_pair_reports_unknown_average_trade_size_as_none():
+    """No transactions means unknown, never a fabricated average."""
+    async def handler(request):
+        return httpx.Response(200, request=request, json={"pairs": [{
+            "chainId": "solana",
+            "baseToken": {"address": "Mint111", "name": "Token", "symbol": "TOK"},
+            "quoteToken": {"address": "So11111111111111111111111111111111111111112"},
+            "liquidity": {"usd": 20_000},
+            "marketCap": 100_000,
+            "volume": {"h24": 60_000},
+            "txns": {"h24": {"buys": 0, "sells": 0}},
+            "priceUsd": "0.001",
+            "pairAddress": "Pair111",
+        }]})
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    pair = await DexScreenerPairClient(ResilientHttpClient(client)).get_pair("Mint111")
+    await client.aclose()
+    assert pair["avg_trade_size_usd"] is None
+
+
+def test_reference_avg_trade_size_is_configurable_and_not_a_filter():
+    """The reference is parsed from YAML filters with a documented default."""
+    from memescanner.config import Config
+
+    assert Config().filters.reference_avg_trade_size_usd == 50.0
+    parsed = Config._from_dict(
+        {"filters": {"reference_avg_trade_size_usd": 125.0}}
+    )
+    assert parsed.filters.reference_avg_trade_size_usd == 125.0

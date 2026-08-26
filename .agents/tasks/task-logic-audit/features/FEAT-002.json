@@ -1,0 +1,21 @@
+{
+  "id": "FEAT-002",
+  "type": "fix",
+  "description": "Fix partial-close INSERT storing wrong tokens_held and remove dead usd_sign variable",
+  "status": "completed",
+  "steps": [
+    "Capture sold_tokens = pos['tokens_held'] * TAKE_PROFIT_SELL_FRACTION BEFORE reducing pos['tokens_held'] to 20%",
+    "Pass sold_tokens instead of pos['tokens_held'] to the partial_closed INSERT statement",
+    "Remove the dead usd_sign variable from get_portfolio_summary()"
+  ],
+  "acceptance_criteria": [
+    "The partial_closed DB row stores the sold 80% token count, not the remaining 20%",
+    "No dead code (usd_sign) in portfolio summary",
+    "All 595 tests pass"
+  ],
+  "verification": [
+    "python3 -m pytest -q"
+  ],
+  "blocked_reason": null,
+  "findings": "All 595 tests pass. The fix ensures analytics queries computing average exit price as amount_usd / tokens_held from partial_closed rows get correct values instead of 4x inflated values."
+}

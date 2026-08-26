@@ -58,6 +58,15 @@ filters:
   # turnover (volume_to_mcap_ratio) stays below min_spike_volume_to_mcap_ratio.
   max_spike_price_change_1h_pct: 100
   min_spike_volume_to_mcap_ratio: 0.5
+  # SCORING REFERENCE POINT, NOT A REJECTION THRESHOLD. Average trade size is
+  # volume_24h / (buys_24h + sells_24h). A study of 655,770 pump.fun tokens
+  # found trade fragmentation — many tiny bot trades versus few larger, more
+  # committed ones — to be the strongest single predictor of token success.
+  # This value is the average trade size at which the bounded score term
+  # reaches roughly its midpoint (max +15 points) and at which the take-profit
+  # target gets a small bump. No value here rejects a candidate: the signal is
+  # uncalibrated in this pipeline until the prospective cohort can test it.
+  reference_avg_trade_size_usd: 50
 
 # Retained for compatibility with `python -m memescanner.main`; these legacy
 # weights are heuristic and are not calibrated predictive probabilities.

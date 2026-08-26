@@ -79,6 +79,12 @@ class FiltersConfig:
     min_liquidity_to_mcap_ratio: float = 0.08
     max_spike_price_change_1h_pct: float = 100.0
     min_spike_volume_to_mcap_ratio: float = 0.5
+    # NOT a filter. Average trade size (volume_24h / total 24h transactions) is
+    # a scoring input only, derived from the 655,770-token pump.fun study in
+    # which trade fragmentation was the strongest success discriminator. This
+    # value is the scale at which the bounded score term reaches roughly its
+    # midpoint. It is uncalibrated, so it never rejects a candidate.
+    reference_avg_trade_size_usd: float = 50.0
 
 
 @dataclass
@@ -272,6 +278,9 @@ class Config:
                 ),
                 min_spike_volume_to_mcap_ratio=filters_data.get(
                     "min_spike_volume_to_mcap_ratio", 0.5
+                ),
+                reference_avg_trade_size_usd=filters_data.get(
+                    "reference_avg_trade_size_usd", 50.0
                 ),
             ),
             scoring=ScoringWeights(

@@ -1,0 +1,29 @@
+{
+  "project_type": "Python async Solana memecoin signal scanner with paper trading",
+  "language": "Python 3.11",
+  "build_system": "pip with requirements.txt",
+  "test_framework": "pytest with asyncio fixtures",
+  "build_command": "python3 -m pytest -q",
+  "test_command": "python3 -m pytest -q",
+  "verification_instructions": "Run python3 -m pytest -q and confirm all 595+ tests pass",
+  "snapshot_or_generated_files": null,
+  "setup_instructions": "pip install -r requirements.txt",
+  "environment_constraints": "OPEN_INTERNET network mode",
+  "contribution_requirements": "Bugs must be concrete logic defects that affect output quality, not style issues",
+  "key_patterns": "async/await throughout, aiosqlite for persistence, httpx for HTTP, dataclasses for config, Dict[str, Any] for positions",
+  "relevant_files": [
+    "memescanner/paper_trader.py",
+    "memescanner/unified_scanner.py",
+    "memescanner/onchain.py",
+    "memescanner/discovery.py",
+    "memescanner/recovery_checker.py",
+    "memescanner/__main__.py",
+    "memescanner/calibration.py",
+    "memescanner/outcomes.py",
+    "memescanner/scanner.py",
+    "memescanner/x_search.py",
+    "memescanner/config.py",
+    "memescanner/database.py"
+  ],
+  "directory_structure": "memescanner/ contains all source modules, tests/ contains pytest tests"
+}
