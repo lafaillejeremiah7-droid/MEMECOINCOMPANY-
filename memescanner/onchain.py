@@ -20,11 +20,19 @@ import asyncio
 import logging
 import os
 import re
-from typing import Any, Dict, List, Optional, Set
+from typing import Any, Dict, List, Optional, Set, Union
 
 import httpx
 
 logger = logging.getLogger(__name__)
+
+# The ``result`` field of a JSON-RPC response. Solana returns an object for most
+# methods but a bare array for ``getSignaturesForAddress``, which is why several
+# call sites narrow with ``isinstance(..., list)``. This helper was previously
+# annotated as returning only a dict, so those narrowings were unverifiable and
+# the type checker could not see the mismatch -- in the module the safety gates
+# depend on most.
+RpcResult = Union[Dict[str, Any], List[Any]]
 
 HELIUS_API_KEY = os.getenv("MEMESCANNER_HELIUS_API_KEY", "")
 HELIUS_RPC = os.getenv(
@@ -71,7 +79,7 @@ class OnchainAnalyzer:
         self.timeout = httpx.Timeout(RPC_TIMEOUT)
 
     async def _rpc_call(self, client: httpx.AsyncClient, method: str,
-                        params: list) -> Optional[Dict[str, Any]]:
+                        params: list) -> Optional[RpcResult]:
         """
         Make a single JSON-RPC call to Helius.
 
@@ -81,7 +89,9 @@ class OnchainAnalyzer:
             params: RPC parameters.
 
         Returns:
-            Result dict on success, None on failure.
+            The JSON-RPC ``result`` payload on success, None on failure. That is an
+            object for most Solana methods but a bare array for
+            ``getSignaturesForAddress`` -- see RpcResult.
         """
         payload = {
             "jsonrpc": "2.0",
@@ -123,8 +133,9 @@ class OnchainAnalyzer:
             List of account dicts with 'address' and 'amount', or None.
         """
         result = await self._rpc_call(client, "getTokenLargestAccounts", [mint])
-        if result and "value" in result:
-            return result["value"]
+        if isinstance(result, dict) and "value" in result:
+            value = result["value"]
+            return value if isinstance(value, list) else None
         return None
 
     async def _get_token_supply(
@@ -141,7 +152,7 @@ class OnchainAnalyzer:
             Total supply as float, or None.
         """
         result = await self._rpc_call(client, "getTokenSupply", [mint])
-        if result and "value" in result:
+        if isinstance(result, dict) and "value" in result:
             value = result["value"]
             amount_str = value.get("amount", "0")
             decimals = value.get("decimals", 0)
@@ -166,7 +177,7 @@ class OnchainAnalyzer:
         """
         params = [token_account, {"encoding": "jsonParsed"}]
         result = await self._rpc_call(client, "getAccountInfo", params)
-        if result and result.get("value"):
+        if isinstance(result, dict) and result.get("value"):
             try:
                 data = result["value"]["data"]
                 parsed = data.get("parsed", {})
@@ -192,7 +203,10 @@ class OnchainAnalyzer:
             "dangerous_capabilities": [],
             "transfer_fee_bps": None,
         }
-        if not result or not result.get("value"):
+        # A list result here would previously have raised AttributeError on .get;
+        # getAccountInfo returns an object, but the RPC helper can legitimately
+        # return an array, so the shape is checked rather than assumed.
+        if not isinstance(result, dict) or not result.get("value"):
             return info
         try:
             value = result["value"]
@@ -373,7 +387,7 @@ class OnchainAnalyzer:
             Dict with has_bundled_pattern, cluster_count,
             cluster_pct_of_supply, coordinated_risk.
         """
-        result = {
+        result: Dict[str, Any] = {
             "has_bundled_pattern": False,
             "cluster_count": 0,
             "cluster_pct_of_supply": 0.0,
@@ -408,10 +422,10 @@ class OnchainAnalyzer:
         sorted_amounts = sorted(parsed_amounts, reverse=True)
 
         # Find the largest cluster
-        best_cluster = []
+        best_cluster: List[float] = []
 
         for i in range(len(sorted_amounts)):
-            cluster = [sorted_amounts[i]]
+            cluster: List[float] = [sorted_amounts[i]]
             for j in range(i + 1, len(sorted_amounts)):
                 # Check if within 5% of the reference amount (first in cluster)
                 reference = sorted_amounts[i]
@@ -598,7 +612,7 @@ class OnchainAnalyzer:
             top3_pct_of_mc, top10_combined_usd, top10_pct_of_mc, whale_count,
             avg_holder_size_usd, concentration_risk, holder_details.
         """
-        result = {
+        result: Dict[str, Any] = {
             "top_holder_usd": 0.0,
             "top_holder_pct_of_mc": 0.0,
             "top3_combined_usd": 0.0,
@@ -659,7 +673,7 @@ class OnchainAnalyzer:
                 return result
 
             # Calculate USD positions
-            holder_details = []
+            holder_details: List[Dict[str, Any]] = []
             for holder in holders:
                 position_usd = (holder["amount"] / total_supply) * market_cap
                 is_whale = position_usd > 10000
@@ -826,7 +840,8 @@ class OnchainAnalyzer:
                         }],
                     )
                     funder = self._extract_funding_source(
-                        tx_data, wallets_to_check[i]
+                        tx_data if isinstance(tx_data, dict) else None,
+                        wallets_to_check[i],
                     )
                     if funder:
                         funding_sources.append(funder)
@@ -852,7 +867,7 @@ class OnchainAnalyzer:
                 newest_sig = sigs[0]
                 if newest_sig and newest_sig.get("signature"):
                     await asyncio.sleep(RPC_CALL_DELAY)
-                    tx_data_newest = await self._rpc_call(
+                    tx_data_newest: Optional[RpcResult] = await self._rpc_call(
                         client,
                         "getTransaction",
                         [newest_sig["signature"], {
@@ -860,7 +875,9 @@ class OnchainAnalyzer:
                             "maxSupportedTransactionVersion": 0,
                         }],
                     )
-                    amount = self._extract_token_amount(tx_data_newest)
+                    amount = self._extract_token_amount(
+                        tx_data_newest if isinstance(tx_data_newest, dict) else None
+                    )
                     if amount > 0:
                         token_buy_amounts.append(amount)
 
@@ -1097,7 +1114,7 @@ class OnchainAnalyzer:
             mint_authority_revoked, freeze_authority_revoked,
             lp_locked, safe_score, flags.
         """
-        result = {
+        result: Dict[str, Any] = {
             "evidence_status": "UNVERIFIED",
             "token_program": None,
             "extensions": [],

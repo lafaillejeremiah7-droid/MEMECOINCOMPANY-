@@ -256,6 +256,18 @@ class Database:
             )
         await self._db.commit()
 
+    @staticmethod
+    def _require_rowid(value: Optional[int], table: str) -> int:
+        """Return the row id SQLite assigned, or fail with a diagnosable message.
+
+        ``lastrowid`` is Optional because it is unset until an INSERT succeeds.
+        Passing it straight to ``int()`` turned that case into a bare TypeError
+        several frames from the cause; naming the table makes it actionable.
+        """
+        if value is None:
+            raise RuntimeError(f"INSERT into {table} produced no row id")
+        return int(value)
+
     async def _ensure_column(
         self, table: str, column: str, declaration: str
     ) -> bool:
@@ -318,7 +330,7 @@ class Database:
                     len(candidate_rows),
                 ),
             )
-            cycle_id = int(cursor.lastrowid)
+            cycle_id = self._require_rowid(cursor.lastrowid, "discovery_cycles")
             for candidate in candidate_rows:
                 chain_id = str(candidate["chain_id"]).lower()
                 mint = str(candidate["mint"])
@@ -348,6 +360,14 @@ class Database:
                     (chain_id, mint),
                 ) as row_cursor:
                     row = await row_cursor.fetchone()
+                if row is None:
+                    # The INSERT OR IGNORE above guarantees this row exists, so a
+                    # miss means the uniqueness assumption has broken rather than
+                    # that there is simply no data.
+                    raise RuntimeError(
+                        f"cohort_candidates row missing for {chain_id}/{mint} "
+                        "immediately after INSERT OR IGNORE"
+                    )
                 candidate_id = int(row["id"])
                 identities[(chain_id, mint)] = candidate_id
                 first_seen = float(row["first_discovered_epoch"])
@@ -684,7 +704,9 @@ class Database:
                     market.get("market_cap"), market.get("liquidity_usd"),
                 ),
             )
-            observation_id = int(observation_cursor.lastrowid)
+            observation_id = self._require_rowid(
+                observation_cursor.lastrowid, "market_observations"
+            )
             if int(job["horizon_seconds"]) > 0:
                 async with self._db.execute(
                     """SELECT id, price_usd FROM market_observations
@@ -833,4 +855,4 @@ class Database:
             ),
         )
         await self._db.commit()
-        return int(cursor.lastrowid)
+        return self._require_rowid(cursor.lastrowid, "calibration_runs")
