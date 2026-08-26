@@ -1,0 +1,75 @@
+{
+  "headers": {
+    "content-type": "application/json; charset=utf-8"
+  },
+  "json": {
+    "pairs": [
+      {
+        "baseToken": {
+          "address": "EAxFC4uTMdr9nNPzitpaBQwmfKwUe2VUy76d49cSpump",
+          "name": "grug",
+          "symbol": "grug"
+        },
+        "chainId": "solana",
+        "dexId": "pumpfun",
+        "fdv": 7196.4,
+        "info": {
+          "header": "https://cdn.dexscreener.com/cms/images/0g3c2aSEbdHR3gRt?width=1500&height=500&quality=95&format=auto",
+          "imageUrl": "https://cdn.dexscreener.com/cms/images/XMMbADIAD4YBheXT?width=800&height=800&quality=95&format=auto",
+          "openGraph": "https://cdn.dexscreener.com/token-images/og/solana/EAxFC4uTMdr9nNPzitpaBQwmfKwUe2VUy76d49cSpump?timestamp=1787751000000",
+          "socials": [
+            {
+              "type": "twitter",
+              "url": "https://x.com/barnsrebirth0/status/2092601608601317800"
+            }
+          ],
+          "websites": []
+        },
+        "marketCap": 7196.4,
+        "pairAddress": "BeKuHCULytcfbiurq4EacipyMc9Bwa2BM9xhBekMMf8e",
+        "pairCreatedAt": 1787749396000,
+        "priceChange": {
+          "h1": 119,
+          "h24": 119,
+          "h6": 119,
+          "m5": -7.83
+        },
+        "priceNative": "0.00000007501",
+        "priceUsd": "0.000007196",
+        "quoteToken": {
+          "address": "So11111111111111111111111111111111111111112",
+          "name": "Wrapped SOL",
+          "symbol": "SOL"
+        },
+        "txns": {
+          "h1": {
+            "buys": 1451,
+            "sells": 1157
+          },
+          "h24": {
+            "buys": 1451,
+            "sells": 1157
+          },
+          "h6": {
+            "buys": 1451,
+            "sells": 1157
+          },
+          "m5": {
+            "buys": 86,
+            "sells": 66
+          }
+        },
+        "url": "https://dexscreener.com/solana/bekuhculytcfbiurq4eacipymc9bwa2bm9xhbekmmf8e",
+        "volume": {
+          "h1": 124326.57,
+          "h24": 124326.57,
+          "h6": 124326.57,
+          "m5": 7199.97
+        }
+      }
+    ],
+    "schemaVersion": "1.0.0"
+  },
+  "signature": "GET https://api.dexscreener.com/latest/dex/tokens/EAxFC4uTMdr9nNPzitpaBQwmfKwUe2VUy76d49cSpump",
+  "status": 200
+}

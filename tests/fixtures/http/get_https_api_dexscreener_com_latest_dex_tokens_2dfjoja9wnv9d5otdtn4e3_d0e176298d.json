@@ -1,0 +1,250 @@
+{
+  "headers": {
+    "content-type": "application/json; charset=utf-8"
+  },
+  "json": {
+    "pairs": [
+      {
+        "baseToken": {
+          "address": "2dfjojA9wNV9d5otdtn4e3kiFwBbydi2M5jTHPVeVxF3",
+          "name": "Locked In",
+          "symbol": "LOCK"
+        },
+        "chainId": "solana",
+        "dexId": "raydium",
+        "fdv": 13933,
+        "info": {
+          "header": "https://cdn.dexscreener.com/cms/images/frQpAlmTR5uJAcj_?width=1500&height=500&quality=95&format=auto",
+          "imageUrl": "https://cdn.dexscreener.com/cms/images/O78cBpmH5HKXJ1lo?width=800&height=800&quality=95&format=auto",
+          "openGraph": "https://cdn.dexscreener.com/token-images/og/solana/2dfjojA9wNV9d5otdtn4e3kiFwBbydi2M5jTHPVeVxF3?timestamp=1787751000000",
+          "socials": [
+            {
+              "type": "twitter",
+              "url": "https://x.com/Locked_in_stonk"
+            }
+          ],
+          "websites": [
+            {
+              "label": "Website",
+              "url": "https://volatility.lol/"
+            },
+            {
+              "label": "Docs",
+              "url": "https://volatility.lol/docs"
+            }
+          ]
+        },
+        "labels": [
+          "CLMM"
+        ],
+        "liquidity": {
+          "base": 636720498,
+          "quote": 318610,
+          "usd": 12132.81
+        },
+        "marketCap": 13933,
+        "pairAddress": "8ihjupJwZo5949jinD2Yuk4swKc46bWLDw6V2pyHFHs9",
+        "pairCreatedAt": 1787659629000,
+        "priceChange": {
+          "h1": -10.75,
+          "h24": 72.27,
+          "h6": 36.66,
+          "m5": -4.33
+        },
+        "priceNative": "0.001361",
+        "priceUsd": "0.00001393",
+        "quoteToken": {
+          "address": "6GmAFSYs4gk3FDao5FzzySQpPZaWsa4rUJHacpMpUNgx",
+          "name": "STONK",
+          "symbol": "STONK"
+        },
+        "txns": {
+          "h1": {
+            "buys": 1,
+            "sells": 2
+          },
+          "h24": {
+            "buys": 420,
+            "sells": 304
+          },
+          "h6": {
+            "buys": 17,
+            "sells": 35
+          },
+          "m5": {
+            "buys": 1,
+            "sells": 0
+          }
+        },
+        "url": "https://dexscreener.com/solana/8ihjupjwzo5949jind2yuk4swkc46bwldw6v2pyhfhs9",
+        "volume": {
+          "h1": 97.73,
+          "h24": 46302.8,
+          "h6": 2094.86,
+          "m5": 0.04
+        }
+      },
+      {
+        "baseToken": {
+          "address": "2dfjojA9wNV9d5otdtn4e3kiFwBbydi2M5jTHPVeVxF3",
+          "name": "Locked In",
+          "symbol": "LOCK"
+        },
+        "chainId": "solana",
+        "dexId": "meteora",
+        "fdv": 14969,
+        "info": {
+          "header": "https://cdn.dexscreener.com/cms/images/frQpAlmTR5uJAcj_?width=1500&height=500&quality=95&format=auto",
+          "imageUrl": "https://cdn.dexscreener.com/cms/images/O78cBpmH5HKXJ1lo?width=800&height=800&quality=95&format=auto",
+          "openGraph": "https://cdn.dexscreener.com/token-images/og/solana/2dfjojA9wNV9d5otdtn4e3kiFwBbydi2M5jTHPVeVxF3?timestamp=1787751000000",
+          "socials": [
+            {
+              "type": "twitter",
+              "url": "https://x.com/Locked_in_stonk"
+            }
+          ],
+          "websites": [
+            {
+              "label": "Website",
+              "url": "https://volatility.lol/"
+            },
+            {
+              "label": "Docs",
+              "url": "https://volatility.lol/docs"
+            }
+          ]
+        },
+        "labels": [
+          "DYN2"
+        ],
+        "liquidity": {
+          "base": 3076263,
+          "quote": 1087383,
+          "usd": 92.45
+        },
+        "marketCap": 14969,
+        "pairAddress": "D8AGspy7seH9gBNqUJEeWxr1Zm9dn6SE5TbVsegGkdhA",
+        "pairCreatedAt": 1787682574000,
+        "priceChange": {
+          "h24": 37.54,
+          "h6": 28.77
+        },
+        "priceNative": "0.3507",
+        "priceUsd": "0.00001496",
+        "quoteToken": {
+          "address": "VCFN4S4N2oK4FZvp2daHfhgWm7oWyAsthL1EakYDNDT",
+          "name": "Ventoor Capitalist Fund",
+          "symbol": "VCF"
+        },
+        "txns": {
+          "h1": {
+            "buys": 0,
+            "sells": 0
+          },
+          "h24": {
+            "buys": 89,
+            "sells": 73
+          },
+          "h6": {
+            "buys": 21,
+            "sells": 0
+          },
+          "m5": {
+            "buys": 0,
+            "sells": 0
+          }
+        },
+        "url": "https://dexscreener.com/solana/d8agspy7seh9gbnqujeewxr1zm9dn6se5tbvseggkdha",
+        "volume": {
+          "h1": 0,
+          "h24": 124.4,
+          "h6": 4.98,
+          "m5": 0
+        }
+      },
+      {
+        "baseToken": {
+          "address": "2dfjojA9wNV9d5otdtn4e3kiFwBbydi2M5jTHPVeVxF3",
+          "name": "Locked In",
+          "symbol": "LOCK"
+        },
+        "chainId": "solana",
+        "dexId": "meteora",
+        "fdv": 15713,
+        "info": {
+          "header": "https://cdn.dexscreener.com/cms/images/frQpAlmTR5uJAcj_?width=1500&height=500&quality=95&format=auto",
+          "imageUrl": "https://cdn.dexscreener.com/cms/images/O78cBpmH5HKXJ1lo?width=800&height=800&quality=95&format=auto",
+          "openGraph": "https://cdn.dexscreener.com/token-images/og/solana/2dfjojA9wNV9d5otdtn4e3kiFwBbydi2M5jTHPVeVxF3?timestamp=1787751000000",
+          "socials": [
+            {
+              "type": "twitter",
+              "url": "https://x.com/Locked_in_stonk"
+            }
+          ],
+          "websites": [
+            {
+              "label": "Website",
+              "url": "https://volatility.lol/"
+            },
+            {
+              "label": "Docs",
+              "url": "https://volatility.lol/docs"
+            }
+          ]
+        },
+        "labels": [
+          "DYN2"
+        ],
+        "liquidity": {
+          "base": 125195,
+          "quote": 0.01996,
+          "usd": 3.88
+        },
+        "marketCap": 15713,
+        "pairAddress": "9QExtjo1uR5NQc8tAUxrqLYx7sawsq8h8fV91qE8Htvk",
+        "pairCreatedAt": 1787659630000,
+        "priceChange": {
+          "h1": -1.46,
+          "h24": 82.59,
+          "h6": 32.35,
+          "m5": -1.46
+        },
+        "priceNative": "0.0000001634",
+        "priceUsd": "0.00001571",
+        "quoteToken": {
+          "address": "So11111111111111111111111111111111111111112",
+          "name": "Wrapped SOL",
+          "symbol": "SOL"
+        },
+        "txns": {
+          "h1": {
+            "buys": 0,
+            "sells": 1
+          },
+          "h24": {
+            "buys": 31,
+            "sells": 18
+          },
+          "h6": {
+            "buys": 7,
+            "sells": 1
+          },
+          "m5": {
+            "buys": 0,
+            "sells": 1
+          }
+        },
+        "url": "https://dexscreener.com/solana/9qextjo1ur5nqc8tauxrqlyx7sawsq8h8fv91qe8htvk",
+        "volume": {
+          "h1": 0.04,
+          "h24": 4.39,
+          "h6": 0.35,
+          "m5": 0.04
+        }
+      }
+    ],
+    "schemaVersion": "1.0.0"
+  },
+  "signature": "GET https://api.dexscreener.com/latest/dex/tokens/2dfjojA9wNV9d5otdtn4e3kiFwBbydi2M5jTHPVeVxF3",
+  "status": 200
+}

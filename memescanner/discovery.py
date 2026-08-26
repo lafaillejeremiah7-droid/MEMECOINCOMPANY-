@@ -38,6 +38,16 @@ COMMON_SOLANA_QUOTE_MINTS = {
 }
 
 
+def _is_telegram_url(value: str) -> bool:
+    """Require a Telegram origin, so a URL merely mentioning t.me does not count."""
+    try:
+        parsed = urlparse(value)
+    except ValueError:
+        return False
+    host = (parsed.hostname or "").lower()
+    return host in {"t.me", "www.t.me", "telegram.me", "www.telegram.me", "telegram.org"}
+
+
 def _is_x_url(value: str) -> bool:
     """Require an exact X/Twitter HTTPS origin and an account-like path."""
     try:
@@ -124,6 +134,73 @@ class NormalizedCandidate:
     @property
     def x_links(self) -> List[str]:
         return sorted(url for url in self.social_links if _is_x_url(url))
+
+    @property
+    def telegram_links(self) -> List[str]:
+        """Telegram channels advertised by the launch.
+
+        Already collected by ``_social_urls`` and previously discarded. A
+        832,941-launch survival study found an advertised Telegram channel to be
+        the strongest social predictor of graduation it measured (Cox hazard
+        ratio 5.40, 95% CI [4.73, 6.17]) -- far above Twitter presence at 1.30.
+        That study measured graduation, and this scanner only ever sees tokens
+        that already graduated, so the effect may be largely spent by the time a
+        candidate reaches here. Hence: recorded and scored modestly, never gating.
+        """
+        return sorted(url for url in self.social_links if _is_telegram_url(url))
+
+    @property
+    def website_links(self) -> List[str]:
+        """Advertised links that are neither X nor Telegram."""
+        return sorted(
+            url
+            for url in self.social_links
+            if not _is_x_url(url) and not _is_telegram_url(url)
+        )
+
+    @property
+    def social_channel_count(self) -> int:
+        """How many of the three channel types the launch advertises.
+
+        The same study found a near-monotone gradient across this count: 0.110%
+        graduation with none advertised rising to 1.919% with all three, a 17.4x
+        spread. Counted as a distinct feature because the gradient was stronger
+        than any single channel on its own.
+        """
+        return sum(
+            1
+            for present in (
+                bool(self.x_links),
+                bool(self.telegram_links),
+                bool(self.website_links),
+            )
+            if present
+        )
+
+    @property
+    def community_takeover(self) -> Optional[str]:
+        """The community-takeover handle or address, when the launchpad reports one.
+
+        pump.fun began returning ``cto_username`` / ``cto_address`` partway through
+        this project; the fixture drift check is what surfaced them. A community
+        takeover is how POPCAT went from a $200k abandoned token to its peak, so
+        the field is worth recording -- but one anecdote is not an edge, so it is
+        recorded and scored modestly rather than trusted.
+        """
+        # source_metadata is keyed by source name, but a merge from another source
+        # can also leave values at the top level, so both shapes are searched.
+        candidates: List[Dict[str, Any]] = [self.source_metadata or {}]
+        candidates.extend(
+            value
+            for value in (self.source_metadata or {}).values()
+            if isinstance(value, dict)
+        )
+        for scope in candidates:
+            for key in ("cto_username", "cto_address"):
+                value = scope.get(key)
+                if value:
+                    return str(value)
+        return None
 
     def merge(self, other: "NormalizedCandidate") -> "NormalizedCandidate":
         """Merge source membership while preserving the richest known metadata."""
@@ -353,7 +430,15 @@ class PumpFunSource:
                 social_links=social,
                 sources={self.name},
                 creator=item.get("creator"),
-                source_metadata={self.name: {"graduated": True}},
+                source_metadata={
+                    self.name: {
+                        "graduated": True,
+                        # Community-takeover metadata. Absent from older payloads,
+                        # so read defensively rather than assumed present.
+                        "cto_username": item.get("cto_username"),
+                        "cto_address": item.get("cto_address"),
+                    }
+                },
             ))
         return candidates
 

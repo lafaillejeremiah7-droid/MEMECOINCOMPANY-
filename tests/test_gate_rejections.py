@@ -767,3 +767,153 @@ class TestForensicAndClaimGates:
         assert "ALERT_ALREADY_CLAIMED" in _reasons(result)
         assert result["alerted"] is None
         assert sent == [], "a mint with an outstanding claim was alerted again"
+
+
+
+class TestEvidenceHealthFromRunCycle:
+    """Non-emptiness pinned without depending on recorded market conditions.
+
+    The offline pipeline test cannot carry this: whether a recorded cycle reaches a
+    provider depends on what the market was doing when the fixtures were captured,
+    so re-recording broke an earlier assertion here. This evaluator always attaches
+    verified on-chain evidence, so the tally is deterministic.
+    """
+
+    @pytest.mark.asyncio
+    async def test_run_cycle_reports_a_populated_tally(self, database):
+        result, _sent = await _run_scanner(
+            database, [_candidate_with_mint("MintHealth")]
+        )
+        assert result["evidence_health"]["onchain"] == {"VERIFIED": 1}, (
+            "run_cycle did not derive the tally from its decisions, so a provider "
+            "failing on every candidate would look identical to a quiet market"
+        )
+
+
+class TestUncalibratedInputsNeverGate:
+    """Social presence, community takeover and creator stake must only reorder.
+
+    They rest on a study of a different population -- pump.fun launches measured to
+    *graduation*, whereas this scanner only sees tokens that already graduated -- so
+    the effect may be largely spent. Until attribution measures them on this
+    operator's own outcomes they must not be able to reject anything.
+    """
+
+    @pytest.mark.asyncio
+    async def test_no_social_presence_beyond_the_required_x_link_still_qualifies(
+        self, real_onchain_shape
+    ):
+        from memescanner.unified_scanner import social_presence_features
+
+        decision = await _decide(real_onchain_shape)
+        assert decision.decision == "QUALIFIED"
+        features = social_presence_features(decision.candidate)
+        assert features["has_x"] is True
+        assert features["has_telegram"] is False
+        assert features["has_website"] is False
+        assert features["has_community_takeover"] is False
+        assert features["social_channel_count"] == 1
+
+    @pytest.mark.asyncio
+    async def test_social_presence_can_only_raise_the_score(self, real_onchain_shape):
+        from memescanner.unified_scanner import SOCIAL_PRESENCE_SCORE_MAX
+
+        plain = await _decide(real_onchain_shape)
+
+        rich = _candidate()
+        rich.social_links.update(
+            {"https://t.me/gatetest", "https://gatetest.example"}
+        )
+        rich.source_metadata = {"pumpfun": {"cto_username": "takeover_dev"}}
+        evaluator = _evaluator(
+            passing_market(), passing_onchain(real_onchain_shape), passing_x()
+        )
+        from unittest.mock import patch
+
+        with patched_httpx(fixture_transport()), patch("time.time", return_value=NOW):
+            enriched = await evaluator.evaluate(rich, onchain_budget_available=True)
+
+        assert enriched.decision == "QUALIFIED"
+        assert enriched.screening_score >= plain.screening_score
+        assert enriched.screening_score - plain.screening_score <= (
+            SOCIAL_PRESENCE_SCORE_MAX + 1e-9
+        ), "the social term exceeded its documented ceiling"
+
+    @pytest.mark.asyncio
+    async def test_creator_stake_is_recorded_but_unscored(self, real_onchain_shape):
+        """Two candidates differing only in creator stake must score identically."""
+        low = await _decide(
+            real_onchain_shape, onchain_overrides={"dev_holding_pct": 0.0}
+        )
+        high = await _decide(
+            real_onchain_shape, onchain_overrides={"dev_holding_pct": 25.0}
+        )
+        assert low.decision == high.decision == "QUALIFIED"
+        assert low.screening_score == high.screening_score, (
+            "creator stake moved the score; it is deliberately unscored because the "
+            "relationship is non-monotonic and no calibrated midpoint exists"
+        )
+        from memescanner.unified_scanner import creator_stake_features
+
+        assert creator_stake_features(low.evidence["onchain"])[
+            "creator_stake_bucket"
+        ] == "NONE"
+        assert creator_stake_features(high.evidence["onchain"])[
+            "creator_stake_bucket"
+        ] == "SUBSTANTIAL"
+
+
+class TestFeaturesReachTheDatabase:
+    """Features are only useful if attribution can read them back.
+
+    They are attached when the observation is built rather than during evaluation,
+    so they are recorded for *every* decision -- including rejections. A feature
+    present only on winners cannot be tested for separation, because there is
+    nothing to compare it against.
+    """
+
+    @pytest.mark.asyncio
+    async def test_features_are_persisted_for_every_decision(self, database):
+        import json
+
+        candidate = _candidate_with_mint("MintFeatures")
+        candidate.social_links.add("https://t.me/mintfeatures")
+        candidate.source_metadata = {"pumpfun": {"cto_username": "takeover_dev"}}
+
+        await _run_scanner(database, [candidate])
+
+        assert database._db is not None
+        async with database._db.execute(
+            "SELECT evidence_json FROM candidate_observations"
+        ) as cursor:
+            rows = await cursor.fetchall()
+        assert rows, "no observation was recorded"
+
+        features = json.loads(rows[0]["evidence_json"])["features"]
+        assert features["has_telegram"] is True
+        assert features["has_community_takeover"] is True
+        assert features["community_takeover"] == "takeover_dev"
+        assert features["social_channel_count"] == 2
+        assert "creator_stake_bucket" in features
+
+    @pytest.mark.asyncio
+    async def test_features_are_frozen_into_the_cohort_for_calibration(self, database):
+        """initial_features_json is where calibration reads its predictors."""
+        import json
+
+        candidate = _candidate_with_mint("MintFrozen")
+        candidate.social_links.add("https://t.me/mintfrozen")
+
+        await _run_scanner(database, [candidate])
+
+        assert database._db is not None
+        async with database._db.execute(
+            "SELECT initial_features_json FROM cohort_candidates WHERE mint = ?",
+            ("MintFrozen",),
+        ) as cursor:
+            row = await cursor.fetchone()
+        assert row is not None and row["initial_features_json"], (
+            "the cohort feature freeze is empty, so calibration has no predictors"
+        )
+        frozen = json.loads(row["initial_features_json"])
+        assert frozen["evidence"]["features"]["has_telegram"] is True

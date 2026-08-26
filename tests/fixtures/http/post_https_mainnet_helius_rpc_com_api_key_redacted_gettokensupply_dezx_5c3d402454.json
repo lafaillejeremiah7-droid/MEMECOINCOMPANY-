@@ -1,0 +1,23 @@
+{
+  "headers": {
+    "content-type": "application/json; charset=utf-8"
+  },
+  "json": {
+    "id": 1,
+    "jsonrpc": "2.0",
+    "result": {
+      "context": {
+        "apiVersion": "4.2.0-rc.1",
+        "slot": 441876872
+      },
+      "value": {
+        "amount": "8799458348726323350",
+        "decimals": 5,
+        "uiAmount": 87994583487263.23,
+        "uiAmountString": "87994583487263.2335"
+      }
+    }
+  },
+  "signature": "POST https://mainnet.helius-rpc.com/?api-key=REDACTED getTokenSupply:DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263",
+  "status": 200
+}

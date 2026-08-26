@@ -6,578 +6,555 @@
     {
       "chainId": "solana",
       "cto": false,
-      "description": "Alon Cohen",
-      "header": "https://cdn.dexscreener.com/cms/images/7dQ2jJcR04Z_TVYf?width=600&height=200&fit=crop&quality=95&format=auto",
-      "icon": "https://cdn.dexscreener.com/cms/images/oxVU6BdxJ4Dgg0BM?width=64&height=64&fit=crop&quality=95&format=auto",
+      "description": "Locked In is an allocator of permanent capital into productive meme engines.\n\nTrading fees build the treasury and feed the productive meme engines.  The engines feed distributions back into the capital reserve. $LOCK closes the loop around NAV.\n\nBuilt on STONK.",
+      "header": "https://cdn.dexscreener.com/cms/images/frQpAlmTR5uJAcj_?width=600&height=200&fit=crop&quality=95&format=auto",
+      "icon": "https://cdn.dexscreener.com/cms/images/O78cBpmH5HKXJ1lo?width=64&height=64&fit=crop&quality=95&format=auto",
       "links": [
         {
           "label": "Website",
-          "url": "https://www.google.com/search?q=alon+cohen+pumpfun&oq=alon+cohen&gs_lcrp=EgZjaHJvbWUqBggAEEUYOzIGCAAQRRg7MgYIARBFGDsyBggCEEUYPTIGCAMQRRg9MgYIBBBFGD3SAQgxMzk1ajBqNKgCALACAQ&sourceid=chrome&source=chrome.ob&ie=UTF-8"
+          "url": "https://volatility.lol/"
+        },
+        {
+          "label": "Docs",
+          "url": "https://volatility.lol/docs"
         },
         {
           "type": "twitter",
-          "url": "https://x.com/theAlonCoHEN/status/2092523663660589513?s=20"
+          "url": "https://x.com/Locked_in_stonk"
         }
       ],
-      "openGraph": "https://cdn.dexscreener.com/token-images/og/solana/GxMtp4neZT4SEfXWdn6TdtaqoE2VSKzgPdcR4rWUpump?timestamp=1787731800000",
-      "tokenAddress": "GxMtp4neZT4SEfXWdn6TdtaqoE2VSKzgPdcR4rWUpump",
-      "url": "https://dexscreener.com/solana/gxmtp4nezt4sefxwdn6tdtaqoe2vskzgpdcr4rwupump"
+      "openGraph": "https://cdn.dexscreener.com/token-images/og/solana/2dfjojA9wNV9d5otdtn4e3kiFwBbydi2M5jTHPVeVxF3?timestamp=1787751000000",
+      "tokenAddress": "2dfjojA9wNV9d5otdtn4e3kiFwBbydi2M5jTHPVeVxF3",
+      "url": "https://dexscreener.com/solana/2dfjoja9wnv9d5otdtn4e3kifwbbydi2m5jthpvevxf3"
     },
     {
       "chainId": "solana",
       "cto": false,
-      "description": "Chat K.I.D powered by NSIDIA\n\nCreator of Hailey",
-      "header": "https://cdn.dexscreener.com/cms/images/h2MPlQFRaYosGYNH?width=600&height=200&fit=crop&quality=95&format=auto",
-      "icon": "https://cdn.dexscreener.com/cms/images/2s3XtUIpZnSsEBP-?width=64&height=64&fit=crop&quality=95&format=auto",
+      "description": "self-verifying multi-agent research loop, not just another \u201cthrow 300 agents at a task\u201d swarm.",
+      "header": "https://cdn.dexscreener.com/cms/images/xj9O-CwnZo4uLbaR?width=600&height=200&fit=crop&quality=95&format=auto",
+      "icon": "https://cdn.dexscreener.com/cms/images/QwIBVt1e_aNhVDoC?width=64&height=64&fit=crop&quality=95&format=auto",
       "links": [
         {
           "type": "twitter",
-          "url": "https://x.com/jup_enjoyoors/status/2092512090216874084?s=20"
+          "url": "https://x.com/i/communities/2008478431881949199"
         }
       ],
-      "openGraph": "https://cdn.dexscreener.com/token-images/og/solana/FNFVkW7NivbagL6gf3i6ir3HdnRcpzc8MqpsqQkoNmQv?timestamp=1787731800000",
-      "tokenAddress": "FNFVkW7NivbagL6gf3i6ir3HdnRcpzc8MqpsqQkoNmQv",
-      "url": "https://dexscreener.com/solana/fnfvkw7nivbagl6gf3i6ir3hdnrcpzc8mqpsqqkonmqv"
+      "openGraph": "https://cdn.dexscreener.com/token-images/og/solana/DddajcZPHJ2LVM6e3Ey9Q4DB2vfi7UnitoMn4S97pump?timestamp=1787751000000",
+      "tokenAddress": "DddajcZPHJ2LVM6e3Ey9Q4DB2vfi7UnitoMn4S97pump",
+      "url": "https://dexscreener.com/solana/dddajczphj2lvm6e3ey9q4db2vfi7unitomn4s97pump"
+    },
+    {
+      "chainId": "solana",
+      "cto": false,
+      "header": "https://cdn.dexscreener.com/cms/images/0g3c2aSEbdHR3gRt?width=600&height=200&fit=crop&quality=95&format=auto",
+      "icon": "https://cdn.dexscreener.com/cms/images/XMMbADIAD4YBheXT?width=64&height=64&fit=crop&quality=95&format=auto",
+      "links": [
+        {
+          "type": "twitter",
+          "url": "https://x.com/barnsrebirth0/status/2092601608601317800"
+        }
+      ],
+      "openGraph": "https://cdn.dexscreener.com/token-images/og/solana/EAxFC4uTMdr9nNPzitpaBQwmfKwUe2VUy76d49cSpump?timestamp=1787751000000",
+      "tokenAddress": "EAxFC4uTMdr9nNPzitpaBQwmfKwUe2VUy76d49cSpump",
+      "url": "https://dexscreener.com/solana/eaxfc4utmdr9nnpzitpabqwmfkwue2vuy76d49cspump"
+    },
+    {
+      "chainId": "solana",
+      "cto": false,
+      "header": "https://cdn.dexscreener.com/cms/images/OdfeRxnxp585ZHWK?width=600&height=200&fit=crop&quality=95&format=auto",
+      "icon": "https://cdn.dexscreener.com/cms/images/S-SaXWH2RX3WkyxR?width=64&height=64&fit=crop&quality=95&format=auto",
+      "links": [
+        {
+          "type": "twitter",
+          "url": "https://x.com/i/communities/2020923132475855336"
+        }
+      ],
+      "openGraph": "https://cdn.dexscreener.com/token-images/og/solana/4FuA7Re7BBRYH1Fft34SZ8TuHr3mtsSHx8jTUKNRpump?timestamp=1787751000000",
+      "tokenAddress": "4FuA7Re7BBRYH1Fft34SZ8TuHr3mtsSHx8jTUKNRpump",
+      "url": "https://dexscreener.com/solana/4fua7re7bbryh1fft34sz8tuhr3mtsshx8jtuknrpump"
+    },
+    {
+      "chainId": "solana",
+      "cto": false,
+      "description": "\ufe0e\ufe0e\u2800",
+      "header": "https://cdn.dexscreener.com/cms/images/PM9sM_Xl3O5N-DNB?width=600&height=200&fit=crop&quality=95&format=auto",
+      "icon": "https://cdn.dexscreener.com/cms/images/4WcJ2UbSgMfjVJ6T?width=64&height=64&fit=crop&quality=95&format=auto",
+      "links": [
+        {
+          "type": "twitter",
+          "url": "https://x.com/WhiteSquareSol/status/2092583853114405214"
+        }
+      ],
+      "openGraph": "https://cdn.dexscreener.com/token-images/og/solana/GMPYdykPxkThvEU7zEBEvkMx9R8DDoEot3UZspqjpump?timestamp=1787751000000",
+      "tokenAddress": "GMPYdykPxkThvEU7zEBEvkMx9R8DDoEot3UZspqjpump",
+      "url": "https://dexscreener.com/solana/gmpydykpxkthveu7zebevkmx9r8ddoeot3uzspqjpump"
+    },
+    {
+      "chainId": "solana",
+      "cto": false,
+      "description": "Terence Crawford the legendary boxer gave president Zelenskyy an American Pit Bull Terrier puppy named Freya who was named after the future Ukrainian Freyja air defense system.",
+      "header": "https://cdn.dexscreener.com/cms/images/Cz7bRSucCVyAzN55?width=600&height=200&fit=crop&quality=95&format=auto",
+      "icon": "https://cdn.dexscreener.com/cms/images/226B-pXZAxn-Q47b?width=64&height=64&fit=crop&quality=95&format=auto",
+      "links": [
+        {
+          "label": "Website",
+          "url": "https://www.youtube.com/watch?v=8IPMP8jSm7I"
+        },
+        {
+          "type": "twitter",
+          "url": "https://x.com/ZelenskyyUa/status/2092324263030084027"
+        },
+        {
+          "type": "instagram",
+          "url": "https://www.instagram.com/reels/DcgLBA1jj7z/"
+        }
+      ],
+      "openGraph": "https://cdn.dexscreener.com/token-images/og/solana/25B6UHvygkc4HPWu4C5rXWBizUicqstKUgAch5s7pump?timestamp=1787751000000",
+      "tokenAddress": "25B6UHvygkc4HPWu4C5rXWBizUicqstKUgAch5s7pump",
+      "url": "https://dexscreener.com/solana/25b6uhvygkc4hpwu4c5rxwbizuicqstkugach5s7pump"
     },
     {
       "chainId": "robinhood",
       "cto": false,
-      "description": "Route Pons creator fees to any @handle",
-      "header": "https://cdn.dexscreener.com/cms/images/Kz32z81CWhLI0B8j?width=600&height=200&fit=crop&quality=95&format=auto",
-      "icon": "https://cdn.dexscreener.com/cms/images/zWxAnKUGmxoMrEko?width=64&height=64&fit=crop&quality=95&format=auto",
+      "description": "Pixel RPG on RH Chain. Explore. Craft. Progress. Own $KOTS",
+      "header": "https://cdn.dexscreener.com/cms/images/PsOWiYCyI4cAc2nk?width=600&height=200&fit=crop&quality=95&format=auto",
+      "icon": "https://cdn.dexscreener.com/cms/images/NiwlNR0qp9Zki7zz?width=64&height=64&fit=crop&quality=95&format=auto",
       "links": [
         {
           "label": "Website",
-          "url": "https://www.ponsflow.xyz/"
+          "url": "https://kottara.cc"
         },
         {
           "type": "twitter",
-          "url": "https://x.com/ponsflow"
-        }
-      ],
-      "openGraph": "https://cdn.dexscreener.com/token-images/og/robinhood/0xa9e00a9c48ad74f7a99c31b6df132f82728bb4bf?timestamp=1787731800000",
-      "tokenAddress": "0xa9E00A9C48AD74f7a99C31B6df132F82728Bb4BF",
-      "url": "https://dexscreener.com/robinhood/0xa9e00a9c48ad74f7a99c31b6df132f82728bb4bf"
-    },
-    {
-      "chainId": "solana",
-      "cto": false,
-      "description": "",
-      "icon": "https://cdn.dexscreener.com/cms/images/oWGla7bmj18OhDfr?width=64&height=64&fit=crop&quality=95&format=auto",
-      "links": [
-        {
-          "type": "twitter",
-          "url": "https://x.com/himgajria/status/2092523283392729348?s=20"
-        }
-      ],
-      "openGraph": "https://cdn.dexscreener.com/token-images/og/solana/939ZvkpFWfvRDPbpLn3bis1nYNKjCX5vgtJTVrQppump?timestamp=1787731800000",
-      "tokenAddress": "939ZvkpFWfvRDPbpLn3bis1nYNKjCX5vgtJTVrQppump",
-      "url": "https://dexscreener.com/solana/939zvkpfwfvrdpbpln3bis1nynkjcx5vgtjtvrqppump"
-    },
-    {
-      "chainId": "solana",
-      "cto": false,
-      "description": "",
-      "header": "https://cdn.dexscreener.com/cms/images/G-sNvgkZBgevkqgK?width=600&height=200&fit=crop&quality=95&format=auto",
-      "icon": "https://cdn.dexscreener.com/cms/images/gCmNTZeGmNX-fLx7?width=64&height=64&fit=crop&quality=95&format=auto",
-      "links": [
-        {
-          "label": "Website",
-          "url": "https://greenpilldumpings.fun/"
+          "url": "https://x.com/kottaraCC"
         },
         {
           "type": "telegram",
-          "url": "https://t.me/GreenPillDumpings"
-        },
-        {
-          "type": "twitter",
-          "url": "https://x.com/GreenDumpings"
+          "url": "https://t.me/kottararh"
         }
       ],
-      "openGraph": "https://cdn.dexscreener.com/token-images/og/solana/VkGwWUW2wCmTkWreyE8eNAXENNrD46EVf9i27LHpump?timestamp=1787731800000",
-      "tokenAddress": "VkGwWUW2wCmTkWreyE8eNAXENNrD46EVf9i27LHpump",
-      "url": "https://dexscreener.com/solana/vkgwwuw2wcmtkwreye8enaxennrd46evf9i27lhpump"
+      "openGraph": "https://cdn.dexscreener.com/token-images/og/robinhood/0x3305ecb5f199ae848713e1b6ffe842ccadf1ca19?timestamp=1787751000000",
+      "tokenAddress": "0x3305EcB5f199ae848713E1B6fFe842ccAdF1CA19",
+      "url": "https://dexscreener.com/robinhood/0x3305ecb5f199ae848713e1b6ffe842ccadf1ca19"
     },
     {
       "chainId": "robinhood",
       "cto": false,
-      "description": "Green days finally came, Congratulation to those who survived and now all we deserve is gain gain gain.",
-      "header": "https://cdn.dexscreener.com/cms/images/Q_TyBGPxYWUhHwEC?width=600&height=200&fit=crop&quality=95&format=auto",
-      "icon": "https://cdn.dexscreener.com/cms/images/sqvGZ9bOWas08QF0?width=64&height=64&fit=crop&quality=95&format=auto",
+      "description": "Liquidity Built for Robinhood Chain.",
+      "header": "https://cdn.dexscreener.com/cms/images/fT7I_huC-xGrTWcm?width=600&height=200&fit=crop&quality=95&format=auto",
+      "icon": "https://cdn.dexscreener.com/cms/images/V8G0V-hrlvyHxPko?width=64&height=64&fit=crop&quality=95&format=auto",
       "links": [
         {
           "label": "Website",
-          "url": "http://greenbros.xyz"
+          "url": "https://verdant.markets/"
         },
         {
           "type": "twitter",
-          "url": "https://x.com/green_bross?s=11"
-        },
-        {
-          "type": "telegram",
-          "url": "https://t.me/Green_Bros"
+          "url": "https://x.com/VerdantPools"
         }
       ],
-      "openGraph": "https://cdn.dexscreener.com/token-images/og/robinhood/0x18375f41ea4875c138ce9a6946e05e1af74e19c9?timestamp=1787731800000",
-      "tokenAddress": "0x18375f41Ea4875c138CE9A6946e05E1af74e19c9",
-      "url": "https://dexscreener.com/robinhood/0x18375f41ea4875c138ce9a6946e05e1af74e19c9"
+      "openGraph": "https://cdn.dexscreener.com/token-images/og/robinhood/0x3f6a33df13763c0f9b3386e904ca180a2839dfa3?timestamp=1787751000000",
+      "tokenAddress": "0x3f6a33df13763c0f9b3386e904ca180a2839dfa3",
+      "url": "https://dexscreener.com/robinhood/0x3f6a33df13763c0f9b3386e904ca180a2839dfa3"
     },
     {
       "chainId": "solana",
       "cto": false,
-      "description": "BENNY",
-      "header": "https://cdn.dexscreener.com/cms/images/y2a32BG7RCoph5GZ?width=600&height=200&fit=crop&quality=95&format=auto",
-      "icon": "https://cdn.dexscreener.com/cms/images/JYf9SimeUWUjKSy7?width=64&height=64&fit=crop&quality=95&format=auto",
+      "header": "https://cdn.dexscreener.com/cms/images/PwHofRW9eOryCGIc?width=600&height=200&fit=crop&quality=95&format=auto",
+      "icon": "https://cdn.dexscreener.com/cms/images/MDsu-pe7FshNHgnb?width=64&height=64&fit=crop&quality=95&format=auto",
       "links": [
         {
           "label": "Website",
-          "url": "https://github.com/poteto/benny-avatars"
+          "url": "https://engagenepal.org/"
         },
         {
           "type": "twitter",
-          "url": "https://x.com/thequantski/status/2092520074192027891?s=20"
+          "url": "https://x.com/epsteinsen/status/2092597219941634075"
         }
       ],
-      "openGraph": "https://cdn.dexscreener.com/token-images/og/solana/9oVF6Y3ZLYLUbE4Y1stnrg2dPVgRFaiuiLXvQmW9pump?timestamp=1787731800000",
-      "tokenAddress": "9oVF6Y3ZLYLUbE4Y1stnrg2dPVgRFaiuiLXvQmW9pump",
-      "url": "https://dexscreener.com/solana/9ovf6y3zlylube4y1stnrg2dpvgrfaiuilxvqmw9pump"
-    },
-    {
-      "chainId": "solana",
-      "cto": false,
-      "description": "The ocean\u2019s friendliest shark.\nBig teeth. Bigger smile.\nSwimming through Solana one meme at a time.",
-      "header": "https://cdn.dexscreener.com/cms/images/zzqv8iwA5rsT7rhG?width=600&height=200&fit=crop&quality=95&format=auto",
-      "icon": "https://cdn.dexscreener.com/cms/images/n5mruWlhT5olagbi?width=64&height=64&fit=crop&quality=95&format=auto",
-      "links": [
-        {
-          "label": "Website",
-          "url": "https://smileshark.fun"
-        },
-        {
-          "type": "twitter",
-          "url": "https://x.com/SmileSharkpump"
-        }
-      ],
-      "openGraph": "https://cdn.dexscreener.com/token-images/og/solana/21PLMfTgJ5f4sv9w3y6eeNRouWqwuXfXyf7Kpdxypump?timestamp=1787731800000",
-      "tokenAddress": "21PLMfTgJ5f4sv9w3y6eeNRouWqwuXfXyf7Kpdxypump",
-      "url": "https://dexscreener.com/solana/21plmftgj5f4sv9w3y6eenrouwqwuxfxyf7kpdxypump"
-    },
-    {
-      "chainId": "robinhood",
-      "cto": false,
-      "description": "UNI AI is your animated desktop buddy in the crypto world. She floats hearts and catches alpha like a pro!",
-      "header": "https://cdn.dexscreener.com/cms/images/kfJWKZWlztlUIaHo?width=600&height=200&fit=crop&quality=95&format=auto",
-      "icon": "https://cdn.dexscreener.com/cms/images/H5xyfEZOoA5GL0qX?width=64&height=64&fit=crop&quality=95&format=auto",
-      "links": [
-        {
-          "label": "Website",
-          "url": "https://hiunichan.com"
-        },
-        {
-          "type": "twitter",
-          "url": "https://x.com/uniai_x"
-        }
-      ],
-      "openGraph": "https://cdn.dexscreener.com/token-images/og/robinhood/0x58945e7200385253f9e0caa4136a3b48e69b642d?timestamp=1787731800000",
-      "tokenAddress": "0x58945e7200385253F9e0CaA4136A3b48E69B642D",
-      "url": "https://dexscreener.com/robinhood/0x58945e7200385253f9e0caa4136a3b48e69b642d"
-    },
-    {
-      "chainId": "solana",
-      "cto": false,
-      "description": "biaqing",
-      "icon": "https://cdn.dexscreener.com/cms/images/NEHTX0rc05eIq_xy?width=64&height=64&fit=crop&quality=95&format=auto",
-      "links": [
-        {
-          "label": "Website",
-          "url": "https://knowyourmeme.com/memes/chinese-panda-reaction-images-biaoqing-panda-head-%E7%86%8A%E7%8C%AB%E4%BA%BA%E8%A1%A8%E6%83%85%E5%8C%85"
-        }
-      ],
-      "openGraph": "https://cdn.dexscreener.com/token-images/og/solana/6JjNdx8ZcXmPDdYHSKnxqeTV4ZwgdsgakooBhXaVrauo?timestamp=1787731800000",
-      "tokenAddress": "6JjNdx8ZcXmPDdYHSKnxqeTV4ZwgdsgakooBhXaVrauo",
-      "url": "https://dexscreener.com/solana/6jjndx8zcxmpddyhsknxqetv4zwgdsgakoobhxavrauo"
-    },
-    {
-      "chainId": "solana",
-      "cto": false,
-      "description": "",
-      "header": "https://cdn.dexscreener.com/cms/images/n1vxQjN7_HOG_0us?width=600&height=200&fit=crop&quality=95&format=auto",
-      "icon": "https://cdn.dexscreener.com/cms/images/z5qtP0AO8kQCf68P?width=64&height=64&fit=crop&quality=95&format=auto",
-      "links": [
-        {
-          "label": "Website",
-          "url": "https://www.tvline.com/2242661/the-simpsons-trailer-release-date-yellow-mirror-episode-disney-plus/"
-        },
-        {
-          "type": "twitter",
-          "url": "https://x.com/BaggyWorks/status/2092516604282351841?s=20"
-        }
-      ],
-      "openGraph": "https://cdn.dexscreener.com/token-images/og/solana/AAMiaVLRx3nZRcsxcBph86WFsKLtZENcL3PaBMM7pump?timestamp=1787731800000",
-      "tokenAddress": "AAMiaVLRx3nZRcsxcBph86WFsKLtZENcL3PaBMM7pump",
-      "url": "https://dexscreener.com/solana/aamiavlrx3nzrcsxcbph86wfskltzencl3pabmm7pump"
-    },
-    {
-      "chainId": "solana",
-      "cto": false,
-      "header": "https://cdn.dexscreener.com/cms/images/5qRnLfwx6FW6btQw?width=600&height=200&fit=crop&quality=95&format=auto",
-      "icon": "https://cdn.dexscreener.com/cms/images/vyLysHdIfuBhtzX-?width=64&height=64&fit=crop&quality=95&format=auto",
-      "links": [
-        {
-          "label": "Website",
-          "url": "https://www.youtube.com/watch?t=37&v=zNyZ6OlMbh0&feature=youtu.be"
-        },
-        {
-          "type": "twitter",
-          "url": "https://x.com/kerosene2345241/status/2092520428652617991"
-        }
-      ],
-      "openGraph": "https://cdn.dexscreener.com/token-images/og/solana/4VyMAxNFTUzYnWpyHvMKDVTXqivy87S3DMnE1diXpump?timestamp=1787731800000",
-      "tokenAddress": "4VyMAxNFTUzYnWpyHvMKDVTXqivy87S3DMnE1diXpump",
-      "url": "https://dexscreener.com/solana/4vymaxnftuzynwpyhvmkdvtxqivy87s3dmne1dixpump"
-    },
-    {
-      "chainId": "solana",
-      "cto": false,
-      "description": "",
-      "header": "https://cdn.dexscreener.com/cms/images/4a-eXtB_DTOaw0Ou?width=600&height=200&fit=crop&quality=95&format=auto",
-      "icon": "https://cdn.dexscreener.com/cms/images/K4U7B_yJ6GczZQBp?width=64&height=64&fit=crop&quality=95&format=auto",
-      "links": [
-        {
-          "label": "Website",
-          "url": "https://fomoonboarding.fun/"
-        },
-        {
-          "type": "telegram",
-          "url": "https://t.me/fomoonboarding"
-        },
-        {
-          "type": "twitter",
-          "url": "https://x.com/fomoonboardings"
-        }
-      ],
-      "openGraph": "https://cdn.dexscreener.com/token-images/og/solana/Fw85h5Hi3qGvU7BqUJFzrjBZy1rPS5agUCf3fbqwpump?timestamp=1787731800000",
-      "tokenAddress": "Fw85h5Hi3qGvU7BqUJFzrjBZy1rPS5agUCf3fbqwpump",
-      "url": "https://dexscreener.com/solana/fw85h5hi3qgvu7bqujfzrjbzy1rps5agucf3fbqwpump"
-    },
-    {
-      "chainId": "solana",
-      "cto": false,
-      "description": "SAT is the Solana Cat, a legendary feline inspired by Matt Furie\u2019s iconic Boy\u2019s Club universe.",
-      "header": "https://cdn.dexscreener.com/cms/images/fHe3IyDbckSgxw1k?width=600&height=200&fit=crop&quality=95&format=auto",
-      "icon": "https://cdn.dexscreener.com/cms/images/o8jHrTgX3vCHENRY?width=64&height=64&fit=crop&quality=95&format=auto",
-      "links": [
-        {
-          "label": "Website",
-          "url": "https://solanacatofc.fun/"
-        },
-        {
-          "type": "twitter",
-          "url": "https://x.com/Solanacatofc"
-        },
-        {
-          "type": "telegram",
-          "url": "https://t.me/SolanaCatOfficial"
-        }
-      ],
-      "openGraph": "https://cdn.dexscreener.com/token-images/og/solana/76FvgNiTz8Tsfcqn8p96SYVcEmseAQjJzFLjDLnfpump?timestamp=1787731800000",
-      "tokenAddress": "76FvgNiTz8Tsfcqn8p96SYVcEmseAQjJzFLjDLnfpump",
-      "url": "https://dexscreener.com/solana/76fvgnitz8tsfcqn8p96syvcemseaqjjzfljdlnfpump"
-    },
-    {
-      "chainId": "solana",
-      "cto": false,
-      "description": "",
-      "header": "https://cdn.dexscreener.com/cms/images/Q7LFdfbH7J-G3tnO?width=600&height=200&fit=crop&quality=95&format=auto",
-      "icon": "https://cdn.dexscreener.com/cms/images/mI3bXXGVVp-1DRKT?width=64&height=64&fit=crop&quality=95&format=auto",
-      "links": [
-        {
-          "label": "Website",
-          "url": "https://madagascarzoo.com/animals/glorg"
-        },
-        {
-          "type": "twitter",
-          "url": "https://x.com/Tigesol4/status/2092514446040080771"
-        }
-      ],
-      "openGraph": "https://cdn.dexscreener.com/token-images/og/solana/bD5LKw5oytvA1TM39LhL8po1CMeD5Hd9Qw7t9jnpump?timestamp=1787731800000",
-      "tokenAddress": "bD5LKw5oytvA1TM39LhL8po1CMeD5Hd9Qw7t9jnpump",
-      "url": "https://dexscreener.com/solana/bd5lkw5oytva1tm39lhl8po1cmed5hd9qw7t9jnpump"
-    },
-    {
-      "chainId": "solana",
-      "cto": false,
-      "description": "",
-      "header": "https://cdn.dexscreener.com/cms/images/il8cR6Y3qey5f5LA?width=600&height=200&fit=crop&quality=95&format=auto",
-      "icon": "https://cdn.dexscreener.com/cms/images/7hTN8GjnjPWeUQDt?width=64&height=64&fit=crop&quality=95&format=auto",
-      "links": [
-        {
-          "type": "twitter",
-          "url": "https://x.com/negradinas/status/2092510678204493904"
-        }
-      ],
-      "openGraph": "https://cdn.dexscreener.com/token-images/og/solana/EKm5fiLY9uTTkUnyu89VaSCjt2JCYMRF25dVGGnvpump?timestamp=1787731800000",
-      "tokenAddress": "EKm5fiLY9uTTkUnyu89VaSCjt2JCYMRF25dVGGnvpump",
-      "url": "https://dexscreener.com/solana/ekm5fily9uttkunyu89vascjt2jcymrf25dvggnvpump"
-    },
-    {
-      "chainId": "solana",
-      "cto": false,
-      "description": "Chubby, curious, a little messy, and totally unbothered.",
-      "header": "https://cdn.dexscreener.com/cms/images/2fJbb_kTcNCn_bWN?width=600&height=200&fit=crop&quality=95&format=auto",
-      "icon": "https://cdn.dexscreener.com/cms/images/duXPDNVJ5VyiCHw_?width=64&height=64&fit=crop&quality=95&format=auto",
-      "links": [
-        {
-          "label": "Website",
-          "url": "https://dogtasio.xyz/"
-        },
-        {
-          "type": "twitter",
-          "url": "https://x.com/dogtasio"
-        }
-      ],
-      "openGraph": "https://cdn.dexscreener.com/token-images/og/solana/DMoRRheiQrGVRm6Z76Hfg5XxqJF5kJ4vX9A2cDNKpump?timestamp=1787731800000",
-      "tokenAddress": "DMoRRheiQrGVRm6Z76Hfg5XxqJF5kJ4vX9A2cDNKpump",
-      "url": "https://dexscreener.com/solana/dmorrheiqrgvrm6z76hfg5xxqjf5kj4vx9a2cdnkpump"
+      "openGraph": "https://cdn.dexscreener.com/token-images/og/solana/FvoyRoYAZZhr98aL63GYU3Zdcg89Qu32D557eKxGpump?timestamp=1787751000000",
+      "tokenAddress": "FvoyRoYAZZhr98aL63GYU3Zdcg89Qu32D557eKxGpump",
+      "url": "https://dexscreener.com/solana/fvoyroyazzhr98al63gyu3zdcg89qu32d557ekxgpump"
     },
     {
       "chainId": "bsc",
       "cto": false,
-      "description": "\u65fa",
-      "icon": "https://cdn.dexscreener.com/cms/images/61CRlUSUMx1ZePCB?width=64&height=64&fit=crop&quality=95&format=auto",
-      "links": [
-        {
-          "type": "twitter",
-          "url": "https://x.com/binancezh/status/2092416864005898705?s=46"
-        }
-      ],
-      "openGraph": "https://cdn.dexscreener.com/token-images/og/bsc/0x5eed882744136096af80a0d712a7f87b5fc67777?timestamp=1787731800000",
-      "tokenAddress": "0x5EEd882744136096aF80A0d712a7f87B5fc67777",
-      "url": "https://dexscreener.com/bsc/0x5eed882744136096af80a0d712a7f87b5fc67777"
-    },
-    {
-      "chainId": "solana",
-      "cto": false,
-      "description": "Chigger the Chud Pig",
-      "header": "https://cdn.dexscreener.com/cms/images/SLUjzp3lFbnpUuDh?width=600&height=200&fit=crop&quality=95&format=auto",
-      "icon": "https://cdn.dexscreener.com/cms/images/VpDuFo_C8f14rr9t?width=64&height=64&fit=crop&quality=95&format=auto",
-      "links": [
-        {
-          "type": "twitter",
-          "url": "https://x.com/i/communities/2020760400418226607"
-        }
-      ],
-      "openGraph": "https://cdn.dexscreener.com/token-images/og/solana/9HCvToJc8r2s36RQs6WMxPQdXDMfD3miGBAfxyHtpump?timestamp=1787731800000",
-      "tokenAddress": "9HCvToJc8r2s36RQs6WMxPQdXDMfD3miGBAfxyHtpump",
-      "url": "https://dexscreener.com/solana/9hcvtojc8r2s36rqs6wmxpqdxdmfd3migbafxyhtpump"
-    },
-    {
-      "chainId": "solana",
-      "cto": false,
-      "description": "The peanut that refused to be snacked.\nUnconventional. Unbothered. Unsnackable.",
-      "header": "https://cdn.dexscreener.com/cms/images/ypMG2VNOwtkyRD__?width=600&height=200&fit=crop&quality=95&format=auto",
-      "icon": "https://cdn.dexscreener.com/cms/images/ZsK2j6RDAJmuU5EK?width=64&height=64&fit=crop&quality=95&format=auto",
+      "description": "Make America Great Again",
+      "header": "https://cdn.dexscreener.com/cms/images/rC-ti3onwBrCs0NC?width=600&height=200&fit=crop&quality=95&format=auto",
+      "icon": "https://cdn.dexscreener.com/cms/images/RzNZT-0no5dJWGAL?width=64&height=64&fit=crop&quality=95&format=auto",
       "links": [
         {
           "label": "Website",
-          "url": "https://arachio.club"
+          "url": "http://magatoken.online/"
         },
         {
           "type": "twitter",
-          "url": "https://x.com/Arachiosol"
+          "url": "https://x.com/magaonflap?s=11"
         }
       ],
-      "openGraph": "https://cdn.dexscreener.com/token-images/og/solana/4q1hqq3EjhBMMiox6d2r6Y1QFSiBzsc6wBxpHsKGpump?timestamp=1787731800000",
-      "tokenAddress": "4q1hqq3EjhBMMiox6d2r6Y1QFSiBzsc6wBxpHsKGpump",
-      "url": "https://dexscreener.com/solana/4q1hqq3ejhbmmiox6d2r6y1qfsibzsc6wbxphskgpump"
+      "openGraph": "https://cdn.dexscreener.com/token-images/og/bsc/0x874bae11cea3b47b5ad2eeac92e4e9e884be7777?timestamp=1787751000000",
+      "tokenAddress": "0x874BAe11CEa3b47B5aD2EeaC92E4E9e884be7777",
+      "url": "https://dexscreener.com/bsc/0x874bae11cea3b47b5ad2eeac92e4e9e884be7777"
+    },
+    {
+      "chainId": "solana",
+      "cto": false,
+      "description": "Paw Coin",
+      "header": "https://cdn.dexscreener.com/cms/images/KPiG7r_SMxeBzaNs?width=600&height=200&fit=crop&quality=95&format=auto",
+      "icon": "https://cdn.dexscreener.com/cms/images/6kujkdmNx0MAkXqi?width=64&height=64&fit=crop&quality=95&format=auto",
+      "links": [
+        {
+          "type": "twitter",
+          "url": "https://x.com/duajdpoald/status/2092596336256258501"
+        }
+      ],
+      "openGraph": "https://cdn.dexscreener.com/token-images/og/solana/FG4sZnPTkjr2xxchTQEiWHXZUc9SWGmT8MDGG17Npump?timestamp=1787751000000",
+      "tokenAddress": "FG4sZnPTkjr2xxchTQEiWHXZUc9SWGmT8MDGG17Npump",
+      "url": "https://dexscreener.com/solana/fg4sznptkjr2xxchtqeiwhxzuc9swgmt8mdgg17npump"
+    },
+    {
+      "chainId": "solana",
+      "cto": false,
+      "description": "Frigger",
+      "header": "https://cdn.dexscreener.com/cms/images/jLPcaLNhRa_Q8TGm?width=600&height=200&fit=crop&quality=95&format=auto",
+      "icon": "https://cdn.dexscreener.com/cms/images/DP6QXy4-b3jhdhil?width=64&height=64&fit=crop&quality=95&format=auto",
+      "links": [
+        {
+          "type": "twitter",
+          "url": "https://x.com/hyamsol/status/2092595482547613725?s=20"
+        }
+      ],
+      "openGraph": "https://cdn.dexscreener.com/token-images/og/solana/3ADFSs4v7fXCApWiYKiSBHuRkaR7915kcxvSZZpVpump?timestamp=1787751000000",
+      "tokenAddress": "3ADFSs4v7fXCApWiYKiSBHuRkaR7915kcxvSZZpVpump",
+      "url": "https://dexscreener.com/solana/3adfss4v7fxcapwiykisbhurkar7915kcxvszzpvpump"
     },
     {
       "chainId": "robinhood",
       "cto": false,
-      "description": "Elonius I can definitely see it lol",
-      "header": "https://cdn.dexscreener.com/cms/images/mtuPVqZDvyZvETgH?width=600&height=200&fit=crop&quality=95&format=auto",
-      "icon": "https://cdn.dexscreener.com/cms/images/eSQzOQ5qBWthWp_W?width=64&height=64&fit=crop&quality=95&format=auto",
-      "links": [
-        {
-          "type": "twitter",
-          "url": "https://x.com/VVoahsol/status/2079762771961340192"
-        }
-      ],
-      "openGraph": "https://cdn.dexscreener.com/token-images/og/robinhood/0x7fb0a0ebcb640f20bcec7f1d910d87a3793744bc?timestamp=1787731800000",
-      "tokenAddress": "0x7fB0A0EBcB640f20BCeC7f1D910D87a3793744bC",
-      "url": "https://dexscreener.com/robinhood/0x7fb0a0ebcb640f20bcec7f1d910d87a3793744bc"
-    },
-    {
-      "chainId": "solana",
-      "cto": false,
-      "description": "The first bot that allows anyone to turn creator fees into xStock rewards",
-      "header": "https://cdn.dexscreener.com/cms/images/kKm3cKdVrQO7UCcx?width=600&height=200&fit=crop&quality=95&format=auto",
-      "icon": "https://cdn.dexscreener.com/cms/images/5t4WUBO3wkc6NbUm?width=64&height=64&fit=crop&quality=95&format=auto",
+      "description": "\ud83d\udc1f SARDINES // THE NARRATIVE\n\nSardines is a persistent 8-bit world built for the retail community on Robinhood Chain.\n\nInside The School, every member creates a School ID, chooses an Origin, completes missions, earns XP, levels up, unlocks badges and gear, joins the community, and builds a history that grows over time.\n\nYour wallet shows what you own.\nYour School ID shows what you've done.\n\nThe philosophy is simple:\n\n\ud83d\udc1f Retail is stronger together.\n\u26a1 Participation matters more than wallet size.\n\ud83c\udfc6 Show up early. Participate often. Build your history.\n\nThe Sardines who participate, contribute and help build The School create more opportunities for whatever comes next.\n\nThis isn't just about holding $SARD.\n\nIt's about becoming part of The School.\n\nRETAIL SWIMS TOGETHER. \ud83d\udc1f\ud83c\udf0a",
+      "header": "https://cdn.dexscreener.com/cms/images/8ft_2BNDfDFURqvy?width=600&height=200&fit=crop&quality=95&format=auto",
+      "icon": "https://cdn.dexscreener.com/cms/images/hWh8AObCnTwN6Gzx?width=64&height=64&fit=crop&quality=95&format=auto",
       "links": [
         {
           "label": "Website",
-          "url": "https://xbotrewards.com/"
+          "url": "https://wearesardines.com/"
         },
         {
           "type": "twitter",
-          "url": "https://x.com/xBotstocks/status/2092508581098627488?s=20"
+          "url": "https://x.com/sardonrobinhood"
+        },
+        {
+          "type": "telegram",
+          "url": "https://t.me/sardonrobinhood"
         }
       ],
-      "openGraph": "https://cdn.dexscreener.com/token-images/og/solana/EC99bW1jaWo1gSovbbSVgfJkYRefDf4CXB89L4xBpump?timestamp=1787731800000",
-      "tokenAddress": "EC99bW1jaWo1gSovbbSVgfJkYRefDf4CXB89L4xBpump",
-      "url": "https://dexscreener.com/solana/ec99bw1jawo1gsovbbsvgfjkyrefdf4cxb89l4xbpump"
+      "openGraph": "https://cdn.dexscreener.com/token-images/og/robinhood/0xfaff8708913483b5e61738aa12f48703696c6744?timestamp=1787751000000",
+      "tokenAddress": "0xFAFF8708913483B5E61738Aa12f48703696c6744",
+      "url": "https://dexscreener.com/robinhood/0xfaff8708913483b5e61738aa12f48703696c6744"
     },
     {
       "chainId": "solana",
       "cto": false,
       "description": "",
-      "header": "https://cdn.dexscreener.com/cms/images/ifS-HYWMy6RS64qj?width=600&height=200&fit=crop&quality=95&format=auto",
-      "icon": "https://cdn.dexscreener.com/cms/images/0Pqv1NUCiIJend-j?width=64&height=64&fit=crop&quality=95&format=auto",
+      "header": "https://cdn.dexscreener.com/cms/images/wtexxa1yqV-z2qnP?width=600&height=200&fit=crop&quality=95&format=auto",
+      "icon": "https://cdn.dexscreener.com/cms/images/nsWVXrvqJ9XeHZSt?width=64&height=64&fit=crop&quality=95&format=auto",
       "links": [
         {
-          "label": "Website",
-          "url": "https://x.com/search?q=NPC&src=typed_query"
-        },
-        {
           "type": "twitter",
-          "url": "https://x.com/ord1nary_fella/status/2092504962420842936"
+          "url": "https://x.com/lana_goat/status/2092595366768062883"
         }
       ],
-      "openGraph": "https://cdn.dexscreener.com/token-images/og/solana/3aNrzs5CqJa6sPYss1XPCbjDBejU8E9CsLxjnhVNpump?timestamp=1787731800000",
-      "tokenAddress": "3aNrzs5CqJa6sPYss1XPCbjDBejU8E9CsLxjnhVNpump",
-      "url": "https://dexscreener.com/solana/3anrzs5cqja6spyss1xpcbjdbeju8e9cslxjnhvnpump"
+      "openGraph": "https://cdn.dexscreener.com/token-images/og/solana/3ixc9gXSNJaAHnY63oVEfF6CxcoXQZj2VVvK2saeA8N2?timestamp=1787751000000",
+      "tokenAddress": "3ixc9gXSNJaAHnY63oVEfF6CxcoXQZj2VVvK2saeA8N2",
+      "url": "https://dexscreener.com/solana/3ixc9gxsnjaahny63oveff6cxcoxqzj2vvvk2saea8n2"
     },
     {
       "chainId": "solana",
       "cto": false,
-      "description": "Public Agent Ledger. A project agent uses creator fees to acquire tools, ship upgrades and publish every decision, payment and receipt.",
-      "header": "https://cdn.dexscreener.com/cms/images/AyJJnwTnz6_I2QAF?width=600&height=200&fit=crop&quality=95&format=auto",
-      "icon": "https://cdn.dexscreener.com/cms/images/mH-1yeNAgrAufuvr?width=64&height=64&fit=crop&quality=95&format=auto",
+      "description": "pre-heaven",
+      "header": "https://cdn.dexscreener.com/cms/images/n3QtnD7ViSHLDIM4?width=600&height=200&fit=crop&quality=95&format=auto",
+      "icon": "https://cdn.dexscreener.com/cms/images/YVTls8lN4iWKekqi?width=64&height=64&fit=crop&quality=95&format=auto",
       "links": [
         {
           "label": "Website",
-          "url": "https://www.agentledger.fun/"
+          "url": "https://www.titancat.lol"
         },
         {
           "type": "twitter",
-          "url": "https://x.com/AgentLedgerSOL"
+          "url": "https://x.com/TitanCatSol"
         }
       ],
-      "openGraph": "https://cdn.dexscreener.com/token-images/og/solana/ou14rSwTWSwQKRRECMSps5Xc2tkdXxRQ9gym6TDpump?timestamp=1787731800000",
-      "tokenAddress": "ou14rSwTWSwQKRRECMSps5Xc2tkdXxRQ9gym6TDpump",
-      "url": "https://dexscreener.com/solana/ou14rswtwswqkrrecmsps5xc2tkdxxrq9gym6tdpump"
-    },
-    {
-      "chainId": "solana",
-      "cto": false,
-      "description": "Joguman doesn\u2019t need the perfect moment. He moves when he feels like moving, stops when he needs to, and somehow always ends up exactly where he belongs.",
-      "header": "https://cdn.dexscreener.com/cms/images/BmLvpkY9PZX3uyK-?width=600&height=200&fit=crop&quality=95&format=auto",
-      "icon": "https://cdn.dexscreener.com/cms/images/FiF-Uio8Gs9voZcr?width=64&height=64&fit=crop&quality=95&format=auto",
-      "links": [
-        {
-          "label": "Website",
-          "url": "https://joguman.xyz/"
-        },
-        {
-          "type": "twitter",
-          "url": "https://x.com/greenjoguman"
-        }
-      ],
-      "openGraph": "https://cdn.dexscreener.com/token-images/og/solana/6hekwc4iXJTMZzzz8Zws9CkDeKey7xhqYYL6W1n7pump?timestamp=1787731800000",
-      "tokenAddress": "6hekwc4iXJTMZzzz8Zws9CkDeKey7xhqYYL6W1n7pump",
-      "url": "https://dexscreener.com/solana/6hekwc4ixjtmzzzz8zws9ckdekey7xhqyyl6w1n7pump"
-    },
-    {
-      "chainId": "hyperevm",
-      "cto": false,
-      "description": "Catfish is swimming through HyperEVM with viral memes, wild energy, and deep liquidity vibes.",
-      "header": "https://cdn.dexscreener.com/cms/images/8JwvVVS1dpxpuAX2?width=600&height=200&fit=crop&quality=95&format=auto",
-      "icon": "https://cdn.dexscreener.com/cms/images/LEXe4gPv9JFnFzHl?width=64&height=64&fit=crop&quality=95&format=auto",
-      "links": [
-        {
-          "label": "Website",
-          "url": "https://www.catfishhyper.site"
-        },
-        {
-          "type": "twitter",
-          "url": "https://x.com/CatfishHyper"
-        }
-      ],
-      "openGraph": "https://cdn.dexscreener.com/token-images/og/hyperevm/0xd99788f745b0bb4968022ff45c69868979408090?timestamp=1787731800000",
-      "tokenAddress": "0xD99788F745b0BB4968022Ff45C69868979408090",
-      "url": "https://dexscreener.com/hyperevm/0xd99788f745b0bb4968022ff45c69868979408090"
+      "openGraph": "https://cdn.dexscreener.com/token-images/og/solana/4AtayUU6mSoEWWNeJbtc21fYLPArvpUBYebpkDXBpump?timestamp=1787751000000",
+      "tokenAddress": "4AtayUU6mSoEWWNeJbtc21fYLPArvpUBYebpkDXBpump",
+      "url": "https://dexscreener.com/solana/4atayuu6msoewwnejbtc21fylparvpubyebpkdxbpump"
     },
     {
       "chainId": "solana",
       "cto": false,
       "description": "",
-      "header": "https://cdn.dexscreener.com/cms/images/DaHtpTlBU1Tywnk_?width=600&height=200&fit=crop&quality=95&format=auto",
-      "icon": "https://cdn.dexscreener.com/cms/images/30IVzQFHzZKwefb-?width=64&height=64&fit=crop&quality=95&format=auto",
+      "icon": "https://cdn.dexscreener.com/cms/images/Qq1OVgsZneuELxKq?width=64&height=64&fit=crop&quality=95&format=auto",
       "links": [
         {
-          "label": "Website",
-          "url": "https://x.com/messedupfoods/status/2092346525234200898?s=46"
-        },
-        {
           "type": "twitter",
-          "url": "https://x.com/i/communities/2036506549129040199"
+          "url": "https://x.com/pumpfuncallouts?s=11"
         }
       ],
-      "openGraph": "https://cdn.dexscreener.com/token-images/og/solana/25AZn4nWmnJ8UtWqiqoGLptpAdfPnjiVTM8HgWczpump?timestamp=1787731800000",
-      "tokenAddress": "25AZn4nWmnJ8UtWqiqoGLptpAdfPnjiVTM8HgWczpump",
-      "url": "https://dexscreener.com/solana/25azn4nwmnj8utwqiqoglptpadfpnjivtm8hgwczpump"
+      "openGraph": "https://cdn.dexscreener.com/token-images/og/solana/EXcaNjqBp6KPWZr7c53hujgU2qiQxSMHyMHDi4iEpump?timestamp=1787751000000",
+      "tokenAddress": "EXcaNjqBp6KPWZr7c53hujgU2qiQxSMHyMHDi4iEpump",
+      "url": "https://dexscreener.com/solana/excanjqbp6kpwzr7c53hujgu2qiqxsmhymhdi4iepump"
     },
     {
       "chainId": "bsc",
       "cto": false,
-      "description": "A struggling shop in Guangzhou found three unlikely \u201cangel investors.\u201d After hearing the owner was preparing to close, three young boys pooled their pocket money and left 10.5 yuan (US$1.50) on the counter to help.",
-      "header": "https://cdn.dexscreener.com/cms/images/-_n1oWtAcZ84gckA?width=600&height=200&fit=crop&quality=95&format=auto",
-      "icon": "https://cdn.dexscreener.com/cms/images/0BzJO6QSPeFY04FY?width=64&height=64&fit=crop&quality=95&format=auto",
+      "description": "\ud83d\udc4a\ud83c\udffbPangu Community builds Oscar OSK to empower official FIST\nContract Address: 0xc9882def23bc42d53895b8361d0b1edc7570bc6a\n\ud83d\udc8eHold 10,000 tokens to earn 0.5% FIST dividends; add liquidity pool to earn 0.5% BNB dividends. First add liquidity to PancakeSwap V2 pool, then go to the official flapsh Butterfly website, search for the OSK token and open the tax\u2011details page to start staking! BNB staking rewards need manual claiming!\n\ud83d\udd25\ud83e\udd8bSettled on Butterfly Platform! The King of Traffic!\n\ud83c\udf39We will lead the Pangu community to push OSK to Alpha tier,\nLet Little Fist gain worldwide fame!\n\ud83d\udc51Destined by heaven, long live our cause\n\ud83d\udc51Carry on the great mission, united market\u2011making",
+      "header": "https://cdn.dexscreener.com/cms/images/hYhlxs-j93b8h5Pp?width=600&height=200&fit=crop&quality=95&format=auto",
+      "icon": "https://cdn.dexscreener.com/cms/images/XCRNZd6X2DyMKbBn?width=64&height=64&fit=crop&quality=95&format=auto",
       "links": [
         {
-          "type": "twitter",
-          "url": "https://x.com/i/communities/1968722793828335827"
-        }
-      ],
-      "openGraph": "https://cdn.dexscreener.com/token-images/og/bsc/0x99dbf512dcd8bf7f04322996010e4df691437777?timestamp=1787731800000",
-      "tokenAddress": "0x99dBF512DCd8bF7f04322996010E4df691437777",
-      "url": "https://dexscreener.com/bsc/0x99dbf512dcd8bf7f04322996010e4df691437777"
-    },
-    {
-      "chainId": "base",
-      "cto": false,
-      "description": "a high effort coin def not launched by base team",
-      "header": "https://cdn.dexscreener.com/cms/images/hWApkHhCBh-wLTEj?width=600&height=200&fit=crop&quality=95&format=auto",
-      "icon": "https://cdn.dexscreener.com/cms/images/TXGjF-SCBb4n2FaS?width=64&height=64&fit=crop&quality=95&format=auto",
-      "links": [
+          "label": "Website",
+          "url": "https://app.fstswap.vip/#/swap?lng=zh-CN"
+        },
         {
           "type": "twitter",
-          "url": "https://x.com/basenoun_coin"
+          "url": "https://x.com/FstSwapFinance?s=20"
         },
         {
           "type": "telegram",
-          "url": "https://t.me/basenoun"
+          "url": "https://t.me/PGPFIST"
         }
       ],
-      "openGraph": "https://cdn.dexscreener.com/token-images/og/base/0xb20000000000000000000040d29e37e54435f101?timestamp=1787731800000",
-      "tokenAddress": "0xB20000000000000000000040d29e37E54435f101",
-      "url": "https://dexscreener.com/base/0xb20000000000000000000040d29e37e54435f101"
+      "openGraph": "https://cdn.dexscreener.com/token-images/og/bsc/0xea85ee22ca3ae43c773062470cd36ef430b77777?timestamp=1787751000000",
+      "tokenAddress": "0xea85Ee22ca3ae43c773062470CD36ef430b77777",
+      "url": "https://dexscreener.com/bsc/0xea85ee22ca3ae43c773062470cd36ef430b77777"
     },
     {
       "chainId": "robinhood",
       "cto": false,
-      "description": "wut da frog? \ud83d\udc38",
-      "header": "https://cdn.dexscreener.com/cms/images/uVdsbRBkKwessmox?width=600&height=200&fit=crop&quality=95&format=auto",
-      "icon": "https://cdn.dexscreener.com/cms/images/79DDRzAx1DyuQ3z8?width=64&height=64&fit=crop&quality=95&format=auto",
+      "description": "Cash Duck is a sharp, confident duck built for Robinhood Street.\n\nDressed in a clean suit, dark shades, and carrying a bag of cash, he moves through the market like he owns it. \n\n$CASHDUCK represents money, ambition, and the hustle to turn every opportunity into profit.",
+      "header": "https://cdn.dexscreener.com/cms/images/8HU71HB6UcjWIcL3?width=600&height=200&fit=crop&quality=95&format=auto",
+      "icon": "https://cdn.dexscreener.com/cms/images/NBslcneiiTma6fzR?width=64&height=64&fit=crop&quality=95&format=auto",
       "links": [
         {
           "label": "Website",
-          "url": "https://www.wtfrog.wtf"
+          "url": "https://cashduck.meme"
+        },
+        {
+          "type": "twitter",
+          "url": "https://x.com/CASHDUCK"
+        },
+        {
+          "type": "telegram",
+          "url": "https://t.me/rh_cashduck"
         }
       ],
-      "openGraph": "https://cdn.dexscreener.com/token-images/og/robinhood/0x009ed331b9576f4fb0e2cbe6b43acbb8228fde7b?timestamp=1787731800000",
-      "tokenAddress": "0x009ed331b9576F4Fb0e2CBE6b43ACbB8228fde7B",
-      "url": "https://dexscreener.com/robinhood/0x009ed331b9576f4fb0e2cbe6b43acbb8228fde7b"
+      "openGraph": "https://cdn.dexscreener.com/token-images/og/robinhood/0xa5071374ffdfa53b37b5a9686e076e90df3faccc?timestamp=1787751000000",
+      "tokenAddress": "0xA5071374ffdFa53b37b5A9686e076E90Df3Faccc",
+      "url": "https://dexscreener.com/robinhood/0xa5071374ffdfa53b37b5a9686e076e90df3faccc"
+    },
+    {
+      "chainId": "robinhood",
+      "cto": false,
+      "description": "The first meme Robinhood Crypto X acc ever posted",
+      "header": "https://cdn.dexscreener.com/cms/images/SHg_l3yGcOL5RKtk?width=600&height=200&fit=crop&quality=95&format=auto",
+      "icon": "https://cdn.dexscreener.com/cms/images/_Rezm-terNfzUhU4?width=64&height=64&fit=crop&quality=95&format=auto",
+      "links": [
+        {
+          "label": "Website",
+          "url": "https://knowyourmeme.com/memes/daily-struggle-two-buttons"
+        },
+        {
+          "type": "twitter",
+          "url": "https://x.com/DailyStruggleRH?s=20"
+        }
+      ],
+      "openGraph": "https://cdn.dexscreener.com/token-images/og/robinhood/0xb2b396d9720146ac532a4a40b6f33bc96247c430?timestamp=1787751000000",
+      "tokenAddress": "0xB2b396d9720146Ac532a4A40b6F33Bc96247C430",
+      "url": "https://dexscreener.com/robinhood/0xb2b396d9720146ac532a4a40b6f33bc96247c430"
+    },
+    {
+      "chainId": "robinhood",
+      "cto": false,
+      "icon": "https://cdn.dexscreener.com/cms/images/N128Q_7NaD9ESjk3?width=64&height=64&fit=crop&quality=95&format=auto",
+      "links": [
+        {
+          "type": "twitter",
+          "url": "https://x.com/mevcel"
+        }
+      ],
+      "openGraph": "https://cdn.dexscreener.com/token-images/og/robinhood/0x64d65b3989f2fbafa122512f79554cb3be2c6d74?timestamp=1787751000000",
+      "tokenAddress": "0x64d65b3989f2fbafa122512f79554cb3be2c6d74",
+      "url": "https://dexscreener.com/robinhood/0x64d65b3989f2fbafa122512f79554cb3be2c6d74"
+    },
+    {
+      "chainId": "robinhood",
+      "cto": false,
+      "description": "Hold the hedge earn Spy",
+      "header": "https://cdn.dexscreener.com/cms/images/Hmc4ucZ03JGOSQ0h?width=600&height=200&fit=crop&quality=95&format=auto",
+      "icon": "https://cdn.dexscreener.com/cms/images/hIXP88lcqVJ_PaKv?width=64&height=64&fit=crop&quality=95&format=auto",
+      "links": [
+        {
+          "label": "Website",
+          "url": "https://www.youtube.com/watch?v=SCYH0ZjSyM4?si=cuDDQEZsYlKvAS76&t=415s"
+        },
+        {
+          "type": "twitter",
+          "url": "https://x.com/i/communities/2014870568030392512"
+        }
+      ],
+      "openGraph": "https://cdn.dexscreener.com/token-images/og/robinhood/0xa8b64d5fd29149792ad993a7ed059e7d54e0ddd2?timestamp=1787751000000",
+      "tokenAddress": "0xa8b64d5fd29149792ad993a7ed059e7d54e0ddd2",
+      "url": "https://dexscreener.com/robinhood/0xa8b64d5fd29149792ad993a7ed059e7d54e0ddd2"
+    },
+    {
+      "chainId": "solana",
+      "cto": false,
+      "description": "CLANS",
+      "header": "https://cdn.dexscreener.com/cms/images/ttnPK22Tt0JOqAnW?width=600&height=200&fit=crop&quality=95&format=auto",
+      "icon": "https://cdn.dexscreener.com/cms/images/8TK_x3ExCCP0X0HP?width=64&height=64&fit=crop&quality=95&format=auto",
+      "links": [
+        {
+          "label": "Website",
+          "url": "https://www.pfclans.fun/"
+        },
+        {
+          "type": "twitter",
+          "url": "https://x.com/pfclans"
+        }
+      ],
+      "openGraph": "https://cdn.dexscreener.com/token-images/og/solana/G5yktMyMvqht1tscohkqBfygPqCqR3AeDFbHCf1hpump?timestamp=1787751000000",
+      "tokenAddress": "G5yktMyMvqht1tscohkqBfygPqCqR3AeDFbHCf1hpump",
+      "url": "https://dexscreener.com/solana/g5yktmymvqht1tscohkqbfygpqcqr3aedfbhcf1hpump"
+    },
+    {
+      "chainId": "solana",
+      "cto": false,
+      "description": "KAI",
+      "header": "https://cdn.dexscreener.com/cms/images/3iW10l01XbGZK9De?width=600&height=200&fit=crop&quality=95&format=auto",
+      "icon": "https://cdn.dexscreener.com/cms/images/0EXIqQvHV08SSZOz?width=64&height=64&fit=crop&quality=95&format=auto",
+      "openGraph": "https://cdn.dexscreener.com/token-images/og/solana/BjGME6z1hYGMpB5mn3GSjcWcHux2roYZTyNLPpQ4e2Ti?timestamp=1787751000000",
+      "tokenAddress": "BjGME6z1hYGMpB5mn3GSjcWcHux2roYZTyNLPpQ4e2Ti",
+      "url": "https://dexscreener.com/solana/bjgme6z1hygmpb5mn3gsjcwchux2royztynlppq4e2ti"
+    },
+    {
+      "chainId": "solana",
+      "cto": false,
+      "header": "https://cdn.dexscreener.com/cms/images/C2JhOq-dW-4Tc0wp?width=600&height=200&fit=crop&quality=95&format=auto",
+      "icon": "https://cdn.dexscreener.com/cms/images/gpTvWrjlQjNMHpON?width=64&height=64&fit=crop&quality=95&format=auto",
+      "links": [
+        {
+          "type": "twitter",
+          "url": "https://x.com/tokioxsol/status/2092588277534458274?s=46"
+        }
+      ],
+      "openGraph": "https://cdn.dexscreener.com/token-images/og/solana/ECnKDFSxfog1sV1azxUDtBUkKNza5Vix4XWhwciXpump?timestamp=1787751000000",
+      "tokenAddress": "ECnKDFSxfog1sV1azxUDtBUkKNza5Vix4XWhwciXpump",
+      "url": "https://dexscreener.com/solana/ecnkdfsxfog1sv1azxudtbukknza5vix4xwhwcixpump"
+    },
+    {
+      "chainId": "solana",
+      "cto": false,
+      "description": "",
+      "header": "https://cdn.dexscreener.com/cms/images/n4kpemnG3-WdlL9U?width=600&height=200&fit=crop&quality=95&format=auto",
+      "icon": "https://cdn.dexscreener.com/cms/images/VOz59vg8pSJqFR_t?width=64&height=64&fit=crop&quality=95&format=auto",
+      "links": [
+        {
+          "type": "twitter",
+          "url": "https://x.com/AdamBLiv/status/2092590536070746323"
+        }
+      ],
+      "openGraph": "https://cdn.dexscreener.com/token-images/og/solana/5KtcVdZi7Y5wcwBpY5eKXTgSqCQBsxSaqdsgmEh1pump?timestamp=1787751000000",
+      "tokenAddress": "5KtcVdZi7Y5wcwBpY5eKXTgSqCQBsxSaqdsgmEh1pump",
+      "url": "https://dexscreener.com/solana/5ktcvdzi7y5wcwbpy5ekxtgsqcqbsxsaqdsgmeh1pump"
+    },
+    {
+      "chainId": "solana",
+      "cto": false,
+      "header": "https://cdn.dexscreener.com/cms/images/VOfU6cZNeaUw2fO_?width=600&height=200&fit=crop&quality=95&format=auto",
+      "icon": "https://cdn.dexscreener.com/cms/images/DPnZxeK1XckKLb89?width=64&height=64&fit=crop&quality=95&format=auto",
+      "links": [
+        {
+          "type": "twitter",
+          "url": "https://x.com/ord1nary_fella/status/2092582280266940801"
+        }
+      ],
+      "openGraph": "https://cdn.dexscreener.com/token-images/og/solana/AoymGqVBEoDeS1ypcfqWCYwNSb4iJWqorGMx76kppump?timestamp=1787751000000",
+      "tokenAddress": "AoymGqVBEoDeS1ypcfqWCYwNSb4iJWqorGMx76kppump",
+      "url": "https://dexscreener.com/solana/aoymgqvbeodes1ypcfqwcywnsb4ijwqorgmx76kppump"
+    },
+    {
+      "chainId": "solana",
+      "cto": false,
+      "header": "https://cdn.dexscreener.com/cms/images/sL__09R-IxcYcCr1?width=600&height=200&fit=crop&quality=95&format=auto",
+      "icon": "https://cdn.dexscreener.com/cms/images/N6XkNxK8kropdG5h?width=64&height=64&fit=crop&quality=95&format=auto",
+      "links": [
+        {
+          "type": "twitter",
+          "url": "https://x.com/terminusonsol"
+        }
+      ],
+      "openGraph": "https://cdn.dexscreener.com/token-images/og/solana/FNEjQfGKBRm45JUBSaF1aLDgxoe8HRJrYgDbN9Gpump?timestamp=1787751000000",
+      "tokenAddress": "FNEjQfGKBRm45JUBSaF1aLDgxoe8HRJrYgDbN9Gpump",
+      "url": "https://dexscreener.com/solana/fnejqfgkbrm45jubsaf1aldgxoe8hrjrygdbn9gpump"
+    },
+    {
+      "chainId": "solana",
+      "cto": false,
+      "description": "\u4e2d\u53f7 | Naka Go Akaishisou\nNIPPO #1216 | The founding Shiba",
+      "header": "https://cdn.dexscreener.com/cms/images/KJqm8Th0Yd4lrRQy?width=600&height=200&fit=crop&quality=95&format=auto",
+      "icon": "https://cdn.dexscreener.com/cms/images/yKDxXyZ5cM88IMAQ?width=64&height=64&fit=crop&quality=95&format=auto",
+      "links": [
+        {
+          "label": "Website",
+          "url": "https://www.shibapedigree.com/details.php?id=63626"
+        },
+        {
+          "type": "twitter",
+          "url": "https://x.com/NakaGoFirstShib"
+        }
+      ],
+      "openGraph": "https://cdn.dexscreener.com/token-images/og/solana/31wiXFwQpE8WZH6zD3FUenbK5hnhoBtSnULc1GAXpump?timestamp=1787751000000",
+      "tokenAddress": "31wiXFwQpE8WZH6zD3FUenbK5hnhoBtSnULc1GAXpump",
+      "url": "https://dexscreener.com/solana/31wixfwqpe8wzh6zd3fuenbk5hnhobtsnulc1gaxpump"
+    },
+    {
+      "chainId": "solana",
+      "cto": false,
+      "description": "ZOOBEAUVAL JUST NAMED THE 2 GOLDEN MONKEYS\n\nThis was giga hyped - one of the rarest species, and the FIRST ever golden monkey birthed outside Asia, which makes this genuinely historic.\n\nThey're considered a national treasure, basically in the same prestige tier as pygmy hippos, giant pandas etc.\n\nThat makes Jinli & Jinyou insanely special. \n\nThese golden monkeys legit ran 200k ages ago without names.",
+      "header": "https://cdn.dexscreener.com/cms/images/K5S9QibSlyVjDjCy?width=600&height=200&fit=crop&quality=95&format=auto",
+      "icon": "https://cdn.dexscreener.com/cms/images/rOmuU-jzeMPgal48?width=64&height=64&fit=crop&quality=95&format=auto",
+      "links": [
+        {
+          "type": "twitter",
+          "url": "https://x.com/prottlegang11/status/2092587069545546204"
+        },
+        {
+          "type": "instagram",
+          "url": "https://www.instagram.com/p/Dcf-4dKDxk_/"
+        }
+      ],
+      "openGraph": "https://cdn.dexscreener.com/token-images/og/solana/7mYt2H8m8inrfEW4NDsHdPrLb6ZbBY92kYm8iLc9pump?timestamp=1787751000000",
+      "tokenAddress": "7mYt2H8m8inrfEW4NDsHdPrLb6ZbBY92kYm8iLc9pump",
+      "url": "https://dexscreener.com/solana/7myt2h8m8inrfew4ndshdprlb6zbby92kym8ilc9pump"
+    },
+    {
+      "chainId": "solana",
+      "cto": false,
+      "description": "To celebrate international dog day, all fees have been redirected to Dog Star Rescue, a charity who places stray, abandoned, shelter, and owner-surrendered dogs of all breeds and ages into qualified, caring, lifelong homes.",
+      "header": "https://cdn.dexscreener.com/cms/images/t0FGB4fZWrzEDaKO?width=600&height=200&fit=crop&quality=95&format=auto",
+      "icon": "https://cdn.dexscreener.com/cms/images/NzK4XQEE6liwmzvy?width=64&height=64&fit=crop&quality=95&format=auto",
+      "links": [
+        {
+          "label": "Website",
+          "url": "https://dogstarrescue.org/"
+        },
+        {
+          "type": "twitter",
+          "url": "https://x.com/i/communities/1846305089247412546"
+        }
+      ],
+      "openGraph": "https://cdn.dexscreener.com/token-images/og/solana/2gfepd97FrD8ayD3wzrgwj1mAda6h9DDtT8qTPEzpump?timestamp=1787751000000",
+      "tokenAddress": "2gfepd97FrD8ayD3wzrgwj1mAda6h9DDtT8qTPEzpump",
+      "url": "https://dexscreener.com/solana/2gfepd97frd8ayd3wzrgwj1mada6h9ddtt8qtpezpump"
     }
   ],
   "signature": "GET https://api.dexscreener.com/token-profiles/latest/v1",
