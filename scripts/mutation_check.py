@@ -281,10 +281,16 @@ def _dirty(paths: List[str]) -> List[str]:
 
 def _apply(mutation: Mutation) -> bool:
     path = Path(mutation.path)
-    source = path.read_text()
+    # Encoding is pinned, not left to the platform default. This function edits
+    # real source files in place, and memescanner/unified_scanner.py -- one of the
+    # files mutated below -- contains a non-ASCII em dash. Under a non-UTF-8
+    # default encoding this read would raise, or the write would re-encode that
+    # character, so the harness meant to leave the tree untouched would be the
+    # thing that corrupted it.
+    source = path.read_text(encoding="utf-8")
     if mutation.old not in source:
         return False
-    path.write_text(source.replace(mutation.old, mutation.new, 1))
+    path.write_text(source.replace(mutation.old, mutation.new, 1), encoding="utf-8")
     return True
 
 

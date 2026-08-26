@@ -39,6 +39,18 @@ from memescanner.unified_scanner import (
 
 SCANNER_SOURCE = Path("memescanner/unified_scanner.py")
 
+
+def _scanner_source() -> str:
+    """The scanner source, read with the encoding pinned.
+
+    The encoding is not optional here. This file feeds the feature fingerprint, and
+    unified_scanner.py contains a non-ASCII em dash, so under a non-UTF-8 default
+    encoding the read would either raise or decode to different text -- and a guard
+    that reports a phantom cohort change on one developer's machine is a guard that
+    gets deleted.
+    """
+    return SCANNER_SOURCE.read_text(encoding="utf-8")
+
 # Reason strings that describe a *decision outcome* rather than a gate, so they do
 # not participate in the policy fingerprint.
 _NON_GATE_REASONS = {
@@ -54,7 +66,7 @@ def _gate_reasons() -> list:
     Included in the policy fingerprint because adding or removing a gate changes
     which candidates qualify just as surely as moving a threshold does.
     """
-    source = SCANNER_SOURCE.read_text()
+    source = _scanner_source()
     found = set(re.findall(r'"([A-Z][A-Z0-9_]{6,})"', source))
     return sorted(found - _NON_GATE_REASONS)
 
@@ -78,7 +90,7 @@ def _policy_fingerprint() -> str:
 def _score_expression_tokens() -> list:
     """The score expression as code tokens, with comments and layout removed."""
     match = re.search(
-        r"score = min\((.*?)\n        \)", SCANNER_SOURCE.read_text(), re.DOTALL
+        r"score = min\((.*?)\n        \)", _scanner_source(), re.DOTALL
     )
     assert match is not None, "the score expression could not be located"
     lines = [
@@ -192,7 +204,7 @@ def test_every_gate_reason_is_captured_by_the_fingerprint():
 def test_the_score_expression_was_actually_found():
     """If the regex stopped matching, the feature fingerprint would silently weaken."""
     match = re.search(
-        r"score = min\((.*?)\n        \)", SCANNER_SOURCE.read_text(), re.DOTALL
+        r"score = min\((.*?)\n        \)", _scanner_source(), re.DOTALL
     )
     assert match is not None, "the score expression could not be located"
     body = match.group(1)
