@@ -21,6 +21,7 @@ RULES = {
         rb"TELEGRAM_CHAT_ID\s*[:=]\s*[\"']?-?[0-9]{6,}[\"']?"
     ),
     "tavily_api_key": re.compile(rb"\btvly-[A-Za-z0-9_-]{16,}\b", re.IGNORECASE),
+    "xai_api_key": re.compile(rb"\bxai-[A-Za-z0-9_-]{32,}\b"),
     "helius_query_api_key": re.compile(
         rb"helius[^\s\"']*[?&]api-key=[A-Za-z0-9_-]{16,}", re.IGNORECASE
     ),

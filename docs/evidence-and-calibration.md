@@ -39,6 +39,28 @@ The default report gate requires all of the following:
 
 Before every gate passes, the status is `INSUFFICIENT_DATA_FOR_CALIBRATION`, score-band rates are suppressed, and no probability or predictive-edge claim is permitted. Once gates pass, `EMPIRICAL_HOLDOUT_CALIBRATION_READY` exposes versioned train-band rates, holdout event rates, Wilson 95% intervals, and holdout Brier scores using frozen development rates. These remain empirical research estimates—not promises of future returns.
 
+## Uncalibrated scoring inputs
+
+### Average trade size (added, unvalidated)
+
+A published study of 655,770 pump.fun tokens (arXiv 2602.14860) reported that the strongest single predictor of token success was the number of trades required to accumulate a given amount of liquidity: few larger trades, indicating concentrated and committed capital, preceded success, while many tiny fragmented trades, the signature of bot/algorithmic churn, preceded failure. Higher bot share lowered measured success probability at every stage.
+
+This repository has no per-trade data. DEXScreener does supply `volume_24h`, `buys_24h`, and `sells_24h`, so average trade size is computed directly as `volume_24h / (buys_24h + sells_24h)` and treated as a proxy for that same underlying signal.
+
+How it is used:
+
+- it contributes a bounded, saturating term of at most +15 points to the screening rank, reaching roughly its midpoint at the configurable `filters.reference_avg_trade_size_usd` reference (default $50);
+- it adjusts the dynamic take-profit multiple by +0.5 at or above 3x the reference, +0.25 at or above 1x, and -0.5 below 0.4x, still clamped to [1.5, 4.0];
+- it is captured in the persisted `market_json` for every observation, so the prospective cohort accumulates it for later validation;
+- it is displayed in the alert as a labelled proxy observation, never as a probability or a prediction.
+
+How it is deliberately **not** used:
+
+- it is **not** a hard filter and rejects nothing. No calibrated threshold exists for it, and the standing policy is that an uncalibrated signal must not silently reject candidates. Making it a rejection gate would misrepresent what has actually been established here.
+- an unknown value contributes exactly zero rather than an imputed or default value. Zero volume, zero transactions, and missing fields all remain explicit missingness, consistent with the outcome-capture rules above.
+
+Its predictive value **in this pipeline remains unvalidated**. The cited study is external evidence about a different cohort, collected under a different selection process, and does not transfer as a calibrated probability here. Nothing about this input may be described as an edge until the prospective cohort holds enough measured outcomes to test it under the existing holdout gates. Because the screening rank changed, any calibration report built on it requires a new feature-schema version and a fresh prospective holdout.
+
 ## Strict separation from trading behavior
 
 Prospective collection and calibration are observation/read-only paths. They cannot:

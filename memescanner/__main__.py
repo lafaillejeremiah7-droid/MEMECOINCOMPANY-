@@ -186,6 +186,7 @@ async def main_loop(config: Optional[Config] = None) -> None:
             min_liquidity_to_mcap_ratio=config.filters.min_liquidity_to_mcap_ratio,
             max_spike_price_change_1h_pct=config.filters.max_spike_price_change_1h_pct,
             min_spike_volume_to_mcap_ratio=config.filters.min_spike_volume_to_mcap_ratio,
+            reference_avg_trade_size_usd=config.filters.reference_avg_trade_size_usd,
         )
         paper_callback = None
         if config.scanner.enable_paper_trading:

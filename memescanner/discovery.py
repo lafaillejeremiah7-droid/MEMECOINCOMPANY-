@@ -418,6 +418,15 @@ class DexScreenerPairClient:
         base_token = pair.get("baseToken") or {}
         quote_token = pair.get("quoteToken") or {}
         candidate_token = base_token if base_token.get("address") == mint else quote_token
+        # Average USD size of a 24h trade: a proxy for trade fragmentation
+        # (bot/algorithmic churn) versus concentrated, committed capital.
+        # Captured here so it is persisted with the market evidence and is
+        # available to the prospective calibration cohort for later validation.
+        # Unknown stays None; it is never imputed and never gates a candidate.
+        transactions = buys + sells
+        avg_trade_size_usd = (
+            volume / transactions if volume > 0 and transactions > 0 else None
+        )
         captured_epoch = time.time()
         return {
             "chain_id": SOLANA_CHAIN_ID,
@@ -438,6 +447,7 @@ class DexScreenerPairClient:
             "buys_24h": buys,
             "sells_24h": sells,
             "buy_sell_ratio": buys / max(sells, 1),
+            "avg_trade_size_usd": avg_trade_size_usd,
             "volume_to_mcap_ratio": volume / max(market_cap, 1),
             "price_change_1h": float((pair.get("priceChange") or {}).get("h1") or 0),
             "dex_url": pair.get("url"),
