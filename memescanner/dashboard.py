@@ -14,123 +14,62 @@ import sqlite3
 import time
 from datetime import datetime, timezone, timedelta
 from http.server import HTTPServer, BaseHTTPRequestHandler
-from urllib.parse import urlparse, parse_qs
+from urllib.parse import urlparse, parse_qs, quote
 
+# Overwritten in main() from the same config the bot reads. Kept as a module
+# global so it stays overridable in tests.
 DB_PATH = "memescanner.db"
 
 
+def _resolve_db_path():
+    """Resolve the database path from the config the bot itself uses.
+
+    This module used to hardcode ``memescanner.db`` while the bot honoured
+    ``config.database.path``, so any operator who moved the database got a
+    permanently empty dashboard with no error to explain it -- indistinguishable
+    from a bot that had found nothing.
+    """
+    try:
+        from memescanner.config import Config
+
+        return Config.from_env().database.path
+    except Exception:
+        # The dashboard must still start when config is absent or malformed;
+        # falling back to the documented default is better than refusing to run.
+        return DB_PATH
+
+
 def get_db():
-    """Get a SQLite connection. Creates DB and tables if they don't exist."""
-    conn = sqlite3.connect(DB_PATH, timeout=5)
-    conn.execute("""CREATE TABLE IF NOT EXISTS paper_positions (
-        id INTEGER PRIMARY KEY, mint TEXT, symbol TEXT, entry_price REAL,
-        entry_mc REAL, amount_usd REAL, tokens_held REAL, entry_time REAL,
-        status TEXT, exit_price REAL, exit_time REAL, pnl_usd REAL,
-        pnl_pct REAL, exit_reason TEXT, half_sold INTEGER DEFAULT 0,
-        breakeven_stop INTEGER DEFAULT 0)""")
-    conn.execute("""CREATE TABLE IF NOT EXISTS paper_balance (
-        id INTEGER PRIMARY KEY CHECK (id = 1), balance REAL,
-        starting_balance REAL, trade_size REAL)""")
-    conn.execute("INSERT OR IGNORE INTO paper_balance (id, balance, starting_balance, trade_size) VALUES (1, 1000, 1000, 50)")
-    conn.execute("""CREATE TABLE IF NOT EXISTS discovery_cycles (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        observed_at TEXT NOT NULL,
-        source_status_json TEXT NOT NULL,
-        candidate_count INTEGER NOT NULL)""")
-    conn.execute("""CREATE TABLE IF NOT EXISTS candidate_observations (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        chain_id TEXT NOT NULL,
-        mint TEXT NOT NULL,
-        observed_at TEXT NOT NULL,
-        name TEXT,
-        symbol TEXT,
-        candidate_json TEXT,
-        pair_created_at REAL,
-        age_minutes REAL,
-        sources_json TEXT NOT NULL,
-        boost_json TEXT,
-        evidence_json TEXT,
-        market_json TEXT,
-        screening_score REAL,
-        decision TEXT NOT NULL,
-        reasons_json TEXT NOT NULL,
-        alerted INTEGER NOT NULL DEFAULT 0,
-        outcome_identity TEXT NOT NULL,
-        cycle_id INTEGER,
-        candidate_id INTEGER,
-        policy_version TEXT,
-        feature_schema_version TEXT)""")
-    conn.execute("""CREATE TABLE IF NOT EXISTS cohort_candidates (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        chain_id TEXT NOT NULL,
-        mint TEXT NOT NULL,
-        first_discovered_at TEXT NOT NULL,
-        first_discovered_epoch REAL NOT NULL,
-        first_cycle_id INTEGER NOT NULL,
-        candidate_json TEXT NOT NULL,
-        sources_json TEXT NOT NULL,
-        policy_version TEXT NOT NULL,
-        feature_schema_version TEXT NOT NULL,
-        first_evaluated_at TEXT,
-        first_evaluated_epoch REAL,
-        initial_decision TEXT,
-        initial_screening_score REAL,
-        created_at TEXT NOT NULL,
-        UNIQUE(chain_id, mint))""")
-    conn.execute("""CREATE TABLE IF NOT EXISTS candidate_alert_claims (
-        chain_id TEXT NOT NULL,
-        mint TEXT NOT NULL,
-        status TEXT NOT NULL,
-        claimed_at TEXT NOT NULL,
-        completed_at TEXT,
-        PRIMARY KEY (chain_id, mint))""")
-    conn.execute("""CREATE TABLE IF NOT EXISTS outcome_jobs (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        candidate_id INTEGER NOT NULL,
-        horizon_seconds INTEGER NOT NULL,
-        target_at REAL NOT NULL,
-        window_seconds INTEGER NOT NULL,
-        status TEXT NOT NULL DEFAULT 'PENDING',
-        attempt_count INTEGER NOT NULL DEFAULT 0,
-        next_attempt_at REAL NOT NULL,
-        completed_at TEXT,
-        UNIQUE(candidate_id, horizon_seconds))""")
-    conn.execute("""CREATE TABLE IF NOT EXISTS market_observations (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        candidate_id INTEGER NOT NULL,
-        horizon_seconds INTEGER NOT NULL,
-        target_at REAL NOT NULL,
-        captured_at TEXT NOT NULL,
-        captured_epoch REAL NOT NULL,
-        lag_seconds REAL NOT NULL,
-        provider TEXT NOT NULL,
-        pair_address TEXT,
-        price_usd REAL,
-        market_cap REAL,
-        liquidity_usd REAL,
-        status TEXT NOT NULL,
-        error_code TEXT)""")
-    conn.execute("""CREATE TABLE IF NOT EXISTS candidate_outcomes (
-        candidate_id INTEGER NOT NULL,
-        horizon_seconds INTEGER NOT NULL,
-        definition_version TEXT NOT NULL,
-        baseline_observation_id INTEGER NOT NULL,
-        terminal_observation_id INTEGER NOT NULL,
-        price_return_pct REAL NOT NULL,
-        event_2x INTEGER NOT NULL,
-        computed_at TEXT NOT NULL,
-        PRIMARY KEY (candidate_id, horizon_seconds, definition_version))""")
-    conn.execute("""CREATE TABLE IF NOT EXISTS calibration_runs (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        created_at TEXT NOT NULL,
-        as_of_epoch REAL NOT NULL,
-        horizon_seconds INTEGER NOT NULL,
-        policy_version TEXT NOT NULL,
-        feature_schema_version TEXT NOT NULL,
-        definition_version TEXT NOT NULL,
-        status TEXT NOT NULL,
-        report_json TEXT NOT NULL)""")
-    conn.commit()
+    """Open a strictly read-only connection to the scanner database.
+
+    Schema ownership is deliberately exclusive: ``memescanner/database.py`` owns
+    the discovery/outcome/calibration tables and ``memescanner/paper_trader.py``
+    owns ``paper_positions`` / ``paper_balance``. This dashboard owns none of them,
+    and ``mode=ro`` makes that unforgeable -- unlike ``PRAGMA query_only``, which
+    any later statement can simply switch back off. A read-only URI connection
+    also refuses to create a database that is not there (a plain
+    ``sqlite3.connect`` leaves an empty file behind, making a mistyped path look
+    like an idle bot) and reads a live WAL without checkpointing it.
+
+    It previously ran ``CREATE TABLE IF NOT EXISTS`` for all ten tables, which
+    raced with the bot: that statement is a no-op against an existing table, so
+    whichever process started first silently defined the schema. A
+    dashboard-first start produced ``outcome_jobs`` without its ``lease_owner`` /
+    ``lease_until`` / ``last_error_code`` columns, ``candidate_observations``
+    without ``age_provenance``, and ``cohort_candidates`` without
+    ``initial_features_json`` -- breaking the observation ledger, the cohort
+    feature freeze, and outcome capture (and therefore calibration) while
+    discovery itself still looked perfectly healthy. The same duplication also
+    seeded ``paper_balance``, fabricating a $1000 account on a dashboard that had
+    no paper trader behind it.
+
+    Raises ``sqlite3.OperationalError`` when the database does not exist yet.
+    Every endpoint catches that and degrades to an empty panel rather than an
+    error, and ``tests/test_schema_ownership.py`` pins both properties.
+    """
+    # quote() percent-encodes '?' and '#', which SQLite would otherwise read as
+    # URI query/fragment delimiters inside the path.
+    conn = sqlite3.connect(f"file:{quote(DB_PATH)}?mode=ro", uri=True, timeout=5)
     conn.row_factory = sqlite3.Row
     return conn
 
@@ -170,7 +109,7 @@ def format_hold_time(seconds):
 
 
 def api_overview():
-    """Account overview stats."""
+    """Account overview stats, sourced entirely from PaperTrader-owned tables."""
     try:
         db = get_db()
         cursor = db.cursor()
@@ -242,7 +181,14 @@ def api_overview():
             "liq_risk": liq_risk,
         }
     except sqlite3.OperationalError:
-        return {"error": "Database not found or tables not created yet", "waiting": True}
+        # Every field above comes from PaperTrader-owned tables. Paper trading is
+        # off by default, so the usual cause is that no paper trader has ever run
+        # -- not a missing database. The dashboard used to hide this by seeding
+        # paper_balance itself, which displayed a $1000 account that did not exist.
+        return {
+            "error": "Paper trading disabled or not yet started",
+            "waiting": True,
+        }
 
 
 def api_positions():
@@ -288,7 +234,13 @@ def api_positions():
         db.close()
         return {"positions": positions, "count": len(positions)}
     except sqlite3.OperationalError:
-        return {"positions": [], "count": 0, "error": "Database not available"}
+        # paper_positions is PaperTrader-owned and absent whenever paper trading
+        # has never run, which is the default -- not a database fault.
+        return {
+            "positions": [],
+            "count": 0,
+            "error": "Paper trading disabled or not yet started",
+        }
 
 
 def api_history(page=1, limit=20):
@@ -354,50 +306,71 @@ def api_stats():
         ).timestamp()
         week_start = (datetime.now(timezone.utc) - timedelta(days=7)).timestamp()
 
-        cursor.execute(
-            "SELECT COALESCE(SUM(pnl_usd), 0) as pnl, COUNT(*) as cnt FROM paper_positions "
-            "WHERE status = 'closed' AND exit_time >= ?",
-            (today_start,),
-        )
-        today_row = cursor.fetchone()
-        today_pnl = safe_float(today_row["pnl"])
-        today_trades = safe_int(today_row["cnt"])
+        # PaperTrader-owned and bot-owned panels must degrade independently.
+        # Paper trading is off by default (ScannerConfig.enable_paper_trading), so
+        # paper_positions often does not exist at all. Sharing one try block with
+        # the discovery_cycles count below made a missing paper table report
+        # scan_count = 0 while the bot had real cycles recorded.
+        today_pnl = 0.0
+        today_trades = 0
+        week_pnl = 0.0
+        avg_hold = 0.0
+        avg_pnl = 0.0
+        trades_per_day = 0.0
+        try:
+            cursor.execute(
+                "SELECT COALESCE(SUM(pnl_usd), 0) as pnl, COUNT(*) as cnt FROM paper_positions "
+                "WHERE status = 'closed' AND exit_time >= ?",
+                (today_start,),
+            )
+            today_row = cursor.fetchone()
+            today_pnl = safe_float(today_row["pnl"])
+            today_trades = safe_int(today_row["cnt"])
 
-        cursor.execute(
-            "SELECT COALESCE(SUM(pnl_usd), 0) as pnl FROM paper_positions "
-            "WHERE status = 'closed' AND exit_time >= ?",
-            (week_start,),
-        )
-        week_pnl = safe_float(cursor.fetchone()["pnl"])
+            cursor.execute(
+                "SELECT COALESCE(SUM(pnl_usd), 0) as pnl FROM paper_positions "
+                "WHERE status = 'closed' AND exit_time >= ?",
+                (week_start,),
+            )
+            week_pnl = safe_float(cursor.fetchone()["pnl"])
 
-        cursor.execute(
-            "SELECT AVG(exit_time - entry_time) as avg_hold FROM paper_positions "
-            "WHERE status = 'closed' AND exit_time IS NOT NULL AND entry_time IS NOT NULL"
-        )
-        avg_hold_row = cursor.fetchone()
-        avg_hold = safe_float(avg_hold_row["avg_hold"] if avg_hold_row else None)
+            cursor.execute(
+                "SELECT AVG(exit_time - entry_time) as avg_hold FROM paper_positions "
+                "WHERE status = 'closed' AND exit_time IS NOT NULL AND entry_time IS NOT NULL"
+            )
+            avg_hold_row = cursor.fetchone()
+            avg_hold = safe_float(avg_hold_row["avg_hold"] if avg_hold_row else None)
 
-        cursor.execute(
-            "SELECT AVG(pnl_usd) as avg_pnl FROM paper_positions WHERE status = 'closed'"
-        )
-        avg_pnl_row = cursor.fetchone()
-        avg_pnl = safe_float(avg_pnl_row["avg_pnl"] if avg_pnl_row else None)
+            cursor.execute(
+                "SELECT AVG(pnl_usd) as avg_pnl FROM paper_positions WHERE status = 'closed'"
+            )
+            avg_pnl_row = cursor.fetchone()
+            avg_pnl = safe_float(avg_pnl_row["avg_pnl"] if avg_pnl_row else None)
 
-        cursor.execute(
-            "SELECT MIN(entry_time) as first_trade FROM paper_positions WHERE status = 'closed'"
-        )
-        first_row = cursor.fetchone()
-        first_trade_time = safe_float(first_row["first_trade"] if first_row else None)
+            cursor.execute(
+                "SELECT MIN(entry_time) as first_trade FROM paper_positions WHERE status = 'closed'"
+            )
+            first_row = cursor.fetchone()
+            first_trade_time = safe_float(first_row["first_trade"] if first_row else None)
 
-        cursor.execute("SELECT COUNT(*) as cnt FROM paper_positions WHERE status = 'closed'")
-        total_closed = safe_int(cursor.fetchone()["cnt"])
+            cursor.execute("SELECT COUNT(*) as cnt FROM paper_positions WHERE status = 'closed'")
+            total_closed = safe_int(cursor.fetchone()["cnt"])
 
-        days_active = max(1, (now - first_trade_time) / 86400) if first_trade_time > 0 else 1
-        trades_per_day = total_closed / days_active
+            days_active = (
+                max(1, (now - first_trade_time) / 86400) if first_trade_time > 0 else 1
+            )
+            trades_per_day = total_closed / days_active
+        except sqlite3.OperationalError:
+            # No paper trader has ever run against this database; the zeroed
+            # defaults above are the honest answer for those fields.
+            pass
 
         # Use actual discovery_cycles count
-        cursor.execute("SELECT COUNT(*) as cnt FROM discovery_cycles")
-        scan_count = safe_int(cursor.fetchone()["cnt"])
+        try:
+            cursor.execute("SELECT COUNT(*) as cnt FROM discovery_cycles")
+            scan_count = safe_int(cursor.fetchone()["cnt"])
+        except sqlite3.OperationalError:
+            scan_count = 0
 
         db.close()
         return {
@@ -1644,7 +1617,11 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 
             if (data.waiting || data.error) {
                 document.getElementById('pnl-display').textContent = '$0.00';
-                document.getElementById('pnl-subtitle').textContent = 'WAITING FOR DATA...';
+                // Surface the API's stated reason. "Paper trading is off" and
+                // "the database is missing" are very different problems, and
+                // collapsing both into WAITING FOR DATA hid which one it was.
+                document.getElementById('pnl-subtitle').textContent =
+                    (data.error || 'WAITING FOR DATA...').toUpperCase();
                 return;
             }
 
@@ -2163,10 +2140,14 @@ class DashboardHandler(BaseHTTPRequestHandler):
 
 def main():
     """Start the dashboard web server."""
+    global DB_PATH
+    DB_PATH = _resolve_db_path()
     host = "0.0.0.0"
     port = 8080
     server = HTTPServer((host, port), DashboardHandler)
     print(f"Dashboard running at http://localhost:{port}")
+    # Printed so a wrong path is diagnosable instead of looking like an idle bot.
+    print(f"Reading database: {DB_PATH}")
     try:
         server.serve_forever()
     except KeyboardInterrupt:

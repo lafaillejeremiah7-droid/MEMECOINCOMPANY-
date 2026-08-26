@@ -225,10 +225,45 @@ class Database:
         await self._ensure_column(
             "cohort_candidates", "first_evaluated_epoch", "REAL"
         )
+        # Repair databases whose schema was defined by the dashboard's former
+        # duplicate DDL. Because CREATE TABLE IF NOT EXISTS is a no-op against an
+        # existing table, a dashboard-first startup created these tables without
+        # the columns below, and the missing outcome_jobs lease columns broke
+        # claim_due_outcome_jobs with "no such column" -- killing outcome capture
+        # and calibration while discovery still appeared healthy. The dashboard no
+        # longer creates tables, but existing databases still need repairing.
+        repaired = []
+        for table, column, declaration in (
+            ("candidate_observations", "age_provenance", "TEXT"),
+            ("cohort_candidates", "initial_features_json", "TEXT"),
+            ("outcome_jobs", "lease_owner", "TEXT"),
+            ("outcome_jobs", "lease_until", "REAL"),
+            ("outcome_jobs", "last_error_code", "TEXT"),
+        ):
+            if await self._ensure_column(table, column, declaration):
+                repaired.append(f"{table}.{column}")
+        if repaired:
+            # Repairing the schema cannot repair the data recorded while it was
+            # broken, so say so rather than silently resuming.
+            logger.warning(
+                "Repaired schema columns that were missing from this database: %s. "
+                "These are defined by database.py, so their absence means an older "
+                "dashboard build created the schema first. While they were missing "
+                "outcome capture could not run, so calibration coverage recorded "
+                "before now under-reports, and alert claims left PENDING during "
+                "that window may still suppress those mints.",
+                ", ".join(repaired),
+            )
         await self._db.commit()
 
-    async def _ensure_column(self, table: str, column: str, declaration: str) -> None:
-        """Add a nullable column when upgrading an existing SQLite schema."""
+    async def _ensure_column(
+        self, table: str, column: str, declaration: str
+    ) -> bool:
+        """Add a nullable column when upgrading an existing SQLite schema.
+
+        Returns True when the column was actually added, so callers can report a
+        repair rather than performing one silently.
+        """
         assert self._db is not None
         async with self._db.execute(f"PRAGMA table_info({table})") as cursor:
             columns = {row[1] for row in await cursor.fetchall()}
@@ -236,6 +271,8 @@ class Database:
             await self._db.execute(
                 f"ALTER TABLE {table} ADD COLUMN {column} {declaration}"
             )
+            return True
+        return False
 
     async def close(self) -> None:
         """Close the database connection."""

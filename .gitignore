@@ -1,6 +1,10 @@
 __pycache__/
 *.pyc
 *.db
+# SQLite WAL sidecars. Both Database and PaperTrader set journal_mode=WAL, so
+# every run produces these next to the ignored *.db file.
+*.db-wal
+*.db-shm
 config.yaml
 memescanner.log
 .pytest_cache/
