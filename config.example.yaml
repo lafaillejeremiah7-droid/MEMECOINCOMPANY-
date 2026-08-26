@@ -26,6 +26,13 @@ evidence:
   # When an xai- prefixed key is set, the scanner uses the X.ai Responses
   # API with the x_search tool instead of Tavily for X/Twitter evidence.
   tavily_api_key: ""  # MEMESCANNER_TAVILY_API_KEY
+  # Explicit slot for an X.ai key. Setting BOTH this and a real Tavily key above
+  # runs the two backends together and splits them by role: Tavily returns a
+  # plain list of matching x.com pages and supplies the mention count in about a
+  # second, while X.ai reads post text for scam and big-account signals. This is
+  # strongly recommended: an X.ai x_search call takes 40-90 seconds, so using it
+  # alone makes any cycle that reaches the X gate correspondingly slow.
+  xai_api_key: ""  # MEMESCANNER_XAI_API_KEY
   # Prefer a complete endpoint via MEMESCANNER_HELIUS_RPC_URL. Alternatively,
   # MEMESCANNER_HELIUS_API_KEY builds the standard Helius endpoint at runtime.
   helius_rpc_url: ""
