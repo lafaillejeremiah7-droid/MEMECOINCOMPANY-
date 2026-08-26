@@ -4,192 +4,527 @@
   },
   "json": [
     {
-      "amount": 100,
-      "chainId": "solana",
-      "description": "Chubby, curious, a little messy, and totally unbothered.",
-      "header": "https://cdn.dexscreener.com/cms/images/2fJbb_kTcNCn_bWN?width=900&height=300&fit=crop&quality=95&format=auto",
-      "icon": "duXPDNVJ5VyiCHw_",
-      "links": [
-        {
-          "url": "https://dogtasio.xyz/"
-        },
-        {
-          "type": "twitter",
-          "url": "https://x.com/dogtasio"
-        }
-      ],
-      "openGraph": "https://cdn.dexscreener.com/token-images/og/solana/DMoRRheiQrGVRm6Z76Hfg5XxqJF5kJ4vX9A2cDNKpump?timestamp=1787731800000",
-      "tokenAddress": "DMoRRheiQrGVRm6Z76Hfg5XxqJF5kJ4vX9A2cDNKpump",
-      "totalAmount": 100,
-      "url": "https://dexscreener.com/solana/dmorrheiqrgvrm6z76hfg5xxqjf5kj4vx9a2cdnkpump"
-    },
-    {
       "amount": 10,
-      "chainId": "solana",
-      "header": "https://cdn.dexscreener.com/cms/images/z8zyuwSylJxAfH_q?width=900&height=300&fit=crop&quality=95&format=auto",
-      "icon": "tjlD5dvVlHBATX84",
+      "chainId": "ethereum",
+      "description": "\ud835\udd4f\u0110\n\n Elon Musk updated his X profile location to \u201cX\u0110\u201d  a combo of the X logo and \u00d0 (Dogecoin\u2019s symbol). Back in 2023, it fueled speculation about Doge payments on X.\n\nWoof!",
+      "header": "https://cdn.dexscreener.com/cms/images/9UV5wGqHfMeKJLSj?width=900&height=300&fit=crop&quality=95&format=auto",
+      "icon": "Z1G5DyNwjagjtULR",
       "links": [
         {
-          "url": "https://x.com/i/trending/2092350586242871500"
+          "url": "https://dogeonx.lol/"
         },
         {
           "type": "twitter",
-          "url": "https://x.com/Stimothyphd/status/2092358418845573347?s=20"
-        }
-      ],
-      "openGraph": "https://cdn.dexscreener.com/token-images/og/solana/9pa87pMwv1LNrvJRndqPpyu7UmBWqQjsGWiEj4tdpump?timestamp=1787731800000",
-      "tokenAddress": "9pa87pMwv1LNrvJRndqPpyu7UmBWqQjsGWiEj4tdpump",
-      "totalAmount": 10,
-      "url": "https://dexscreener.com/solana/9pa87pmwv1lnrvjrndqppyu7umbwqqjsgwiej4tdpump"
-    },
-    {
-      "amount": 10,
-      "chainId": "solana",
-      "description": "Official BRVC Token",
-      "header": "https://cdn.dexscreener.com/cms/images/bINJGL15J0RpjxJm?width=900&height=300&fit=crop&quality=95&format=auto",
-      "icon": "_YAgDmILZMu_VdM7",
-      "links": [
-        {
-          "url": "https://github.com/brvc-org"
-        },
-        {
-          "url": "https://orcid.org/0009-0007-3196-0425"
-        },
-        {
-          "type": "twitter",
-          "url": "https://x.com/realsatoshix?s=11"
+          "url": "https://x.com/xdwoof?s=21"
         },
         {
           "type": "telegram",
-          "url": "https://t.me/brvcofficial"
+          "url": "https://t.me/XDcommunityeth"
+        }
+      ],
+      "openGraph": "https://cdn.dexscreener.com/token-images/og/ethereum/0x72ba395751492a75ed496a22d9ee6c41f3d614ed?timestamp=1787751000000",
+      "tokenAddress": "0x72bA395751492A75ED496A22D9EE6c41f3D614Ed",
+      "totalAmount": 10,
+      "url": "https://dexscreener.com/ethereum/0x72ba395751492a75ed496a22d9ee6c41f3d614ed"
+    },
+    {
+      "amount": 100,
+      "chainId": "robinhood",
+      "description": "Cash Duck is a sharp, confident duck built for Robinhood Street.\n\nDressed in a clean suit, dark shades, and carrying a bag of cash, he moves through the market like he owns it. \n\n$CASHDUCK represents money, ambition, and the hustle to turn every opportunity into profit.",
+      "header": "https://cdn.dexscreener.com/cms/images/8HU71HB6UcjWIcL3?width=900&height=300&fit=crop&quality=95&format=auto",
+      "icon": "NBslcneiiTma6fzR",
+      "links": [
+        {
+          "url": "https://cashduck.meme"
         },
         {
-          "type": "discord",
-          "url": "https://discord.gg/6ZynkSZe"
+          "type": "twitter",
+          "url": "https://x.com/CASHDUCK"
+        },
+        {
+          "type": "telegram",
+          "url": "https://t.me/rh_cashduck"
+        }
+      ],
+      "openGraph": "https://cdn.dexscreener.com/token-images/og/robinhood/0xa5071374ffdfa53b37b5a9686e076e90df3faccc?timestamp=1787751000000",
+      "tokenAddress": "0xA5071374ffdFa53b37b5A9686e076E90Df3Faccc",
+      "totalAmount": 100,
+      "url": "https://dexscreener.com/robinhood/0xa5071374ffdfa53b37b5a9686e076e90df3faccc"
+    },
+    {
+      "amount": 10,
+      "chainId": "solana",
+      "description": "Tilly is the internet's beloved \"Friendly Loaf\"\u2014a 7-year-old Tibetan Spaniel born with the ultra-rare Short Spine Syndrome. Her tiny loaf-shaped body, missing neck, and iconic frog-like waddle made her a viral symbol of resilience, positivity, and pure cuteness. A one-of-one meme that's impossible to copy.",
+      "header": "https://cdn.dexscreener.com/cms/images/SZ_6gHzlCeYeDybd?width=900&height=300&fit=crop&quality=95&format=auto",
+      "icon": "0OFjZvnLz0wPkNwd",
+      "links": [
+        {
+          "url": "https://ogtilly.xyz"
+        },
+        {
+          "type": "twitter",
+          "url": "https://x.com/TillyOGonSol"
+        },
+        {
+          "type": "telegram",
+          "url": "https://t.me/OgTilly"
+        },
+        {
+          "type": "tiktok",
+          "url": "https://www.tiktok.com/@tillythefriendlyloaf?_r=1&_t=ZS-98IMOvUI4zF"
         },
         {
           "type": "instagram",
-          "url": "https://www.instagram.com/brockthib?igsi=MWtsbGt6dGF4azJ5eQ=="
-        },
-        {
-          "type": "reddit",
-          "url": "https://www.reddit.com/u/Ok_Ear8538/s/E3dRPwAFcQ"
+          "url": "https://www.instagram.com/tillythefriendlyloaf?igsh=dXBmOTA4cGRuOHZs"
         }
       ],
-      "openGraph": "https://cdn.dexscreener.com/token-images/og/solana/DJeT2vcub6yEx6cCceKFAGKQY7YCWiYfakPdkAFNpump?timestamp=1787731800000",
-      "tokenAddress": "DJeT2vcub6yEx6cCceKFAGKQY7YCWiYfakPdkAFNpump",
+      "openGraph": "https://cdn.dexscreener.com/token-images/og/solana/32vUHPxVShN552WwJ36vWnxCoy34eTDHRiQwL6ZA3ntP?timestamp=1787751000000",
+      "tokenAddress": "32vUHPxVShN552WwJ36vWnxCoy34eTDHRiQwL6ZA3ntP",
       "totalAmount": 10,
-      "url": "https://dexscreener.com/solana/djet2vcub6yex6cccekfagkqy7ycwiyfakpdkafnpump"
+      "url": "https://dexscreener.com/solana/32vuhpxvshn552wwj36vwnxcoy34etdhriqwl6za3ntp"
+    },
+    {
+      "amount": 30,
+      "chainId": "robinhood",
+      "description": "\ud83d\udc1f SARDINES // THE NARRATIVE\n\nSardines is a persistent 8-bit world built for the retail community on Robinhood Chain.\n\nInside The School, every member creates a School ID, chooses an Origin, completes missions, earns XP, levels up, unlocks badges and gear, joins the community, and builds a history that grows over time.\n\nYour wallet shows what you own.\nYour School ID shows what you've done.\n\nThe philosophy is simple:\n\n\ud83d\udc1f Retail is stronger together.\n\u26a1 Participation matters more than wallet size.\n\ud83c\udfc6 Show up early. Participate often. Build your history.\n\nThe Sardines who participate, contribute and help build The School create more opportunities for whatever comes next.\n\nThis isn't just about holding $SARD.\n\nIt's about becoming part of The School.\n\nRETAIL SWIMS TOGETHER. \ud83d\udc1f\ud83c\udf0a",
+      "header": "https://cdn.dexscreener.com/cms/images/8ft_2BNDfDFURqvy?width=900&height=300&fit=crop&quality=95&format=auto",
+      "icon": "hWh8AObCnTwN6Gzx",
+      "links": [
+        {
+          "url": "https://wearesardines.com/"
+        },
+        {
+          "type": "twitter",
+          "url": "https://x.com/sardonrobinhood"
+        },
+        {
+          "type": "telegram",
+          "url": "https://t.me/sardonrobinhood"
+        }
+      ],
+      "openGraph": "https://cdn.dexscreener.com/token-images/og/robinhood/0xfaff8708913483b5e61738aa12f48703696c6744?timestamp=1787751000000",
+      "tokenAddress": "0xFAFF8708913483B5E61738Aa12f48703696c6744",
+      "totalAmount": 30,
+      "url": "https://dexscreener.com/robinhood/0xfaff8708913483b5e61738aa12f48703696c6744"
     },
     {
       "amount": 50,
       "chainId": "solana",
-      "description": "SAT is the Solana Cat, a legendary feline inspired by Matt Furie\u2019s iconic Boy\u2019s Club universe.",
-      "header": "https://cdn.dexscreener.com/cms/images/fHe3IyDbckSgxw1k?width=900&height=300&fit=crop&quality=95&format=auto",
-      "icon": "o8jHrTgX3vCHENRY",
+      "header": "https://cdn.dexscreener.com/cms/images/yUB5ElP1fueloO1D?width=900&height=300&fit=crop&quality=95&format=auto",
+      "icon": "cFQcNWPeWzJRWH11",
       "links": [
         {
-          "url": "https://solanacatofc.fun/"
+          "url": "https://breakingrobot.site/"
         },
         {
           "type": "twitter",
-          "url": "https://x.com/Solanacatofc"
-        },
-        {
-          "type": "telegram",
-          "url": "https://t.me/SolanaCatOfficial"
+          "url": "https://x.com/RobotBreaks"
         }
       ],
-      "openGraph": "https://cdn.dexscreener.com/token-images/og/solana/76FvgNiTz8Tsfcqn8p96SYVcEmseAQjJzFLjDLnfpump?timestamp=1787731800000",
-      "tokenAddress": "76FvgNiTz8Tsfcqn8p96SYVcEmseAQjJzFLjDLnfpump",
+      "openGraph": "https://cdn.dexscreener.com/token-images/og/solana/VJdpSDDLof7HuZiNmsRUSL4YCncsk1FGiVoHyAJpump?timestamp=1787751000000",
+      "tokenAddress": "VJdpSDDLof7HuZiNmsRUSL4YCncsk1FGiVoHyAJpump",
       "totalAmount": 50,
-      "url": "https://dexscreener.com/solana/76fvgnitz8tsfcqn8p96syvcemseaqjjzfljdlnfpump"
+      "url": "https://dexscreener.com/solana/vjdpsddlof7huzinmsrusl4ycncsk1fgivohyajpump"
     },
     {
       "amount": 10,
       "chainId": "robinhood",
-      "description": "$WAMO \u2014\nThe Internet's Most Meme-able Fox.\n\nInspired by the viral Square-Faced Tibetan Sand Fox that always looks unimpressed.\n\n50M+ views on X.\n43M+ views on Instagram.\n\nJoin WAMO at the Top of the World.",
-      "header": "https://cdn.dexscreener.com/cms/images/v71JDJrE50Yc9UA3?width=900&height=300&fit=crop&quality=95&format=auto",
-      "icon": "exf5pHJdFh6ax9l_",
+      "description": "$COOLCAT \u2014 The coolest cat on Robinhood Chain.\n\nAn OG meme coin fair-launched on Pons.",
+      "header": "https://cdn.dexscreener.com/cms/images/gCwtySqzElj2i3Lu?width=900&height=300&fit=crop&quality=95&format=auto",
+      "icon": "ojCs4RaQX06Blfdo",
       "links": [
         {
-          "url": "https://www.wamofox.com/"
+          "url": "https://www.coolestcatonrh.xyz/"
         },
         {
-          "url": "https://x.com/sciencegirl/status/1678715462778077186"
+          "url": "https://t.me/OfficialCoolCatArts"
         },
         {
           "type": "twitter",
-          "url": "https://x.com/wamofox"
+          "url": "https://x.com/CoolCatonRh"
         },
         {
           "type": "telegram",
-          "url": "https://t.me/wamofox"
-        },
-        {
-          "type": "instagram",
-          "url": "https://www.instagram.com/reel/DN-SJeUgMeL/"
-        },
-        {
-          "type": "reddit",
-          "url": "https://www.reddit.com/r/interestingasfuck/comments/c3syb3/is_it_just_me_or_do_tibetan_foxes_just_look_like/"
+          "url": "https://t.me/coolcatrh_portal"
         }
       ],
-      "openGraph": "https://cdn.dexscreener.com/token-images/og/robinhood/0x24d13e592eb043924c49891235868f25259ce994?timestamp=1787731800000",
-      "tokenAddress": "0x24D13E592EB043924c49891235868F25259Ce994",
+      "openGraph": "https://cdn.dexscreener.com/token-images/og/robinhood/0x169beaa92ab7c898535804d5830c291894e91c8d?timestamp=1787751000000",
+      "tokenAddress": "0x169Beaa92Ab7C898535804D5830C291894E91C8D",
       "totalAmount": 10,
-      "url": "https://dexscreener.com/robinhood/0x24d13e592eb043924c49891235868f25259ce994"
+      "url": "https://dexscreener.com/robinhood/0x169beaa92ab7c898535804d5830c291894e91c8d"
     },
     {
       "amount": 10,
       "chainId": "solana",
-      "openGraph": "https://cdn.dexscreener.com/token-images/og/solana/yciFtCqpMKiWdmpUkmyXzEU9WmiMk5zRz1QTzPcpump?timestamp=1787731800000",
-      "tokenAddress": "yciFtCqpMKiWdmpUkmyXzEU9WmiMk5zRz1QTzPcpump",
-      "totalAmount": 10,
-      "url": "https://dexscreener.com/solana/yciftcqpmkiwdmpukmyxzeu9wmimk5zrz1qtzpcpump"
-    },
-    {
-      "amount": 50,
-      "chainId": "solana",
-      "description": "The most valuable thing in life isn\u2019t money, gold, or any material possession.\n\nIt\u2019s YOU.\n\nYour inner self.\nYour mind.\nYour consciousness.\nYour higher self.\n\nEverything you experience in this life starts from within. Your thoughts shape your actions, your actions shape your reality, and your inner growth determines the value you bring into the world.\n\nThat\u2019s why $YOURSELF isn\u2019t just another ticker.\n\nIt represents the one asset you can never replace: yourself.\n\nIn a world built around chasing external value, $YOURSELF is a reminder to invest in the only asset that truly matters \u2014 the person you become.",
-      "header": "https://cdn.dexscreener.com/cms/images/zLqhE365FWTAI8Xb?width=900&height=300&fit=crop&quality=95&format=auto",
-      "icon": "enGMKyAvWW1hQq_A",
+      "description": "Nubcat recently announced a new collab with Fugglers on Instagram and have made their own Instagram page on the collab",
+      "header": "https://cdn.dexscreener.com/cms/images/oTgBlp6-TLPGKK5I?width=900&height=300&fit=crop&quality=95&format=auto",
+      "icon": "lewkH4iRtg4R9cuy",
       "links": [
         {
-          "url": "https://www.yourself.live/"
+          "type": "twitter",
+          "url": "https://x.com/i/communities/2037169096173760736"
+        },
+        {
+          "type": "instagram",
+          "url": "https://www.instagram.com/sillyfugcat/"
+        }
+      ],
+      "openGraph": "https://cdn.dexscreener.com/token-images/og/solana/FwYKVLDDtvRpTxpr8wDbMmprna4H4Upt65xCG7uLpump?timestamp=1787751000000",
+      "tokenAddress": "FwYKVLDDtvRpTxpr8wDbMmprna4H4Upt65xCG7uLpump",
+      "totalAmount": 10,
+      "url": "https://dexscreener.com/solana/fwykvlddtvrptxpr8wdbmmprna4h4upt65xcg7ulpump"
+    },
+    {
+      "amount": 10,
+      "chainId": "solana",
+      "description": "\ud83e\udd0dA white lion is a guardian of dreams, a symbol of courage wrapped in stardust. Its heart glows with the light of the moon, reminding you that even in the darkest night, magic and strength shine from within.",
+      "header": "https://cdn.dexscreener.com/cms/images/FaXqJZcNsfaf7xLJ?width=900&height=300&fit=crop&quality=95&format=auto",
+      "icon": "iGY0OQI_mcto6-Vj",
+      "links": [
+        {
+          "url": "https://couragethewhitelion.xyz"
         },
         {
           "type": "twitter",
-          "url": "https://x.com/i/communities/2024513916219642049"
+          "url": "https://x.com/thewhitelion26"
+        },
+        {
+          "type": "telegram",
+          "url": "https://t.me/thelionsden26"
         }
       ],
-      "openGraph": "https://cdn.dexscreener.com/token-images/og/solana/5hspQiDgwG3R2Js9L3zqFa78WRAY8rm9SfJSAS6zpump?timestamp=1787731800000",
-      "tokenAddress": "5hspQiDgwG3R2Js9L3zqFa78WRAY8rm9SfJSAS6zpump",
-      "totalAmount": 80,
-      "url": "https://dexscreener.com/solana/5hspqidgwg3r2js9l3zqfa78wray8rm9sfjsas6zpump"
+      "openGraph": "https://cdn.dexscreener.com/token-images/og/solana/Dveq2rabHNdZW1YR5ZSECSnPkrcV5ZVGjKSMXD6Bpump?timestamp=1787751000000",
+      "tokenAddress": "Dveq2rabHNdZW1YR5ZSECSnPkrcV5ZVGjKSMXD6Bpump",
+      "totalAmount": 10,
+      "url": "https://dexscreener.com/solana/dveq2rabhndzw1yr5zsecsnpkrcv5zvgjksmxd6bpump"
+    },
+    {
+      "amount": 30,
+      "chainId": "solana",
+      "description": "How To Fish - the most viral game on Steam and among streamers.\n\nCheck X community for more information.",
+      "header": "https://cdn.dexscreener.com/cms/images/bKVJhf5hPgorIoYY?width=900&height=300&fit=crop&quality=95&format=auto",
+      "icon": "waU_sj8ZRhSrLxoW",
+      "links": [
+        {
+          "url": "https://howtofishcoin.fun"
+        },
+        {
+          "type": "twitter",
+          "url": "https://x.com/i/communities/1932696593150480826"
+        },
+        {
+          "type": "tiktok",
+          "url": "https://www.tiktok.com/search?q=how%20to%20fish&t=1787387510122"
+        }
+      ],
+      "openGraph": "https://cdn.dexscreener.com/token-images/og/solana/CvEDkC3UoHDQrmFYeBokAzujKa4p3tp16JnXKr6Cpump?timestamp=1787751000000",
+      "tokenAddress": "CvEDkC3UoHDQrmFYeBokAzujKa4p3tp16JnXKr6Cpump",
+      "totalAmount": 30,
+      "url": "https://dexscreener.com/solana/cvedkc3uohdqrmfyebokazujka4p3tp16jnxkr6cpump"
+    },
+    {
+      "amount": 10,
+      "chainId": "solana",
+      "description": "NYAN started as a simple idea: take one of the internet\u2019s most legendary memes and finally give something back to the artist behind it. No big team, no insiders, no hidden plans, just a community who liked the idea and decided to build around it.\n\nOfficial creator of Nyan owns 11% of the supply, all burned. 100% of creator fees go to Chris. If a meme has carried the internet for more than a decade, the least we can do is make sure the person who made it gets to share in the moment.",
+      "header": "https://cdn.dexscreener.com/cms/images/877384794d8b03660f883f28059c2cb7f543ac0003de8c48fbaabdb0b12f79c4?width=900&height=300&fit=crop&quality=95&format=auto",
+      "icon": "653a4e7c8e1b54e8ee9918178888fcc797a37ed3209617d9bdbf3a22f5207542",
+      "links": [
+        {
+          "url": "https://linktr.ee/NyanCat"
+        },
+        {
+          "type": "twitter",
+          "url": "https://x.com/NyanCatOnPump"
+        },
+        {
+          "type": "telegram",
+          "url": "https://t.me/NyanCatCoinPF"
+        }
+      ],
+      "openGraph": "https://cdn.dexscreener.com/token-images/og/solana/9BVn3Y8tPghbnGuuuxoj2mGekqgSQV1M7nALF7brpump?timestamp=1787751000000",
+      "tokenAddress": "9BVn3Y8tPghbnGuuuxoj2mGekqgSQV1M7nALF7brpump",
+      "totalAmount": 10,
+      "url": "https://dexscreener.com/solana/9bvn3y8tpghbnguuuxoj2mgekqgsqv1m7nalf7brpump"
+    },
+    {
+      "amount": 100,
+      "chainId": "solana",
+      "description": "The VI Stars Network built for GTA VI.\n$GTAVI \u2022 Rewards \u2022 Gaming \u2022 RP \u2022 Marketplace \u2605\u2605\u2605\u2605\u2605\u2605",
+      "header": "https://cdn.dexscreener.com/cms/images/19YDsn9_JtmJNzY2?width=900&height=300&fit=crop&quality=95&format=auto",
+      "icon": "p18xi7-6dYF6coEd",
+      "links": [
+        {
+          "url": "https://sixstars.network"
+        },
+        {
+          "type": "twitter",
+          "url": "https://x.com/i/communities/1921274647804289436"
+        },
+        {
+          "type": "telegram",
+          "url": "https://t.me/GTAVI_Network"
+        }
+      ],
+      "openGraph": "https://cdn.dexscreener.com/token-images/og/solana/BsQF48AptZgLsCJXccUZhhimdH4UL8tEJa3eb9xdjGTA?timestamp=1787751000000",
+      "tokenAddress": "BsQF48AptZgLsCJXccUZhhimdH4UL8tEJa3eb9xdjGTA",
+      "totalAmount": 100,
+      "url": "https://dexscreener.com/solana/bsqf48aptzglscjxccuzhhimdh4ul8teja3eb9xdjgta"
+    },
+    {
+      "amount": 30,
+      "chainId": "solana",
+      "description": "First PEPO on Mars. \ud83d\udc38\ud83e\ude90\nTransmission received // Solana\nThe world is becoming Martian. We\u2019re simply early. $MARPO",
+      "header": "https://cdn.dexscreener.com/cms/images/zA6IEEcaBdNehCwf?width=900&height=300&fit=crop&quality=95&format=auto",
+      "icon": "h4YC62F6ibapTJ6i",
+      "links": [
+        {
+          "url": "https://marposol.lol/"
+        },
+        {
+          "type": "twitter",
+          "url": "https://x.com/marposol"
+        }
+      ],
+      "openGraph": "https://cdn.dexscreener.com/token-images/og/solana/CsVBNQijeDY28yG4GLkeGE5p3Nic1BPv5M4mX6wTpump?timestamp=1787751000000",
+      "tokenAddress": "CsVBNQijeDY28yG4GLkeGE5p3Nic1BPv5M4mX6wTpump",
+      "totalAmount": 30,
+      "url": "https://dexscreener.com/solana/csvbnqijedy28yg4glkege5p3nic1bpv5m4mx6wtpump"
+    },
+    {
+      "amount": 100,
+      "chainId": "solana",
+      "description": "The original cat character by Matt Furie",
+      "header": "https://cdn.dexscreener.com/cms/images/In-RA05ZB9jD7Spi?width=900&height=300&fit=crop&quality=95&format=auto",
+      "icon": "MPF72mv4mWTGoKlJ",
+      "links": [
+        {
+          "type": "twitter",
+          "url": "https://x.com/gasspastoken"
+        },
+        {
+          "type": "telegram",
+          "url": "https://t.me/gasspascoin"
+        }
+      ],
+      "openGraph": "https://cdn.dexscreener.com/token-images/og/solana/GCr352ouzNZkNQd3KZqs6jFuQb8LiYnWsEJSUpSfpump?timestamp=1787751000000",
+      "tokenAddress": "GCr352ouzNZkNQd3KZqs6jFuQb8LiYnWsEJSUpSfpump",
+      "totalAmount": 120,
+      "url": "https://dexscreener.com/solana/gcr352ouznzknqd3kzqs6jfuqb8liynwsejsupsfpump"
+    },
+    {
+      "amount": 10,
+      "chainId": "polygon",
+      "description": "RICO \u00e9 um projeto real de ac\u00famulo de patrim\u00f4nio na Polygon. Trave RICO no staking oficial e receba 9,99% ao ano em USDC de verdade \u2014 sem imprimir token novo, sem taxa escondida. Comunidade forte, transpar\u00eancia total, recompensa paga direto do treasury.",
+      "header": "https://cdn.dexscreener.com/cms/images/ndY45uIZ7LfxDkfS?width=900&height=300&fit=crop&quality=95&format=auto",
+      "icon": "s5RNVcT3y100Lex_",
+      "links": [
+        {
+          "type": "twitter",
+          "url": "https://x.com/RICOTOKENPOL"
+        },
+        {
+          "type": "telegram",
+          "url": "https://t.me/ricotokenoficial"
+        },
+        {
+          "type": "instagram",
+          "url": "https://www.instagram.com/ricocripto_"
+        }
+      ],
+      "openGraph": "https://cdn.dexscreener.com/token-images/og/polygon/0x811997f9de4da23e622fdbd6072c08e8cac47815?timestamp=1787751000000",
+      "tokenAddress": "0x811997f9DE4dA23e622fdbD6072C08E8cAC47815",
+      "totalAmount": 10,
+      "url": "https://dexscreener.com/polygon/0x811997f9de4da23e622fdbd6072c08e8cac47815"
     },
     {
       "amount": 10,
       "chainId": "hyperevm",
-      "description": "me is perp.",
-      "header": "https://cdn.dexscreener.com/cms/images/rZ-BljH4bD9JhiR5?width=900&height=300&fit=crop&quality=95&format=auto",
-      "icon": "gyLFQJeO_RgEFj5h",
+      "description": "You weren't supposed to find this yet.\nNo roadmap. No promises.\nJust a signal waiting to be noticed.\nThe mystery is part of the story.",
+      "header": "https://cdn.dexscreener.com/cms/images/_Hu4EnECnibWwcTd?width=900&height=300&fit=crop&quality=95&format=auto",
+      "icon": "V1t055Ed0cZ8I0vy",
       "links": [
         {
-          "url": "https://perpme.fun/token/0x58190a41a52ec20d073b5f7539721aa5afb80999"
-        },
-        {
           "type": "twitter",
-          "url": "https://x.com/perphype?s=11"
+          "url": "https://x.com/HyperliquidX/status/2008458928288657426"
         }
       ],
-      "openGraph": "https://cdn.dexscreener.com/token-images/og/hyperevm/0x58190a41a52ec20d073b5f7539721aa5afb80999?timestamp=1787731800000",
-      "tokenAddress": "0x58190A41a52EC20D073B5f7539721aA5aFB80999",
+      "openGraph": "https://cdn.dexscreener.com/token-images/og/hyperevm/0x91c163f94509f078f12c133a926d51d021b50999?timestamp=1787751000000",
+      "tokenAddress": "0x91c163F94509F078f12c133a926D51D021B50999",
       "totalAmount": 10,
-      "url": "https://dexscreener.com/hyperevm/0x58190a41a52ec20d073b5f7539721aa5afb80999"
+      "url": "https://dexscreener.com/hyperevm/0x91c163f94509f078f12c133a926d51d021b50999"
     },
     {
       "amount": 10,
+      "chainId": "solana",
+      "description": "We (yes, WE) are ALL cracking some clussy in the big 26'",
+      "header": "https://cdn.dexscreener.com/cms/images/YCKC7C13rjvWvY61?width=900&height=300&fit=crop&quality=95&format=auto",
+      "icon": "TZlD0GpQ6TA4fWBq",
+      "links": [
+        {
+          "url": "https://www.clussyworldorder.fun/"
+        },
+        {
+          "type": "twitter",
+          "url": "https://x.com/clussysol"
+        }
+      ],
+      "openGraph": "https://cdn.dexscreener.com/token-images/og/solana/nWnDYs4dR57Cek8nsK1W8iWEqKiKZE1hW1CLvP3pump?timestamp=1787751000000",
+      "tokenAddress": "nWnDYs4dR57Cek8nsK1W8iWEqKiKZE1hW1CLvP3pump",
+      "totalAmount": 10,
+      "url": "https://dexscreener.com/solana/nwndys4dr57cek8nsk1w8iweqkikze1hw1clvp3pump"
+    },
+    {
+      "amount": 30,
+      "chainId": "solana",
+      "description": "The First Doge of Mars. Building the Martian colony, one believer at a time. $MARDOGE | Born on Earth. Destined for Mars.",
+      "header": "https://cdn.dexscreener.com/cms/images/bqtFVwji8UlY2jP6?width=900&height=300&fit=crop&quality=95&format=auto",
+      "icon": "pqVMdj0BRbI6sGWQ",
+      "links": [
+        {
+          "url": "https://mardogesol.lol"
+        },
+        {
+          "type": "twitter",
+          "url": "https://x.com/mardogeonsol"
+        }
+      ],
+      "openGraph": "https://cdn.dexscreener.com/token-images/og/solana/HLD7wcQciQxbUFLi5rVJ26WVkFQEksBkt3MxZSERpump?timestamp=1787751000000",
+      "tokenAddress": "HLD7wcQciQxbUFLi5rVJ26WVkFQEksBkt3MxZSERpump",
+      "totalAmount": 30,
+      "url": "https://dexscreener.com/solana/hld7wcqciqxbufli5rvj26wvkfqeksbkt3mxzserpump"
+    },
+    {
+      "amount": 10,
+      "chainId": "solana",
+      "description": "The Twerk Dog",
+      "header": "https://cdn.dexscreener.com/cms/images/YOcn0CduR2REU6e3?width=900&height=300&fit=crop&quality=95&format=auto",
+      "icon": "pd5IMFbWqzAc5UgF",
+      "links": [
+        {
+          "type": "twitter",
+          "url": "https://x.com/i/communities/2039025450370949522"
+        }
+      ],
+      "openGraph": "https://cdn.dexscreener.com/token-images/og/solana/Hoh4f6pZcFWRwTRcYJrfHWzF4AGkmq3CCyA4C8aypump?timestamp=1787751000000",
+      "tokenAddress": "Hoh4f6pZcFWRwTRcYJrfHWzF4AGkmq3CCyA4C8aypump",
+      "totalAmount": 10,
+      "url": "https://dexscreener.com/solana/hoh4f6pzcfwrwtrcyjrfhwzf4agkmq3ccya4c8aypump"
+    },
+    {
+      "amount": 10,
+      "chainId": "solana",
+      "description": "Meet the fruggers. The most beautiful pair on chain.",
+      "header": "https://cdn.dexscreener.com/cms/images/YSnKBQdq_NiWAKE6?width=900&height=300&fit=crop&quality=95&format=auto",
+      "icon": "1g1gUzftV-nI-iPa",
+      "links": [
+        {
+          "type": "twitter",
+          "url": "https://x.com/r3d1ne/status/2092563357282762764?s=46"
+        }
+      ],
+      "openGraph": "https://cdn.dexscreener.com/token-images/og/solana/4BCwJT5tYV8nu6KbLMbhjpViSgh3GhyBFepSkrQspump?timestamp=1787751000000",
+      "tokenAddress": "4BCwJT5tYV8nu6KbLMbhjpViSgh3GhyBFepSkrQspump",
+      "totalAmount": 10,
+      "url": "https://dexscreener.com/solana/4bcwjt5tyv8nu6kblmbhjpvisgh3ghybfepskrqspump"
+    },
+    {
+      "amount": 100,
+      "chainId": "solana",
+      "description": "Elon's cat, OG",
+      "header": "https://cdn.dexscreener.com/cms/images/Resc47He8eWa13mI?width=900&height=300&fit=crop&quality=95&format=auto",
+      "icon": "CxGpymoRdmhrkKXB",
+      "links": [
+        {
+          "url": "http://schrodingersol.fun"
+        },
+        {
+          "type": "twitter",
+          "url": "https://x.com/schrodinger2026"
+        },
+        {
+          "type": "telegram",
+          "url": "https://t.me/Schrodingerogpf"
+        }
+      ],
+      "openGraph": "https://cdn.dexscreener.com/token-images/og/solana/7fmHqRpJLgpVsJFTvrv24CEjkz9c4o5uVX4Zdur1hz35?timestamp=1787751000000",
+      "tokenAddress": "7fmHqRpJLgpVsJFTvrv24CEjkz9c4o5uVX4Zdur1hz35",
+      "totalAmount": 100,
+      "url": "https://dexscreener.com/solana/7fmhqrpjlgpvsjftvrv24cejkz9c4o5uvx4zdur1hz35"
+    },
+    {
+      "amount": 100,
+      "chainId": "bsc",
+      "description": "Meet $BNBCAT\nNow eyes on $BNBCAT \ud83d\udc9b\n1% BNB rewards distributed to holders.\nAnd the cat? Lore goes deeper as CZ posted it himself back in 2023\ud83d\udc47\n\nThe cat that builds on BNB \ud83d\udc31",
+      "header": "https://cdn.dexscreener.com/cms/images/Dx9KJPvCCfUsY4IR?width=900&height=300&fit=crop&quality=95&format=auto",
+      "icon": "6iBVn1lZdbDG-jIW",
+      "links": [
+        {
+          "url": "http://binance-cat.com"
+        },
+        {
+          "type": "twitter",
+          "url": "https://x.com/binancecat_x"
+        },
+        {
+          "type": "telegram",
+          "url": "https://t.me/BinanceCat_Portal"
+        }
+      ],
+      "openGraph": "https://cdn.dexscreener.com/token-images/og/bsc/0x3efbfff95576e1d23cf6ead0acd2e73f4d6a7777?timestamp=1787751000000",
+      "tokenAddress": "0x3EFBfFf95576e1d23cF6Ead0AcD2E73F4d6A7777",
+      "totalAmount": 100,
+      "url": "https://dexscreener.com/bsc/0x3efbfff95576e1d23cf6ead0acd2e73f4d6a7777"
+    },
+    {
+      "amount": 100,
+      "chainId": "robinhood",
+      "description": "The cat wears a Croc.",
+      "header": "https://cdn.dexscreener.com/cms/images/TOdNN3V50w4q1lwZ?width=900&height=300&fit=crop&quality=95&format=auto",
+      "icon": "P22wRQ0grgdQtay2",
+      "links": [
+        {
+          "url": "https://knowyourmeme.com/memes/croc-cat-meme"
+        },
+        {
+          "type": "twitter",
+          "url": "https://x.com/memecroccat"
+        },
+        {
+          "type": "telegram",
+          "url": "https://t.me/croccatmeme"
+        }
+      ],
+      "openGraph": "https://cdn.dexscreener.com/token-images/og/robinhood/0xdf3756d5f948cddc7bc0190558909e17a499d671?timestamp=1787751000000",
+      "tokenAddress": "0xdF3756D5F948cDDC7bC0190558909E17A499d671",
+      "totalAmount": 100,
+      "url": "https://dexscreener.com/robinhood/0xdf3756d5f948cddc7bc0190558909e17a499d671"
+    },
+    {
+      "amount": 10,
+      "chainId": "solana",
+      "description": "The number 888 is considered a powerful and promising number in numerology. It symbolizes abundance, success, and good luck. When repeated three times, as in angel numbers 888, it amplifies these meanings and brings a message of positivity and prosperity.",
+      "header": "https://cdn.dexscreener.com/cms/images/f2db7cfbf77dd85e49f424101cf3b33f1b861fd7db75f7c2adb586449f10b790?width=900&height=300&fit=crop&quality=95&format=auto",
+      "icon": "abd9dbe7f8a66db0158df65b25829440ff466e20c4106051becee1be9bc43a2d",
+      "links": [
+        {
+          "url": "https://pump.fun/coin/6DHUPxbG7evPY17zHSsmZWbc3wgQEPAdoH9KawBJvVHU"
+        },
+        {
+          "type": "twitter",
+          "url": "https://x.com/888pumpfun"
+        },
+        {
+          "type": "telegram",
+          "url": "https://t.me/eight8eightpump"
+        }
+      ],
+      "openGraph": "https://cdn.dexscreener.com/token-images/og/solana/6DHUPxbG7evPY17zHSsmZWbc3wgQEPAdoH9KawBJvVHU?timestamp=1787751000000",
+      "tokenAddress": "6DHUPxbG7evPY17zHSsmZWbc3wgQEPAdoH9KawBJvVHU",
+      "totalAmount": 10,
+      "url": "https://dexscreener.com/solana/6dhupxbg7evpy17zhssmzwbc3wgqepadoh9kawbjvvhu"
+    },
+    {
+      "amount": 100,
       "chainId": "robinhood",
       "description": "Spurdo is a 15+ year-old Finnish OG meme born on Ylilauta and later adopted by 4chan\u2019s /int/ board and BitcoinTalk. One of the earliest community-driven characters in internet meme culture.",
       "header": "https://cdn.dexscreener.com/cms/images/hDq9r5fyY8ItWyNG?width=900&height=300&fit=crop&quality=95&format=auto",
@@ -207,7 +542,7 @@
           "url": "https://t.me/Spurdo_R"
         }
       ],
-      "openGraph": "https://cdn.dexscreener.com/token-images/og/robinhood/0x6982e278a04b8c451f738727042d95565fb47f33?timestamp=1787731800000",
+      "openGraph": "https://cdn.dexscreener.com/token-images/og/robinhood/0x6982e278a04b8c451f738727042d95565fb47f33?timestamp=1787751000000",
       "tokenAddress": "0x6982e278A04B8C451f738727042d95565Fb47f33",
       "totalAmount": 110,
       "url": "https://dexscreener.com/robinhood/0x6982e278a04b8c451f738727042d95565fb47f33"
@@ -215,458 +550,139 @@
     {
       "amount": 10,
       "chainId": "solana",
-      "description": "PATE Coin was created by the people and is for the people! If your a hodler, bagworker, and community oriented individual, then you belong here. The lore is simple; someone sent me 10% because I am the biggest holder on Pump Fun of $CATE, so now I am giving back to my following by building a transparent, and community oriented project.",
-      "header": "https://cdn.dexscreener.com/cms/images/doILQn5x5jV7CmSm?width=900&height=300&fit=crop&quality=95&format=auto",
-      "icon": "wLV7pLtEEIsFtuXZ",
+      "description": "Fly through the market, dodge the candles, chase the high score, and prove you have what it takes to survive the bull run.",
+      "header": "https://cdn.dexscreener.com/cms/images/EuTCGdNYFVKB1QPl?width=900&height=300&fit=crop&quality=95&format=auto",
+      "icon": "7Va7c15Ky5BJtMFb",
       "links": [
         {
-          "url": "https://pepecatecoin.org/"
+          "url": "https://flappybull.meme/"
         },
         {
           "type": "twitter",
-          "url": "https://x.com/i/communities/2025367216309276852"
+          "url": "https://x.com/flappybullmeme"
         },
         {
           "type": "telegram",
-          "url": "https://t.me/OfficialPATEportal"
+          "url": "https://t.me/flappybullmeme"
         }
       ],
-      "openGraph": "https://cdn.dexscreener.com/token-images/og/solana/24EX9CQqEpR9mNUDTjkooKqRTf2pkY2mgbDqwNDwpump?timestamp=1787731800000",
-      "tokenAddress": "24EX9CQqEpR9mNUDTjkooKqRTf2pkY2mgbDqwNDwpump",
+      "openGraph": "https://cdn.dexscreener.com/token-images/og/solana/BKsqn2TySNMdpDCLXUXo5jiisBXr9T81q78SDB7Wpump?timestamp=1787751000000",
+      "tokenAddress": "BKsqn2TySNMdpDCLXUXo5jiisBXr9T81q78SDB7Wpump",
       "totalAmount": 10,
-      "url": "https://dexscreener.com/solana/24ex9cqqepr9mnudtjkookqrtf2pky2mgbdqwndwpump"
-    },
-    {
-      "amount": 10,
-      "chainId": "robinhood",
-      "description": "Braaaap\n\nThe Fartcoin of Pons\n\nFARTCASH \ud83d\udca8 making farts great again",
-      "header": "https://cdn.dexscreener.com/cms/images/Pe4jj-ZSg06JH2cK?width=900&height=300&fit=crop&quality=95&format=auto",
-      "icon": "m4yo_6OLnPNQuVcM",
-      "links": [
-        {
-          "url": "http://fartcash.org"
-        },
-        {
-          "type": "twitter",
-          "url": "https://x.com/fartcashofpons?s=11&t=fLIjzn3B-vuNskN-F3zPNQ"
-        },
-        {
-          "type": "telegram",
-          "url": "https://t.me/fartcashpublic"
-        }
-      ],
-      "openGraph": "https://cdn.dexscreener.com/token-images/og/robinhood/0xae01e6ec5b0bb375fa154611e41b6448e7e6e0b5?timestamp=1787731800000",
-      "tokenAddress": "0xae01E6Ec5B0BB375fA154611E41B6448e7E6E0B5",
-      "totalAmount": 10,
-      "url": "https://dexscreener.com/robinhood/0xae01e6ec5b0bb375fa154611e41b6448e7e6e0b5"
-    },
-    {
-      "amount": 100,
-      "chainId": "solana",
-      "description": "Joguman doesn\u2019t need the perfect moment. He moves when he feels like moving, stops when he needs to, and somehow always ends up exactly where he belongs.",
-      "header": "https://cdn.dexscreener.com/cms/images/BmLvpkY9PZX3uyK-?width=900&height=300&fit=crop&quality=95&format=auto",
-      "icon": "FiF-Uio8Gs9voZcr",
-      "links": [
-        {
-          "url": "https://joguman.xyz/"
-        },
-        {
-          "type": "twitter",
-          "url": "https://x.com/greenjoguman"
-        }
-      ],
-      "openGraph": "https://cdn.dexscreener.com/token-images/og/solana/6hekwc4iXJTMZzzz8Zws9CkDeKey7xhqYYL6W1n7pump?timestamp=1787731800000",
-      "tokenAddress": "6hekwc4iXJTMZzzz8Zws9CkDeKey7xhqYYL6W1n7pump",
-      "totalAmount": 100,
-      "url": "https://dexscreener.com/solana/6hekwc4ixjtmzzzz8zws9ckdekey7xhqyyl6w1n7pump"
+      "url": "https://dexscreener.com/solana/bksqn2tysnmdpdclxuxo5jiisbxr9t81q78sdb7wpump"
     },
     {
       "amount": 10,
       "chainId": "solana",
-      "description": "Doge Origins.",
-      "header": "https://cdn.dexscreener.com/cms/images/pfVmpthahtuKJg8t?width=900&height=300&fit=crop&quality=95&format=auto",
-      "icon": "8-FDDKGBzeCgX6XZ",
+      "description": "CUHSTERD ($Cuhsterd)",
+      "header": "https://cdn.dexscreener.com/cms/images/li91L1NxBH2EnP-K?width=900&height=300&fit=crop&quality=95&format=auto",
+      "icon": "y7OW_iJ9n9ZjMKpK",
       "links": [
         {
-          "url": "https://www.youtube.com/watch?is&v=tLSgRzCAtXA&feature=youtu.be"
-        },
-        {
           "type": "twitter",
-          "url": "https://x.com/DOGEstrongbad/status/2092480834020286534"
+          "url": "https://x.com/cuhsterd/status/2092549324022366296?s=46"
         }
       ],
-      "openGraph": "https://cdn.dexscreener.com/token-images/og/solana/Ev1Pi4G49S8G6d3Wr1RR4XL3435jPD7k49mVKmmapump?timestamp=1787731800000",
-      "tokenAddress": "Ev1Pi4G49S8G6d3Wr1RR4XL3435jPD7k49mVKmmapump",
+      "openGraph": "https://cdn.dexscreener.com/token-images/og/solana/6mnc1kpgoVPE1VdJq7nQG3yQ6jt3UVHpA87ekhqFpump?timestamp=1787751000000",
+      "tokenAddress": "6mnc1kpgoVPE1VdJq7nQG3yQ6jt3UVHpA87ekhqFpump",
       "totalAmount": 10,
-      "url": "https://dexscreener.com/solana/ev1pi4g49s8g6d3wr1rr4xl3435jpd7k49mvkmmapump"
-    },
-    {
-      "amount": 50,
-      "chainId": "solana",
-      "header": "https://cdn.dexscreener.com/cms/images/nbY4gBBjWE5Uyv8C?width=900&height=300&fit=crop&quality=95&format=auto",
-      "icon": "E6rdxlhHfJWQCUw5",
-      "links": [
-        {
-          "type": "twitter",
-          "url": "https://x.com/BABYCATEOnPump"
-        },
-        {
-          "url": "https://babycate.online/"
-        },
-        {
-          "type": "telegram",
-          "url": "https://t.me/BABYCATEOnPump"
-        }
-      ],
-      "openGraph": "https://cdn.dexscreener.com/token-images/og/solana/DDVUsN8sDFxbaX6gNBoD44kjZhFETWJnwAn4EX1dpump?timestamp=1787731800000",
-      "tokenAddress": "DDVUsN8sDFxbaX6gNBoD44kjZhFETWJnwAn4EX1dpump",
-      "totalAmount": 50,
-      "url": "https://dexscreener.com/solana/ddvusn8sdfxbax6gnbod44kjzhfetwjnwan4ex1dpump"
-    },
-    {
-      "amount": 50,
-      "chainId": "solana",
-      "description": "Living life in compact mode, Meemers is a rescue cat with Short Spine Syndrome! She\u2019s big on personality & short on spine!",
-      "header": "https://cdn.dexscreener.com/cms/images/qCqc9bipJNRwUQbr?width=900&height=300&fit=crop&quality=95&format=auto",
-      "icon": "JO4x0Xgx5NU7V3h4",
-      "links": [
-        {
-          "url": "https://www.today.com/pets/meemers-cat-short-spine-syndrome-jimothy-rcna593922"
-        },
-        {
-          "url": "https://www.youtube.com/shorts/_B364PK-8XA"
-        },
-        {
-          "type": "twitter",
-          "url": "https://x.com/meemersmeme"
-        },
-        {
-          "type": "telegram",
-          "url": "https://t.me/meemersmeme"
-        },
-        {
-          "type": "tiktok",
-          "url": "https://www.tiktok.com/@shortspine_meemers/video/7675361138166467871"
-        }
-      ],
-      "openGraph": "https://cdn.dexscreener.com/token-images/og/solana/3N5imznFARN7MYo5cpv8mMCfPwsC769S9sYMbrcUpump?timestamp=1787731800000",
-      "tokenAddress": "3N5imznFARN7MYo5cpv8mMCfPwsC769S9sYMbrcUpump",
-      "totalAmount": 50,
-      "url": "https://dexscreener.com/solana/3n5imznfarn7myo5cpv8mmcfpwsc769s9symbrcupump"
+      "url": "https://dexscreener.com/solana/6mnc1kpgovpe1vdjq7nqg3yq6jt3uvhpa87ekhqfpump"
     },
     {
       "amount": 10,
       "chainId": "solana",
-      "openGraph": "https://cdn.dexscreener.com/token-images/og/solana/Ej6A3nmYrX58poXwVv5mySpKSoiwpvSwUnH1BAY8pump?timestamp=1787731800000",
-      "tokenAddress": "Ej6A3nmYrX58poXwVv5mySpKSoiwpvSwUnH1BAY8pump",
-      "totalAmount": 10,
-      "url": "https://dexscreener.com/solana/ej6a3nmyrx58poxwvv5myspksoiwpvswunh1bay8pump"
-    },
-    {
-      "amount": 30,
-      "chainId": "solana",
-      "description": "\ud83d\udc38 We were lost in the mud.\nLil Frogg showed up rapping, chain swinging\nNow the frogs move as one.\nYou\u2019re either in\u2026 or you\u2019re watching.\nMud to the moon. \ud83d\udc38 $LILFROGG",
-      "header": "https://cdn.dexscreener.com/cms/images/Ge0oL6pSDGl4KIqv?width=900&height=300&fit=crop&quality=95&format=auto",
-      "icon": "9rSThsac4Q-6E9H7",
+      "description": "Oldest Cheems on chain",
+      "header": "https://cdn.dexscreener.com/cms/images/1WUY-gscB078QCq-?width=900&height=300&fit=crop&quality=95&format=auto",
+      "icon": "Z4ngxtyo5x-8FnCz",
       "links": [
         {
-          "url": "https://lil-frogg-meme.wegic.net/"
+          "url": "https://cheems.space/"
         },
         {
           "type": "twitter",
-          "url": "https://x.com/lilfroggmeme?s=11"
+          "url": "https://x.com/CheemsOG_SOL"
         },
         {
           "type": "telegram",
-          "url": "https://t.me/LilFroggMeme"
+          "url": "https://t.me/CheemsOG"
         },
         {
-          "type": "discord",
-          "url": "https://discord.gg/cdYtCEJQB"
-        },
-        {
-          "type": "tiktok",
-          "url": "https://www.tiktok.com/@lil.frogg59?_r=1&_t=ZT-99CKlCdARHa"
+          "type": "instagram",
+          "url": "https://www.instagram.com/balltze"
         }
       ],
-      "openGraph": "https://cdn.dexscreener.com/token-images/og/solana/E8w731SfSSBz636GTbkuJxTSrkp62NntU9UM1LuHpump?timestamp=1787731800000",
-      "tokenAddress": "E8w731SfSSBz636GTbkuJxTSrkp62NntU9UM1LuHpump",
-      "totalAmount": 30,
-      "url": "https://dexscreener.com/solana/e8w731sfssbz636gtbkujxtsrkp62nntu9um1luhpump"
-    },
-    {
-      "amount": 10,
-      "chainId": "bsc",
-      "description": "PRICELESS \u2014 BNB Meme Coin\n\nPRICELESS is a community-driven meme coin built on BNB Chain, inspired by the idea that some things simply can\u2019t be measured in money.\n\nNo complicated utility. No unnecessary promises. Just a meme, a community, and a token with a history of reaching a major market cap.\n\nPRICELESS. Because some things are worth more than money.",
-      "header": "https://cdn.dexscreener.com/cms/images/VTo3xRr-CEDSFHvl?width=900&height=300&fit=crop&quality=95&format=auto",
-      "icon": "6RackrQPX19fEOB8",
-      "links": [
-        {
-          "type": "twitter",
-          "url": "https://x.com/PricelessBSC_"
-        }
-      ],
-      "openGraph": "https://cdn.dexscreener.com/token-images/og/bsc/0x7d03759e5b41e36899833cb2e008455d69a24444?timestamp=1787731800000",
-      "tokenAddress": "0x7d03759E5B41E36899833cb2E008455d69A24444",
+      "openGraph": "https://cdn.dexscreener.com/token-images/og/solana/73DRYB2YpoHiZUdq37hQmHTR7Yvg5qJKsxxaYrsJSBCJ?timestamp=1787751000000",
+      "tokenAddress": "73DRYB2YpoHiZUdq37hQmHTR7Yvg5qJKsxxaYrsJSBCJ",
       "totalAmount": 10,
-      "url": "https://dexscreener.com/bsc/0x7d03759e5b41e36899833cb2e008455d69a24444"
-    },
-    {
-      "amount": 100,
-      "chainId": "solana",
-      "description": "Trump The Pistacio is taking over Solana with bold memes, green energy, and pistachio-powered chaos.",
-      "header": "https://cdn.dexscreener.com/cms/images/2sRKxkkpi92OFqH5?width=900&height=300&fit=crop&quality=95&format=auto",
-      "icon": "veY_OrDAw2u9t-yu",
-      "links": [
-        {
-          "url": "https://www.trumppistacio.site"
-        },
-        {
-          "type": "twitter",
-          "url": "https://x.com/TrumpPistacio"
-        },
-        {
-          "type": "telegram",
-          "url": "https://t.me/TrumpPistacio"
-        }
-      ],
-      "openGraph": "https://cdn.dexscreener.com/token-images/og/solana/EumP1q4oc1DVcZAJ4mRBeXpbTRtvkyr8xRrLL4qApump?timestamp=1787731800000",
-      "tokenAddress": "EumP1q4oc1DVcZAJ4mRBeXpbTRtvkyr8xRrLL4qApump",
-      "totalAmount": 100,
-      "url": "https://dexscreener.com/solana/eump1q4oc1dvczaj4mrbexpbtrtvkyr8xrrll4qapump"
-    },
-    {
-      "amount": 10,
-      "chainId": "robinhood",
-      "description": "Did I cross your path? Don't be afraid! I am patrolling the neighborhood.",
-      "header": "https://cdn.dexscreener.com/cms/images/1ZeAotpREZXk1-wU?width=900&height=300&fit=crop&quality=95&format=auto",
-      "icon": "xTKhIn-EyHEFkHJc",
-      "links": [
-        {
-          "url": "https://copcat.io/"
-        },
-        {
-          "type": "twitter",
-          "url": "https://x.com/copcatrh?s=11"
-        },
-        {
-          "type": "telegram",
-          "url": "https://t.me/copcatrh"
-        }
-      ],
-      "openGraph": "https://cdn.dexscreener.com/token-images/og/robinhood/0xd6b93545fd30f4b2718e154a59154117916509cc?timestamp=1787731800000",
-      "tokenAddress": "0xD6B93545fD30f4B2718e154a59154117916509cc",
-      "totalAmount": 10,
-      "url": "https://dexscreener.com/robinhood/0xd6b93545fd30f4b2718e154a59154117916509cc"
-    },
-    {
-      "amount": 10,
-      "chainId": "robinhood",
-      "description": "Swap, send, and launch on Pons V2 with just one X post.",
-      "header": "https://cdn.dexscreener.com/cms/images/GbwuQYAQccxewgOW?width=900&height=300&fit=crop&quality=95&format=auto",
-      "icon": "eGBjQve6A_GOB6nc",
-      "links": [
-        {
-          "url": "https://www.ponsbot.family/"
-        },
-        {
-          "type": "twitter",
-          "url": "https://x.com/Ponsbotfamily"
-        }
-      ],
-      "openGraph": "https://cdn.dexscreener.com/token-images/og/robinhood/0xb1e9b822b81bbbdab375f7f4d86e44fa04d12b07?timestamp=1787731800000",
-      "tokenAddress": "0xB1E9b822b81bbbdab375F7f4D86e44fA04d12b07",
-      "totalAmount": 10,
-      "url": "https://dexscreener.com/robinhood/0xb1e9b822b81bbbdab375f7f4d86e44fa04d12b07"
+      "url": "https://dexscreener.com/solana/73dryb2ypohizudq37hqmhtr7yvg5qjksxxayrsjsbcj"
     },
     {
       "amount": 10,
       "chainId": "solana",
-      "header": "https://cdn.dexscreener.com/cms/images/66aEYxojMNZt-xJH?width=900&height=300&fit=crop&quality=95&format=auto",
-      "icon": "PPc8LITfW9ZnbevQ",
+      "description": "SOLZ.FUN is a competitive 3D gaming platform where players compete using supported Solana tokens and hosts create token powered arenas. $SOLZ powers platform fees, hosting and in game assets.\n\ndApp Store \u2705 LIVE Android \ud83d\udea7  App Store \ud83d\udea7",
+      "header": "https://cdn.dexscreener.com/cms/images/Nd6_Ix40tgwQHpP1?width=900&height=300&fit=crop&quality=95&format=auto",
+      "icon": "9CIVTNht3r-dqv65",
       "links": [
         {
+          "url": "https://solz.fun/"
+        },
+        {
           "type": "twitter",
-          "url": "https://x.com/blknoiz06/status/2090963589796332015"
+          "url": "https://x.com/solz_fun"
         }
       ],
-      "openGraph": "https://cdn.dexscreener.com/token-images/og/solana/jYvaigGbPZ8oMMbb5Gs9dRasRQnoVqTXoEaHKGvpump?timestamp=1787731800000",
-      "tokenAddress": "jYvaigGbPZ8oMMbb5Gs9dRasRQnoVqTXoEaHKGvpump",
+      "openGraph": "https://cdn.dexscreener.com/token-images/og/solana/soLZV1owGUPERxCUNivWUUadNwwNzdtXMU5Wq13BYfV?timestamp=1787751000000",
+      "tokenAddress": "soLZV1owGUPERxCUNivWUUadNwwNzdtXMU5Wq13BYfV",
       "totalAmount": 10,
-      "url": "https://dexscreener.com/solana/jyvaiggbpz8ommbb5gs9drasrqnovqtxoeahkgvpump"
-    },
-    {
-      "amount": 50,
-      "chainId": "robinhood",
-      "description": "PINEAPPLE is the very first token that has been launched by ANON on much fun - a new kind of launchpad with built in broker NFTs, clock in and unique mechanics.",
-      "header": "https://cdn.dexscreener.com/cms/images/pNG1DVDTVB1pO9YF?width=900&height=300&fit=crop&quality=95&format=auto",
-      "icon": "QeKFvzbh1dK_Bsve",
-      "links": [
-        {
-          "url": "https://much.fun"
-        },
-        {
-          "type": "twitter",
-          "url": "https://x.com/muchfunreal"
-        },
-        {
-          "type": "telegram",
-          "url": "https://t.me/muchfunreal"
-        }
-      ],
-      "openGraph": "https://cdn.dexscreener.com/token-images/og/robinhood/0xcf78199e35e0d4130252492b4f6576d724ca602b?timestamp=1787731800000",
-      "tokenAddress": "0xcf78199e35e0d4130252492B4F6576D724CA602b",
-      "totalAmount": 50,
-      "url": "https://dexscreener.com/robinhood/0xcf78199e35e0d4130252492b4f6576d724ca602b"
-    },
-    {
-      "amount": 100,
-      "chainId": "robinhood",
-      "description": "$LUCK represents those who keep showing up, taking chances, and surviving setbacks until opportunity arrives. It\u2019s about staying in the game and being ready when your moment comes.",
-      "header": "https://cdn.dexscreener.com/cms/images/80yCo3kRyKNmcnls?width=900&height=300&fit=crop&quality=95&format=auto",
-      "icon": "eb_tPOtrJ4whLMTZ",
-      "links": [
-        {
-          "url": "https://luckinthehood.com"
-        },
-        {
-          "type": "twitter",
-          "url": "https://x.com/luckinthehoodrh"
-        },
-        {
-          "type": "telegram",
-          "url": "https://t.me/LuckInTheHood"
-        }
-      ],
-      "openGraph": "https://cdn.dexscreener.com/token-images/og/robinhood/0x12fab537934911c60bef7f146d9df94dfba73108?timestamp=1787731800000",
-      "tokenAddress": "0x12Fab537934911C60BeF7f146d9dF94DFBA73108",
-      "totalAmount": 100,
-      "url": "https://dexscreener.com/robinhood/0x12fab537934911c60bef7f146d9df94dfba73108"
+      "url": "https://dexscreener.com/solana/solzv1owguperxcunivwuuadnwwnzdtxmu5wq13byfv"
     },
     {
       "amount": 10,
       "chainId": "solana",
-      "description": "building the most |secure| meme on @PumpFun\n\neveryone had to take profits sir, we just bring attention to it.\n\nif you dyor and want to return to memes/community:\n\nupdate pfp. update name to \"/https \"xxx\"/\n\n< know what u Hold, dont trade Emotions. trade Conviction.  Repeat it. >\n\nlets save the trenches. \none meme, one dream.",
-      "header": "https://cdn.dexscreener.com/cms/images/eP4oaEmepjcyNpC0?width=900&height=300&fit=crop&quality=95&format=auto",
-      "icon": "108f6ca8e68018278057bc46b1507ecec55e2a0d5f233acb4727338efc52f92a",
+      "description": "NUMIA is building a digital ecosystem where language, identity and value connect.\n\nAt the foundation is Alphanumeria \u2014 Numia\u2019s original language system that transforms letters using numerical values. The standard system uses A=1, E=2, I=3, O=4, U=5 and Y=6, creating a framework that can be used across communication, identity, learning and digital applications.\n\nLANGUAGE \u2192 IDENTITY \u2192 VALUE\n\nNUMIA WALLET\n\nNumia Wallet brings the concept into Web3. Instead of relying solely on long, complex wallet addresses, users can create a human-readable Numia identity such as bernard@numia and use it to interact with crypto.\n\nThe wallet is non-custodial and represents the first real-world application of the wider Numia ecosystem.\n\nNUMIA ARITHMETICS\n\nNumia Arithmetics extends the language into numbers, calculations, challenges and learning. It explores how the relationship between letters and numerical values can become an educational and interactive framework.\n\nTHE NUMIA ECOSYSTEM\n\nNumia is more than a token and more than a wallet.\n\nIt is an expanding ecosystem being developed around:\n\n\u2022 Alphanumeria \u2014 the language\n\u2022 Numia Identity \u2014 human-readable digital identity\n\u2022 Numia Wallet \u2014 Web3 interaction and payments\n\u2022 Numia Arithmetics \u2014 numbers, challenges and learning\n\u2022 Future applications built around the Numia language and identity framework\n\nThe NUMIA token sits within this growing ecosystem as Numia continues exploring how language can become infrastructure for identity, communication and value in the digital world.\n\nOne language.\nOne identity layer.\nMany possibilities.\n\nNUMIA \u2014 Language \u2192 Identity \u2192 Value.",
+      "header": "https://cdn.dexscreener.com/cms/images/m7GRd9SYgg8wPz-s?width=900&height=300&fit=crop&quality=95&format=auto",
+      "icon": "K_TIYVzbH3l8QKLA",
       "links": [
         {
-          "url": "https://linktr.ee/pumpaa"
+          "url": "https://n5m31.com/"
+        },
+        {
+          "url": "https://docs.google.com/document/d/1HniftOkUh-18qhJB_A2zdYJ1KLKMFO4hpl7O6p3PNE4/edit?usp=sharing"
         },
         {
           "type": "twitter",
-          "url": "https://x.com/httpsonsol"
+          "url": "https://x.com/AlphanumeriaSol"
         },
         {
           "type": "telegram",
-          "url": "https://t.me/https_solana"
+          "url": "https://t.me/N5m31"
         }
       ],
-      "openGraph": "https://cdn.dexscreener.com/token-images/og/solana/7sGdNQSvUGpahh6qyXB3g5gsdK9FAzZM299KyCXspump?timestamp=1787731800000",
-      "tokenAddress": "7sGdNQSvUGpahh6qyXB3g5gsdK9FAzZM299KyCXspump",
+      "openGraph": "https://cdn.dexscreener.com/token-images/og/solana/6A7MxWNs2oKerrru2H7LG7bD1re7W2YS9XNLqqqwpump?timestamp=1787751000000",
+      "tokenAddress": "6A7MxWNs2oKerrru2H7LG7bD1re7W2YS9XNLqqqwpump",
       "totalAmount": 10,
-      "url": "https://dexscreener.com/solana/7sgdnqsvugpahh6qyxb3g5gsdk9fazzm299kycxspump"
-    },
-    {
-      "amount": 500,
-      "chainId": "solana",
-      "description": "just Wuf",
-      "header": "https://cdn.dexscreener.com/cms/images/bAD6tDxK51w3asRE?width=900&height=300&fit=crop&quality=95&format=auto",
-      "icon": "rlQr2_i_olgC4Vpn",
-      "links": [
-        {
-          "url": "https://wufpumpfun.org/"
-        },
-        {
-          "type": "twitter",
-          "url": "https://x.com/daddyriskbets/status/2092460204730249477?s=20"
-        }
-      ],
-      "openGraph": "https://cdn.dexscreener.com/token-images/og/solana/3YVwvY2ysuAe9B7bJbcuBFGy7tJnZNUdwk9pA18ipump?timestamp=1787731800000",
-      "tokenAddress": "3YVwvY2ysuAe9B7bJbcuBFGy7tJnZNUdwk9pA18ipump",
-      "totalAmount": 500,
-      "url": "https://dexscreener.com/solana/3yvwvy2ysuae9b7bjbcubfgy7tjnznudwk9pa18ipump"
+      "url": "https://dexscreener.com/solana/6a7mxwns2okerrru2h7lg7bd1re7w2ys9xnlqqqwpump"
     },
     {
       "amount": 10,
       "chainId": "solana",
-      "description": "The true PumpFun PFP cult that Pump handed to us themselves.",
-      "header": "https://cdn.dexscreener.com/cms/images/Ckr25S5AjNoRzFO8?width=900&height=300&fit=crop&quality=95&format=auto",
-      "icon": "3pjGfIqjIWiOIEKw",
+      "description": "The original cat character by Matt Furie",
+      "header": "https://cdn.dexscreener.com/cms/images/In-RA05ZB9jD7Spi?width=900&height=300&fit=crop&quality=95&format=auto",
+      "icon": "MPF72mv4mWTGoKlJ",
       "links": [
-        {
-          "url": "https://pumpfunavatar.fun/"
-        },
-        {
-          "url": "https://x.com/i/communities/2019722062345163102"
-        },
         {
           "type": "twitter",
-          "url": "https://x.com/pumpfunavatar?s=11&t=OROGtAnqIbeD5waiBmr18A"
-        }
-      ],
-      "openGraph": "https://cdn.dexscreener.com/token-images/og/solana/QE2h38jHGbPu5f5C8whu12LWqyrWr7kisRSsH1hpump?timestamp=1787731800000",
-      "tokenAddress": "QE2h38jHGbPu5f5C8whu12LWqyrWr7kisRSsH1hpump",
-      "totalAmount": 10,
-      "url": "https://dexscreener.com/solana/qe2h38jhgbpu5f5c8whu12lwqyrwr7kisrssh1hpump"
-    },
-    {
-      "amount": 10,
-      "chainId": "solana",
-      "description": "\u2014\u2014 JUST DCA",
-      "header": "https://cdn.dexscreener.com/cms/images/VrHM4bIc3oKZA_lB?width=900&height=300&fit=crop&quality=95&format=auto",
-      "icon": "WgEygq8XQ2zTVCKH",
-      "links": [
-        {
-          "type": "telegram",
-          "url": "https://t.me/justDCA"
-        }
-      ],
-      "openGraph": "https://cdn.dexscreener.com/token-images/og/solana/5Uf93yywANj2AWS7kxauFWJ2QSwW9MTaUCPa3ooipump?timestamp=1787731800000",
-      "tokenAddress": "5Uf93yywANj2AWS7kxauFWJ2QSwW9MTaUCPa3ooipump",
-      "totalAmount": 10,
-      "url": "https://dexscreener.com/solana/5uf93yywanj2aws7kxaufwj2qsww9mtaucpa3ooipump"
-    },
-    {
-      "amount": 10,
-      "chainId": "robinhood",
-      "description": "BORN UNDERGROUND. BUILT TO TECH OVER.\nAncient lore calls gnomes elemental beings of the earth, living below the surface. NOMO began underground. Now we are above ground and here to tech over.\n\n10k Supply do not wait til there is $NOMO",
-      "header": "https://cdn.dexscreener.com/cms/images/JKQZSZPzwV3xqZzg?width=900&height=300&fit=crop&quality=95&format=auto",
-      "icon": "DjAQGbl4NFEO1LRS",
-      "links": [
-        {
-          "url": "https://nomosupply.com/"
-        },
-        {
-          "type": "twitter",
-          "url": "https://x.com/NOMOonrobinhood"
+          "url": "https://x.com/gasspastoken"
         },
         {
           "type": "telegram",
-          "url": "https://t.me/NOMOSupply"
+          "url": "https://t.me/gasspascoin"
         }
       ],
-      "openGraph": "https://cdn.dexscreener.com/token-images/og/robinhood/0xfd036176739e03bab9e5ea881069ca2845e5c0de?timestamp=1787731800000",
-      "tokenAddress": "0xfD036176739e03BaB9E5eA881069Ca2845e5c0de",
-      "totalAmount": 10,
-      "url": "https://dexscreener.com/robinhood/0xfd036176739e03bab9e5ea881069ca2845e5c0de"
-    },
-    {
-      "amount": 30,
-      "chainId": "robinhood",
-      "description": "They said diversify. We said send it. $SEND is the memecoin for people who read \"buy\" and typed \"send\" instead. Native to Robinhood Chain, it runs on paper planes, vibes, and a refusal to sell. There is no team meeting \u2014 there is a group chat that just says \"SEND.\" You don't hold $SEND for your grandchildren. You send it before they're even born. WAGMI, probably. \ud83d\udce4\ud83d\ude80\ud83d\udc9a",
-      "header": "https://cdn.dexscreener.com/cms/images/sJf6FKyfykU1wYuu?width=900&height=300&fit=crop&quality=95&format=auto",
-      "icon": "4fwEMfwASl3J7UYA",
-      "links": [
-        {
-          "type": "telegram",
-          "url": "https://t.me/generationalwealthcoin"
-        }
-      ],
-      "openGraph": "https://cdn.dexscreener.com/token-images/og/robinhood/0xa40a9c0e2e9bf7a3b9deb9ebed2b59e77d01e105?timestamp=1787731800000",
-      "tokenAddress": "0xa40a9C0e2E9bf7a3b9deb9ebed2b59E77d01e105",
-      "totalAmount": 30,
-      "url": "https://dexscreener.com/robinhood/0xa40a9c0e2e9bf7a3b9deb9ebed2b59e77d01e105"
+      "openGraph": "https://cdn.dexscreener.com/token-images/og/solana/GCr352ouzNZkNQd3KZqs6jFuQb8LiYnWsEJSUpSfpump?timestamp=1787751000000",
+      "tokenAddress": "GCr352ouzNZkNQd3KZqs6jFuQb8LiYnWsEJSUpSfpump",
+      "totalAmount": 120,
+      "url": "https://dexscreener.com/solana/gcr352ouznzknqd3kzqs6jfuqb8liynwsejsupsfpump"
     }
   ],
   "signature": "GET https://api.dexscreener.com/token-boosts/latest/v1",

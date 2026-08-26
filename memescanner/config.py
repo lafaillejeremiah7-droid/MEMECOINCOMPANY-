@@ -110,7 +110,13 @@ class CalibrationConfig:
     retry_delay_seconds: int = 15
     report_interval_seconds: int = 86400
     policy_version: str = "unified-safety-v1"
-    feature_schema_version: str = "screening-rank-v1"
+    # Bumped from screening-rank-v1 when social presence and community takeover
+    # became scoring inputs. The version is what keeps calibration honest: a
+    # screening score of 55 under v1 and under v2 are not the same quantity, so
+    # mixing them would corrupt the score-band analysis. Cohort rows recorded under
+    # v1 are retained, and get_calibration_dataset simply reports on them
+    # separately rather than pooling incomparable scores.
+    feature_schema_version: str = "screening-rank-v2"
     definition_version: str = "price-return-2x-v1"
     purge_gap_seconds: int = 86400
     min_capture_coverage: float = 0.90
@@ -285,7 +291,7 @@ class Config:
                     "policy_version", "unified-safety-v1"
                 ),
                 feature_schema_version=calibration_data.get(
-                    "feature_schema_version", "screening-rank-v1"
+                    "feature_schema_version", "screening-rank-v2"
                 ),
                 definition_version=calibration_data.get(
                     "definition_version", "price-return-2x-v1"

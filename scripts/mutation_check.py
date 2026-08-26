@@ -103,10 +103,55 @@ MUTATIONS: List[Mutation] = [
         path="memescanner/unified_scanner.py",
         old='            "evidence_health": self._evidence_health(decisions),',
         new='            "evidence_health": {"x": {}, "onchain": {}},',
-        tests="tests/test_pipeline_offline.py",
+        tests="tests/test_gate_rejections.py",
         defect=(
             "Reporting no provider health, which is how an X search failing on "
-            "every request looked identical to a quiet market."
+            "every request looked identical to a quiet market. Guarded at the "
+            "run_cycle level rather than by the offline pipeline test: whether a "
+            "recorded cycle reaches a provider depends on market conditions when "
+            "the fixtures were captured, so that assertion was fixture-dependent "
+            "and broke on re-record."
+        ),
+    ),
+    Mutation(
+        name="social-presence-becomes-a-gate",
+        path="memescanner/unified_scanner.py",
+        old="def social_presence_score_points(candidate: NormalizedCandidate) -> float:",
+        new="def social_presence_score_points(candidate: NormalizedCandidate) -> float:\n"
+            "    if not candidate.telegram_links:\n"
+            "        return -1000.0",
+        tests="tests/test_social_features.py",
+        defect=(
+            "An uncalibrated signal being able to penalise, and so effectively "
+            "reject. The social study measured graduation on a population this "
+            "scanner never sees -- already-graduated tokens -- so until attribution "
+            "measures it here it must only be able to add."
+        ),
+    ),
+    Mutation(
+        name="social-score-unbounded",
+        path="memescanner/unified_scanner.py",
+        old="    return min(SOCIAL_PRESENCE_SCORE_MAX, points)",
+        new="    return points * 10.0",
+        tests="tests/test_social_features.py",
+        defect=(
+            "Removing the ceiling on an uncalibrated term. screening_score feeds "
+            "the take-profit target at its >= 80 boundary, so an unbounded term "
+            "would let a Telegram link move a trade-management suggestion."
+        ),
+    ),
+    Mutation(
+        name="creator-stake-scored",
+        path="memescanner/unified_scanner.py",
+        old="            + social_presence_score_points(candidate),",
+        new="            + social_presence_score_points(candidate)\n"
+            '            + float((onchain.get("dev_holding_pct") or 0)),',
+        tests="tests/test_gate_rejections.py",
+        defect=(
+            "Scoring creator stake without a calibrated midpoint. The 30% ceiling "
+            "treats a large holding as danger while the study treats a stake as "
+            "commitment, so the relationship is non-monotonic and any weight here "
+            "is invented."
         ),
     ),
     Mutation(

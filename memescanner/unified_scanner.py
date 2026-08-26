@@ -59,12 +59,117 @@ AVG_TRADE_SIZE_SCORE_MAX = 15.0
 AVG_TRADE_SIZE_STRONG_MULTIPLE = 3.0
 AVG_TRADE_SIZE_BOT_CHURN_MULTIPLE = 0.4
 
+# Social-presence and community-takeover contributions to the screening rank.
+# Bounded and uncalibrated: they reorder candidates that already cleared every hard
+# gate and can never reject anything.
+#
+# Weights are ordered by the only evidence available, a survival analysis of
+# 832,941 pump.fun launches: an advertised Telegram channel carried a Cox hazard
+# ratio of 5.40 (95% CI [4.73, 6.17]) against 1.19 for a website and 1.30 for
+# Twitter, and the count of advertised channels showed a near-monotone graduation
+# gradient from 0.110% to 1.919%.
+#
+# The total is deliberately small, because two cautions apply:
+#   - That study measured *graduation*. This scanner only ever sees tokens that
+#     already graduated, so it conditions on the study's own outcome and the effect
+#     may be largely spent by the time a candidate arrives here.
+#   - screening_score feeds compute_take_profit_target at its >= 80 boundary, so
+#     points added here can nudge a take-profit suggestion. Keeping the ceiling low
+#     bounds how far an uncalibrated signal can move trade management.
+#
+# X presence contributes nothing on purpose: it is already a hard gate, so every
+# qualifying candidate has it and it carries no ranking information.
+SOCIAL_PRESENCE_SCORE_MAX = 10.0
+TELEGRAM_PRESENCE_POINTS = 5.0
+WEBSITE_PRESENCE_POINTS = 1.0
+COMMUNITY_TAKEOVER_POINTS = 4.0
+
+# Creator-stake buckets, recorded for attribution and never scored. Holdings above
+# the configured ceiling are rejected before scoring, so they never appear here.
+CREATOR_STAKE_BUCKETS = (
+    (0.0, "NONE"),
+    (1.0, "MINIMAL"),
+    (5.0, "MODEST"),
+)
+
 # Indicators in X evidence content that suggest viral reach (high views/impressions).
 _VIRAL_INDICATORS = (
     "views", "impressions", "viral", "trending", "million views",
     "100k views", "500k views", "1m views", "10m views",
     "100k impressions", "500k impressions", "1m impressions",
 )
+
+
+def social_presence_features(candidate: NormalizedCandidate) -> Dict[str, Any]:
+    """Social and community-takeover signals, recorded so they can be measured.
+
+    These are written into every observation and frozen into the cohort's initial
+    features, which is what lets ``scripts/filter_attribution.py`` test whether
+    they actually separate winners from losers on this operator's own data rather
+    than on a study of a different population.
+    """
+    takeover = candidate.community_takeover
+    return {
+        "has_x": bool(candidate.x_links),
+        "has_telegram": bool(candidate.telegram_links),
+        "has_website": bool(candidate.website_links),
+        "social_channel_count": candidate.social_channel_count,
+        "has_community_takeover": takeover is not None,
+        "community_takeover": takeover,
+    }
+
+
+def creator_stake_features(onchain: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    """The creator's on-chain stake, recorded but deliberately not scored.
+
+    The survival study's proxy for creator commitment was the initial market cap
+    in SOL at mint, above the launchpad's 30 SOL default. That is a bonding-curve
+    property at the moment of minting and is not retrievable from any endpoint this
+    scanner uses: the launchpad list reports *current* market cap, and by the time
+    a candidate reaches here it has already traded. Rather than substitute a
+    different quantity and label it self-buy, this records the creator's current
+    holding, which the on-chain check already computes for its 30% ceiling.
+
+    Unscored on purpose. The ceiling treats a large holding as danger while the
+    study treats a stake as commitment, so the relationship is non-monotonic and no
+    calibrated midpoint exists. Attribution can find one from these buckets;
+    inventing a weight here would be guessing.
+    """
+    stake = None
+    if isinstance(onchain, dict):
+        raw = onchain.get("dev_holding_pct")
+        if isinstance(raw, (int, float)):
+            stake = float(raw)
+
+    if stake is None:
+        bucket = "UNKNOWN"
+    else:
+        bucket = "SUBSTANTIAL"
+        for threshold, name in CREATOR_STAKE_BUCKETS:
+            if stake <= threshold:
+                bucket = name
+                break
+    return {
+        "creator_stake_pct": stake,
+        "creator_stake_bucket": bucket,
+        "creator_known": bool(stake is not None),
+    }
+
+
+def social_presence_score_points(candidate: NormalizedCandidate) -> float:
+    """Bounded social-presence contribution to the screening rank.
+
+    Never negative and never able to reject: the worst case for a candidate with no
+    advertised channels beyond the required X link is that it adds nothing.
+    """
+    points = 0.0
+    if candidate.telegram_links:
+        points += TELEGRAM_PRESENCE_POINTS
+    if candidate.website_links:
+        points += WEBSITE_PRESENCE_POINTS
+    if candidate.community_takeover:
+        points += COMMUNITY_TAKEOVER_POINTS
+    return min(SOCIAL_PRESENCE_SCORE_MAX, points)
 
 
 def average_trade_size_usd(market: Dict[str, Any]) -> Optional[float]:
@@ -478,7 +583,10 @@ class CommonEvaluator:
             35.0
             + min(liquidity / 1000.0, 30.0)
             + min(ratio * 5.0, 25.0)
-            + _avg_trade_size_score_points(market, self.reference_avg_trade_size_usd),
+            + _avg_trade_size_score_points(market, self.reference_avg_trade_size_usd)
+            # Bounded, additive, never negative. See SOCIAL_PRESENCE_SCORE_MAX for
+            # why the ceiling is low and why X presence contributes nothing.
+            + social_presence_score_points(candidate),
         )
         qualified = CandidateDecision(
             candidate,
@@ -636,7 +744,7 @@ class UnifiedSolanaScanner:
         paper_buyer: Optional[PaperBuyer] = None,
         cohort_horizons: Optional[Dict[int, int]] = None,
         policy_version: str = "unified-safety-v1",
-        feature_schema_version: str = "screening-rank-v1",
+        feature_schema_version: str = "screening-rank-v2",
         max_onchain_checks: int = MAX_ONCHAIN_CHECKS_PER_CYCLE,
         max_market_checks: int = 40,
     ) -> None:
@@ -860,7 +968,7 @@ class UnifiedSolanaScanner:
         cycle_id: Optional[int] = None,
         candidate_id: Optional[int] = None,
         policy_version: str = "unified-safety-v1",
-        feature_schema_version: str = "screening-rank-v1",
+        feature_schema_version: str = "screening-rank-v2",
     ) -> Dict[str, Any]:
         candidate = decision.candidate
         market = dict(decision.market or {})
@@ -868,6 +976,15 @@ class UnifiedSolanaScanner:
             market["social_links"] = sorted(market["social_links"])
         evidence = dict(decision.evidence)
         evidence["source_failures"] = source_failures or {}
+        # Recorded for every decision, not only qualifying ones, so attribution can
+        # compare the feature distribution of rejected candidates against alerted
+        # ones. A feature present only on winners cannot be tested for separation.
+        # This dict is also what gets frozen into the cohort's
+        # initial_features_json, which is where calibration reads its predictors.
+        evidence["features"] = {
+            **social_presence_features(candidate),
+            **creator_stake_features(decision.evidence.get("onchain")),
+        }
         return {
             "chain_id": candidate.chain_id,
             "mint": candidate.mint,

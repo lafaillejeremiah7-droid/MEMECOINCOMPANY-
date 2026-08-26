@@ -97,6 +97,22 @@ async def _run_once() -> Dict[str, Any]:
 
     result = await scanner.run_cycle()
 
+    # Recompute the evidence tally independently from the same decisions, so the
+    # assertion checks the derivation rather than trusting the value it produced.
+    expected_health: Dict[str, Dict[str, int]] = {"x": {}, "onchain": {}}
+    for provider, status_key in (
+        ("x", "evidence_availability"),
+        ("onchain", "evidence_status"),
+    ):
+        for item in result["decisions"]:
+            block = item.evidence.get(provider)
+            if not isinstance(block, dict):
+                continue
+            status = str(block.get(status_key) or "UNKNOWN")
+            expected_health[provider][status] = (
+                expected_health[provider].get(status, 0) + 1
+            )
+
     assert database._db is not None
 
     async def scalar_row(sql: str) -> tuple:
@@ -126,6 +142,7 @@ async def _run_once() -> Dict[str, Any]:
             else (result["alerted"].decision, result["alerted"].screening_score)
         ),
         "evidence_health": result["evidence_health"],
+        "expected_health": expected_health,
         "cohort": cohort,
         "cycles": cycles,
         "jobs_total": jobs_total,
@@ -206,16 +223,16 @@ def test_evidence_health_is_reported(cycle):
                 f"{provider} reported a non-positive count for {status}"
             )
 
-    # Non-vacuous on purpose. Asserting only the shape let a stubbed-out tally of
-    # {"x": {}, "onchain": {}} pass, because the loop above simply never ran --
-    # which is the same silence the tally was added to break. The offline cycle
-    # verifies on-chain evidence for at least one candidate, so at least one
-    # provider must have reported something.
-    assert any(tally for tally in health.values()), (
-        "every provider tally is empty, so a total outage would still look normal"
-    )
-    assert health["onchain"], (
-        "the offline cycle reaches on-chain evidence, so its tally cannot be empty"
+    # The tally must agree with the decisions this cycle actually produced, rather
+    # than merely being shaped correctly.
+    #
+    # An earlier version asserted the tally was non-empty, which was wrong: whether
+    # the recorded cycle reaches a provider at all depends on market conditions at
+    # recording time, so re-recording made it fail. Non-emptiness is pinned
+    # fixture-independently in test_gate_rejections instead; correctness of the
+    # derivation belongs here.
+    assert health == cycle["expected_health"], (
+        "the reported tally does not match the decisions it was derived from"
     )
 
 

@@ -1,0 +1,142 @@
+{
+  "headers": {
+    "content-type": "application/json; charset=utf-8"
+  },
+  "json": {
+    "pairs": [
+      {
+        "baseToken": {
+          "address": "GMPYdykPxkThvEU7zEBEvkMx9R8DDoEot3UZspqjpump",
+          "name": "Cross Fire Bots",
+          "symbol": "CFB"
+        },
+        "chainId": "solana",
+        "dexId": "pumpswap",
+        "fdv": 17328,
+        "info": {
+          "header": "https://cdn.dexscreener.com/cms/images/PM9sM_Xl3O5N-DNB?width=1500&height=500&quality=95&format=auto",
+          "imageUrl": "https://cdn.dexscreener.com/cms/images/4WcJ2UbSgMfjVJ6T?width=800&height=800&quality=95&format=auto",
+          "openGraph": "https://cdn.dexscreener.com/token-images/og/solana/GMPYdykPxkThvEU7zEBEvkMx9R8DDoEot3UZspqjpump?timestamp=1787751000000",
+          "socials": [
+            {
+              "type": "twitter",
+              "url": "https://x.com/WhiteSquareSol/status/2092583853114405214"
+            }
+          ],
+          "websites": []
+        },
+        "liquidity": {
+          "base": 311423775,
+          "quote": 39.304,
+          "usd": 9168.69
+        },
+        "marketCap": 17328,
+        "pairAddress": "8TmSBqkoYcdtTuV3zT6EmvJLokHiphoE49myDJhGB8kL",
+        "pairCreatedAt": 1787747611000,
+        "priceChange": {
+          "h1": -56.58,
+          "h24": -56.58,
+          "h6": -56.58,
+          "m5": 13
+        },
+        "priceNative": "0.0000001805",
+        "priceUsd": "0.00001732",
+        "quoteToken": {
+          "address": "So11111111111111111111111111111111111111112",
+          "name": "Wrapped SOL",
+          "symbol": "SOL"
+        },
+        "txns": {
+          "h1": {
+            "buys": 526,
+            "sells": 528
+          },
+          "h24": {
+            "buys": 526,
+            "sells": 528
+          },
+          "h6": {
+            "buys": 526,
+            "sells": 528
+          },
+          "m5": {
+            "buys": 16,
+            "sells": 11
+          }
+        },
+        "url": "https://dexscreener.com/solana/8tmsbqkoycdttuv3zt6emvjlokhiphoe49mydjhgb8kl",
+        "volume": {
+          "h1": 69922.93,
+          "h24": 69922.93,
+          "h6": 69922.93,
+          "m5": 1310.09
+        }
+      },
+      {
+        "baseToken": {
+          "address": "GMPYdykPxkThvEU7zEBEvkMx9R8DDoEot3UZspqjpump",
+          "name": "Cross Fire Bots",
+          "symbol": "CFB"
+        },
+        "chainId": "solana",
+        "dexId": "pumpfun",
+        "fdv": 39888.25,
+        "info": {
+          "header": "https://cdn.dexscreener.com/cms/images/PM9sM_Xl3O5N-DNB?width=1500&height=500&quality=95&format=auto",
+          "imageUrl": "https://cdn.dexscreener.com/cms/images/4WcJ2UbSgMfjVJ6T?width=800&height=800&quality=95&format=auto",
+          "openGraph": "https://cdn.dexscreener.com/token-images/og/solana/GMPYdykPxkThvEU7zEBEvkMx9R8DDoEot3UZspqjpump?timestamp=1787751000000",
+          "socials": [
+            {
+              "type": "twitter",
+              "url": "https://x.com/WhiteSquareSol/status/2092583853114405214"
+            }
+          ],
+          "websites": []
+        },
+        "marketCap": 39888.25,
+        "pairAddress": "9dALUUPhEEx2PabgSHk97kMoGT9Krax9NxpGa7BRwx38",
+        "pairCreatedAt": 1787745235000,
+        "priceChange": {
+          "h1": 61.35,
+          "h24": 1174,
+          "h6": 1174
+        },
+        "priceNative": "0.0000004108",
+        "priceUsd": "0.00003988",
+        "quoteToken": {
+          "address": "So11111111111111111111111111111111111111112",
+          "name": "Wrapped SOL",
+          "symbol": "SOL"
+        },
+        "txns": {
+          "h1": {
+            "buys": 57,
+            "sells": 44
+          },
+          "h24": {
+            "buys": 678,
+            "sells": 601
+          },
+          "h6": {
+            "buys": 678,
+            "sells": 601
+          },
+          "m5": {
+            "buys": 0,
+            "sells": 0
+          }
+        },
+        "url": "https://dexscreener.com/solana/9daluupheex2pabgshk97kmogt9krax9nxpga7brwx38",
+        "volume": {
+          "h1": 8830.4,
+          "h24": 90165.9,
+          "h6": 90165.9,
+          "m5": 0
+        }
+      }
+    ],
+    "schemaVersion": "1.0.0"
+  },
+  "signature": "GET https://api.dexscreener.com/latest/dex/tokens/GMPYdykPxkThvEU7zEBEvkMx9R8DDoEot3UZspqjpump",
+  "status": 200
+}

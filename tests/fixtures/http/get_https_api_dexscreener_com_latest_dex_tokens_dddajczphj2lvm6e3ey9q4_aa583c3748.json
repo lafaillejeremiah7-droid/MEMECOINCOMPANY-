@@ -1,0 +1,75 @@
+{
+  "headers": {
+    "content-type": "application/json; charset=utf-8"
+  },
+  "json": {
+    "pairs": [
+      {
+        "baseToken": {
+          "address": "DddajcZPHJ2LVM6e3Ey9Q4DB2vfi7UnitoMn4S97pump",
+          "name": "GROK BOT KIMI K3 AGENT",
+          "symbol": "KIMIK3"
+        },
+        "chainId": "solana",
+        "dexId": "pumpfun",
+        "fdv": 32444.22,
+        "info": {
+          "header": "https://cdn.dexscreener.com/cms/images/xj9O-CwnZo4uLbaR?width=1500&height=500&quality=95&format=auto",
+          "imageUrl": "https://cdn.dexscreener.com/cms/images/QwIBVt1e_aNhVDoC?width=800&height=800&quality=95&format=auto",
+          "openGraph": "https://cdn.dexscreener.com/token-images/og/solana/DddajcZPHJ2LVM6e3Ey9Q4DB2vfi7UnitoMn4S97pump?timestamp=1787751000000",
+          "socials": [
+            {
+              "type": "twitter",
+              "url": "https://x.com/i/communities/2008478431881949199"
+            }
+          ],
+          "websites": []
+        },
+        "marketCap": 32444.22,
+        "pairAddress": "HE1gnCX9nTvvBABq9u3zEKYUUqM8GBJ2d4n3hqLDBmge",
+        "pairCreatedAt": 1787748098000,
+        "priceChange": {
+          "h1": 1023,
+          "h24": 1023,
+          "h6": 1023,
+          "m5": 11.76
+        },
+        "priceNative": "0.0000003380",
+        "priceUsd": "0.00003244",
+        "quoteToken": {
+          "address": "So11111111111111111111111111111111111111112",
+          "name": "Wrapped SOL",
+          "symbol": "SOL"
+        },
+        "txns": {
+          "h1": {
+            "buys": 779,
+            "sells": 423
+          },
+          "h24": {
+            "buys": 779,
+            "sells": 423
+          },
+          "h6": {
+            "buys": 779,
+            "sells": 423
+          },
+          "m5": {
+            "buys": 98,
+            "sells": 66
+          }
+        },
+        "url": "https://dexscreener.com/solana/he1gncx9ntvvbabq9u3zekyuuqm8gbj2d4n3hqldbmge",
+        "volume": {
+          "h1": 58095.96,
+          "h24": 58095.96,
+          "h6": 58095.96,
+          "m5": 9346.13
+        }
+      }
+    ],
+    "schemaVersion": "1.0.0"
+  },
+  "signature": "GET https://api.dexscreener.com/latest/dex/tokens/DddajcZPHJ2LVM6e3Ey9Q4DB2vfi7UnitoMn4S97pump",
+  "status": 200
+}
