@@ -16,6 +16,17 @@ on:
   pull_request:
   push:
     branches: [main]
+  # Manual trigger. Added after a GitHub-side runner-allocation outage left a run
+  # in `startup_failure` with zero jobs: without this, the only way to retry was
+  # to push a commit, so a green history depended on polluting it with empty ones.
+  workflow_dispatch:
+
+# Superseded pull-request runs are cancelled, because a queued run for an old
+# commit competes for a runner with the one that actually needs to pass. Runs on
+# main are never cancelled: that history is the record of what was released.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   test:
