@@ -138,7 +138,7 @@ def _source_text() -> str:
     """All parser source, for deciding whether a provider field is actually read."""
     parts = []
     for path in sorted(Path("memescanner").glob("*.py")):
-        parts.append(path.read_text())
+        parts.append(path.read_text(encoding="utf-8"))
     return "\n".join(parts)
 
 

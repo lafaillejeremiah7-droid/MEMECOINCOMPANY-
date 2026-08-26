@@ -109,7 +109,19 @@ class CalibrationConfig:
     outcome_poll_seconds: float = 2.0
     retry_delay_seconds: int = 15
     report_interval_seconds: int = 86400
-    policy_version: str = "unified-safety-v1"
+    # Bumped from unified-safety-v1, which had never been changed since the first
+    # commit despite nine subsequent commits altering which candidates qualify:
+    # calibrated filter defaults, the top-10 ceiling moving to 30%, LPI and spike
+    # rejection, Token-2022 extension handling, holder-history suspicion, forensic
+    # search, and the X mention gate going from unsatisfiable to working.
+    #
+    # get_calibration_dataset filters on this field, so leaving it fixed meant
+    # calibration would pool candidates selected under nine different policies as a
+    # single cohort -- including candidates chosen while the mention gate could only
+    # be passed via the celebrity bypass. Isolating them is the entire purpose of
+    # the field. tests/test_policy_versioning.py now fails if the gates change
+    # without a bump.
+    policy_version: str = "unified-safety-v2"
     # Bumped from screening-rank-v1 when social presence and community takeover
     # became scoring inputs. The version is what keeps calibration honest: a
     # screening score of 55 under v1 and under v2 are not the same quantity, so
@@ -184,7 +196,7 @@ class Config:
         if not config_path.exists():
             raise FileNotFoundError(f"Configuration file not found: {path}")
 
-        with open(config_path, "r") as f:
+        with open(config_path, "r", encoding="utf-8") as f:
             data: Dict[str, Any] = yaml.safe_load(f) or {}
 
         return cls._from_dict(data)._with_environment_overrides()
@@ -288,7 +300,7 @@ class Config:
                     "report_interval_seconds", 86400
                 ),
                 policy_version=calibration_data.get(
-                    "policy_version", "unified-safety-v1"
+                    "policy_version", "unified-safety-v2"
                 ),
                 feature_schema_version=calibration_data.get(
                     "feature_schema_version", "screening-rank-v2"

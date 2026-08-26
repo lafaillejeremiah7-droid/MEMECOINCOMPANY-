@@ -20,7 +20,15 @@ select = [
     "DTZ",   # naive datetimes; this codebase stores and compares timestamps
     "SIM102", # collapsible nested if
     "SIM114", # duplicated if arms
+    # open()/read_text()/write_text() without an explicit encoding. This caught a
+    # real defect: scripts/mutation_check.py rewrote memescanner/unified_scanner.py,
+    # which contains a non-ASCII em dash, using the platform default encoding -- so
+    # the harness whose contract is "leave the tree exactly as it was" could itself
+    # re-encode a source file. Preview is safe to enable because ruff is pinned to
+    # an exact version in requirements-dev.txt, so CI evaluates the same rule set.
+    "PLW1514", # unspecified-encoding
 ]
+preview = true
 ignore = [
     # Blind `except Exception` is a deliberate pattern here, not an accident: the
     # scanner is evidence-gated, so a failing provider must degrade to

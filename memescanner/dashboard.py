@@ -10,14 +10,23 @@ Run with: python -m memescanner.dashboard
 """
 
 import json
+import logging
 import sqlite3
 import time
 from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from urllib.parse import parse_qs, quote, urlparse
 
+logger = logging.getLogger(__name__)
+
 # Overwritten in main() from the same config the bot reads. Kept as a module
 # global so it stays overridable in tests.
+# Query-string bounds. A read-only viewer has no reason to accept an unbounded
+# page size, and an unbounded one previously reached SQLite as a LIMIT it
+# rejected, which surfaced as an empty panel rather than an error.
+MAX_PAGE = 1_000_000
+MAX_PAGE_LIMIT = 500
+
 DB_PATH = "memescanner.db"
 
 
@@ -2091,8 +2100,54 @@ class DashboardHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def _int_param(self, params, name, default, minimum, maximum):
+        """Read a bounded integer from the query string.
+
+        Every one of these values came straight from ``int(params[...])`` before,
+        which made several requests crash the connection: ``?limit=abc`` and
+        ``?limit=1.5`` raised ValueError, and ``?limit=0`` divided by zero when
+        computing ``total_pages``. On ``/api/history`` the zero case was worse than
+        a crash -- SQLite rejected the resulting query, the OperationalError handler
+        caught it, and the endpoint reported ``total: 0``, which is indistinguishable
+        from having no trades at all.
+
+        Out-of-range and unparseable values are clamped rather than rejected: this
+        is a read-only viewer, so showing a sane page beats returning an error to
+        someone who mistyped a URL.
+        """
+        raw = params.get(name, [None])[0]
+        if raw is None:
+            return default
+        try:
+            value = int(str(raw).strip())
+        except (TypeError, ValueError):
+            return default
+        return max(minimum, min(maximum, value))
+
+    def _page(self, params):
+        return self._int_param(params, "page", 1, 1, MAX_PAGE)
+
+    def _limit(self, params, default):
+        return self._int_param(params, "limit", default, 1, MAX_PAGE_LIMIT)
+
     def do_GET(self):
-        """Handle GET requests."""
+        """Handle GET requests, never leaving an exception unanswered."""
+        try:
+            self._route()
+        except Exception:
+            # A dropped connection gives the operator no information and looks
+            # like the dashboard is down. Answer with a status instead, and log the
+            # traceback so the cause is recoverable.
+            logger.exception("Dashboard request failed: %s", self.path)
+            try:
+                self.send_response(500)
+                self.send_header("Content-Type", "text/plain")
+                self.end_headers()
+                self.wfile.write(b"Internal Server Error")
+            except Exception:  # noqa: BLE001 - the client may already be gone
+                pass
+
+    def _route(self):
         parsed = urlparse(self.path)
         path = parsed.path
         params = parse_qs(parsed.query)
@@ -2104,28 +2159,31 @@ class DashboardHandler(BaseHTTPRequestHandler):
         elif path == "/api/positions":
             self._send_json(api_positions())
         elif path == "/api/history":
-            page = int(params.get("page", ["1"])[0])
-            limit = int(params.get("limit", ["20"])[0])
-            self._send_json(api_history(page, limit))
+            self._send_json(
+                api_history(self._page(params), self._limit(params, 20))
+            )
         elif path == "/api/stats":
             self._send_json(api_stats())
         elif path == "/api/discovery":
-            page = int(params.get("page", ["1"])[0])
-            limit = int(params.get("limit", ["50"])[0])
-            self._send_json(api_discovery(page, limit))
+            self._send_json(
+                api_discovery(self._page(params), self._limit(params, 50))
+            )
         elif path == "/api/candidates":
-            page = int(params.get("page", ["1"])[0])
-            limit = int(params.get("limit", ["50"])[0])
-            decision = params.get("decision", [None])[0]
-            self._send_json(api_candidates(page, limit, decision))
+            self._send_json(
+                api_candidates(
+                    self._page(params),
+                    self._limit(params, 50),
+                    params.get("decision", [None])[0],
+                )
+            )
         elif path == "/api/cohort":
-            page = int(params.get("page", ["1"])[0])
-            limit = int(params.get("limit", ["50"])[0])
-            self._send_json(api_cohort(page, limit))
+            self._send_json(
+                api_cohort(self._page(params), self._limit(params, 50))
+            )
         elif path == "/api/outcomes":
-            page = int(params.get("page", ["1"])[0])
-            limit = int(params.get("limit", ["50"])[0])
-            self._send_json(api_outcomes(page, limit))
+            self._send_json(
+                api_outcomes(self._page(params), self._limit(params, 50))
+            )
         elif path == "/api/calibration":
             self._send_json(api_calibration())
         elif path == "/api/pipeline":

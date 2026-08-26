@@ -90,7 +90,7 @@ calibration:
   outcome_poll_seconds: 2
   retry_delay_seconds: 15
   report_interval_seconds: 86400
-  policy_version: "unified-safety-v1"
+  policy_version: "unified-safety-v2"
   feature_schema_version: "screening-rank-v2"
   definition_version: "price-return-2x-v1"
   # Conservative chronological holdout gates. Until every gate passes, reports
