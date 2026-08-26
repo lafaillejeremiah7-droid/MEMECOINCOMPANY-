@@ -917,3 +917,126 @@ class TestFeaturesReachTheDatabase:
         )
         frozen = json.loads(row["initial_features_json"])
         assert frozen["evidence"]["features"]["has_telegram"] is True
+
+
+
+class TestForensicSearchConcurrency:
+    """The two forensic lookups must overlap, and must tolerate one failing.
+
+    They were sequential. That looked harmless until measured: an X.ai search takes
+    40-90 seconds, so two back-to-back added roughly three minutes on top of the
+    main mention search, and a live cycle was observed spending 256 seconds on a
+    single candidate. The queries are independent, so overlapping them costs nothing.
+    """
+
+    class _Recording:
+        def __init__(self, delay=0.05, results=None, raises=None):
+            self.delay = delay
+            self.results = results or {}
+            self.raises = raises or {}
+            self.queries: list = []
+            self.concurrent = 0
+            self.max_concurrent = 0
+
+        async def search_token(self, symbol, name, mint):
+            import asyncio
+
+            source = str(symbol).split()[0] if symbol else ""
+            self.queries.append(source)
+            self.concurrent += 1
+            self.max_concurrent = max(self.max_concurrent, self.concurrent)
+            try:
+                await asyncio.sleep(self.delay)
+                if source in self.raises:
+                    raise self.raises[source]
+                return self.results.get(
+                    source,
+                    {"status": "FOUND", "evidence": [], "scam_warning": False},
+                )
+            finally:
+                self.concurrent -= 1
+
+    @staticmethod
+    def _evaluator_with(x_client):
+        from memescanner.unified_scanner import CommonEvaluator
+
+        evaluator = CommonEvaluator.__new__(CommonEvaluator)
+        evaluator.x_search = x_client
+        return evaluator
+
+    @pytest.mark.asyncio
+    async def test_both_queries_are_in_flight_at_once(self):
+        client = self._Recording()
+        await self._evaluator_with(client)._forensic_x_search("MintX")
+
+        assert sorted(client.queries) == ["bubblemaps", "insightx"]
+        assert client.max_concurrent == 2, (
+            "the forensic queries ran sequentially, which at measured X.ai latency "
+            "adds about 90 seconds per candidate for no benefit"
+        )
+
+    @pytest.mark.asyncio
+    async def test_elapsed_time_is_one_query_not_two(self):
+        import time
+
+        client = self._Recording(delay=0.2)
+        started = time.perf_counter()
+        await self._evaluator_with(client)._forensic_x_search("MintX")
+        elapsed = time.perf_counter() - started
+
+        assert elapsed < 0.35, f"took {elapsed:.2f}s, close to the sequential 0.4s"
+
+    @pytest.mark.asyncio
+    async def test_a_scam_report_from_either_source_is_detected(self):
+        """Order independence: gather returns both, so either may carry the finding."""
+        for source in ("bubblemaps", "insightx"):
+            client = self._Recording(
+                results={
+                    source: {
+                        "status": "FOUND",
+                        "scam_warning": False,
+                        "evidence": [
+                            {"url": "u", "title": "report", "content": "clear rug"}
+                        ],
+                    }
+                }
+            )
+            result = await self._evaluator_with(client)._forensic_x_search("MintX")
+            assert result["scam_detected"] is True, f"{source} finding was missed"
+            assert result["sources"] == [source]
+
+    @pytest.mark.asyncio
+    async def test_one_failing_query_does_not_hide_the_other(self):
+        """A best-effort lookup that raises must not suppress its sibling's finding."""
+        client = self._Recording(
+            raises={"bubblemaps": TimeoutError("upstream")},
+            results={
+                "insightx": {
+                    "status": "FOUND",
+                    "scam_warning": True,
+                    "evidence": [],
+                }
+            },
+        )
+        result = await self._evaluator_with(client)._forensic_x_search("MintX")
+
+        assert result["scam_detected"] is True
+        assert result["sources"] == ["insightx"]
+
+    @pytest.mark.asyncio
+    async def test_both_failing_leaves_the_candidate_unblocked(self):
+        """Fail-open is correct here: this is a supplementary check, not a gate input.
+
+        Failing closed would defer every candidate whenever X.ai is slow, which at
+        90-second timeouts would be most of them.
+        """
+        client = self._Recording(
+            raises={
+                "bubblemaps": TimeoutError("upstream"),
+                "insightx": TimeoutError("upstream"),
+            }
+        )
+        result = await self._evaluator_with(client)._forensic_x_search("MintX")
+
+        assert result["scam_detected"] is False
+        assert result["sources"] == []

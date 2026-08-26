@@ -147,3 +147,122 @@ class TestCompatibilityEntryPoint:
             await legacy.main()
         loop.assert_awaited_once()
         assert loop.await_args is not None
+
+
+
+class TestHostileQueryStrings:
+    """The dashboard binds 0.0.0.0, so query parameters are untrusted input.
+
+    Every case here previously either dropped the connection or, worse, answered
+    200 with wrong data. ``/api/history?limit=0`` reached SQLite as a LIMIT it
+    rejected, the OperationalError handler caught it, and the endpoint reported
+    ``total: 0`` -- indistinguishable from genuinely having no trades.
+    """
+
+    @pytest.mark.parametrize(
+        "query",
+        [
+            "limit=0",
+            "limit=-5",
+            "limit=abc",
+            "limit=1.5",
+            "limit=99999999999999999999",
+            "limit=",
+            "page=0",
+            "page=-1",
+            "page=abc",
+            "page=999999999999",
+            "page=0&limit=0",
+            "limit=%20%2010%20",
+        ],
+    )
+    @pytest.mark.parametrize(
+        "route", ["/api/history", "/api/discovery", "/api/candidates",
+                  "/api/cohort", "/api/outcomes"]
+    )
+    def test_paginated_routes_never_error(self, server, route, query):
+        status, headers, body = _get(server, f"{route}?{query}")
+        assert status == 200, f"{route}?{query} did not answer"
+        assert headers["Content-Type"] == "application/json"
+        payload = json.loads(body)
+        # Whatever was asked for, the response must describe a usable page.
+        assert payload["limit"] >= 1
+        assert payload["page"] >= 1
+        assert payload["total_pages"] >= 1
+
+    def test_limit_is_clamped_rather_than_rejected(self, server):
+        _status, _headers, body = _get(server, "/api/history?limit=99999999")
+        assert json.loads(body)["limit"] == dashboard.MAX_PAGE_LIMIT
+
+    def test_zero_limit_becomes_one_not_a_division_by_zero(self, server):
+        _status, _headers, body = _get(server, "/api/candidates?limit=0")
+        assert json.loads(body)["limit"] == 1
+
+    def test_unparseable_values_fall_back_to_the_default(self, server):
+        _status, _headers, body = _get(server, "/api/history?limit=abc&page=xyz")
+        payload = json.loads(body)
+        assert payload["limit"] == 20
+        assert payload["page"] == 1
+
+    def test_a_decision_filter_cannot_inject_sql(self, server):
+        """The value is bound, so it can only ever match a literal decision."""
+        import urllib.parse
+
+        hostile = urllib.parse.urlencode({"decision": "' OR 1=1--"})
+        status, _headers, body = _get(server, f"/api/candidates?{hostile}")
+        assert status == 200
+        assert json.loads(body)["total"] == 0, (
+            "an injection attempt matched rows, so the value is not being bound"
+        )
+
+    def test_a_dropped_table_still_answers(self, server, tmp_path, monkeypatch):
+        """A partially-initialised database must degrade, not 500."""
+        import sqlite3 as sqlite
+
+        path = tmp_path / "partial.db"
+        connection = sqlite.connect(str(path))
+        connection.execute("CREATE TABLE unrelated (x)")
+        connection.commit()
+        connection.close()
+        monkeypatch.setattr(dashboard, "DB_PATH", str(path))
+
+        for route in ("/api/overview", "/api/history", "/api/pipeline"):
+            status, _headers, _body = _get(server, route)
+            assert status == 200, f"{route} failed against a partial database"
+
+    def test_repeated_parameters_take_the_first(self, server):
+        """Duplicated keys are legal in a query string and must not raise."""
+        status, _headers, body = _get(server, "/api/history?limit=5&limit=99")
+        assert status == 200
+        assert json.loads(body)["limit"] == 5
+
+
+class TestUnhandledFailuresAnswer:
+    """No request may end in a dropped connection.
+
+    A dropped connection tells the operator nothing and looks like the dashboard is
+    down. Every crash above manifested that way, so the handler now answers 500 and
+    logs the traceback instead.
+    """
+
+    def test_an_endpoint_raising_returns_500(self, server, monkeypatch):
+        def explode():
+            raise RuntimeError("unexpected")
+
+        monkeypatch.setattr(dashboard, "api_overview", explode)
+        with pytest.raises(urllib.error.HTTPError) as excinfo:
+            _get(server, "/api/overview")
+        assert excinfo.value.code == 500, (
+            "an unexpected failure dropped the connection instead of answering"
+        )
+
+    def test_other_routes_still_work_after_one_fails(self, server, monkeypatch):
+        def explode():
+            raise RuntimeError("unexpected")
+
+        monkeypatch.setattr(dashboard, "api_overview", explode)
+        with pytest.raises(urllib.error.HTTPError):
+            _get(server, "/api/overview")
+
+        status, _headers, _body = _get(server, "/api/stats")
+        assert status == 200, "one failing endpoint took the server down with it"

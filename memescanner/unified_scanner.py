@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -626,35 +627,50 @@ class CommonEvaluator:
         scam_keywords = {"scam", "rug", "honeypot", "fraudulent", "manipulated", "bundled"}
         queries = [f"bubblemaps {mint}", f"insightx {mint}"]
 
-        for query in queries:
-            try:
-                search_result = await self.x_search.search_token(query, "", mint)
-                if search_result.get("status") == "X_DATA_NOT_FOUND_OR_NOT_INDEXED":
-                    continue
-                # Check evidence content for scam indicators
-                for item in search_result.get("evidence", []):
-                    content = str(item.get("content", "")).lower()
-                    title = str(item.get("title", "")).lower()
-                    combined = content + " " + title
-                    for keyword in scam_keywords:
-                        if keyword in combined:
-                            result["scam_detected"] = True
-                            result["sources"].append(query.split()[0])
-                            result["details"] = (
-                                f"Forensic tool ({query.split()[0]}) flagged scam indicators"
-                            )
-                            return result
-                # Also check the scam_warning field from search
-                if search_result.get("scam_warning"):
-                    result["scam_detected"] = True
-                    result["sources"].append(query.split()[0])
-                    result["details"] = (
-                        f"Forensic tool ({query.split()[0]}) scam warning detected"
-                    )
-                    return result
-            except Exception:
-                # Forensic search is best-effort; failures do not block
+        # Run both queries concurrently. They were sequential, which mattered far
+        # more than it looks: an X.ai search takes 40-90 seconds, so two of them
+        # back to back added up to three minutes on top of the main mention search.
+        # A measured live cycle spent 256 seconds on a single candidate for this
+        # reason. The queries are independent, so nothing is lost by overlapping
+        # them, and the behaviour below is unchanged.
+        outcomes = await asyncio.gather(
+            *(self.x_search.search_token(query, "", mint) for query in queries),
+            return_exceptions=True,
+        )
+
+        for query, search_result in zip(queries, outcomes, strict=True):
+            source = query.split()[0]
+            if isinstance(search_result, BaseException):
+                # Best-effort: a forensic lookup that fails must not block a
+                # candidate that has already cleared every other gate.
+                logger.debug(
+                    "Forensic search %s failed for %s: %s",
+                    source, mint, type(search_result).__name__,
+                )
                 continue
+            if search_result.get("status") == "X_DATA_NOT_FOUND_OR_NOT_INDEXED":
+                continue
+            # Check evidence content for scam indicators
+            for item in search_result.get("evidence", []):
+                content = str(item.get("content", "")).lower()
+                title = str(item.get("title", "")).lower()
+                combined = content + " " + title
+                for keyword in scam_keywords:
+                    if keyword in combined:
+                        result["scam_detected"] = True
+                        result["sources"].append(source)
+                        result["details"] = (
+                            f"Forensic tool ({source}) flagged scam indicators"
+                        )
+                        return result
+            # Also check the scam_warning field from search
+            if search_result.get("scam_warning"):
+                result["scam_detected"] = True
+                result["sources"].append(source)
+                result["details"] = (
+                    f"Forensic tool ({source}) scam warning detected"
+                )
+                return result
 
         return result
 
@@ -743,7 +759,7 @@ class UnifiedSolanaScanner:
         *,
         paper_buyer: Optional[PaperBuyer] = None,
         cohort_horizons: Optional[Dict[int, int]] = None,
-        policy_version: str = "unified-safety-v1",
+        policy_version: str = "unified-safety-v2",
         feature_schema_version: str = "screening-rank-v2",
         max_onchain_checks: int = MAX_ONCHAIN_CHECKS_PER_CYCLE,
         max_market_checks: int = 40,
@@ -967,7 +983,7 @@ class UnifiedSolanaScanner:
         *,
         cycle_id: Optional[int] = None,
         candidate_id: Optional[int] = None,
-        policy_version: str = "unified-safety-v1",
+        policy_version: str = "unified-safety-v2",
         feature_schema_version: str = "screening-rank-v2",
     ) -> Dict[str, Any]:
         candidate = decision.candidate

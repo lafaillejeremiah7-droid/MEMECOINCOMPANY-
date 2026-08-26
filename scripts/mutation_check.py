@@ -193,6 +193,70 @@ MUTATIONS: List[Mutation] = [
         ),
     ),
     Mutation(
+        name="filter-changed-without-version-bump",
+        path="memescanner/config.py",
+        old="    max_top10_concentration_pct: float = 30.0",
+        new="    max_top10_concentration_pct: float = 25.0",
+        tests="tests/test_policy_versioning.py",
+        defect=(
+            "Changing which candidates qualify while reusing policy_version. This "
+            "went unnoticed for nine commits: the field stayed at unified-safety-v1 "
+            "from the first commit through calibrated filter defaults, a moved "
+            "concentration ceiling, LPI and spike rejection, and the X mention gate "
+            "going from unsatisfiable to working. get_calibration_dataset filters on "
+            "it, so the label silently pooled nine policies into one cohort."
+        ),
+    ),
+    Mutation(
+        name="score-reweighted-without-version-bump",
+        path="memescanner/unified_scanner.py",
+        old="WEBSITE_PRESENCE_POINTS = 1.0",
+        new="WEBSITE_PRESENCE_POINTS = 3.0",
+        tests="tests/test_policy_versioning.py",
+        defect=(
+            "Reweighting the screening score while reusing feature_schema_version. "
+            "Calibration partitions candidates into score bands, so a score of 55 "
+            "under the old and new weights are different quantities and pooling "
+            "them corrupts every band."
+        ),
+    ),
+    Mutation(
+        name="query-params-unbounded",
+        path="memescanner/dashboard.py",
+        old="        return max(minimum, min(maximum, value))",
+        new="        return value",
+        tests="tests/test_dashboard_http.py",
+        defect=(
+            "Unbounded query parameters. The dashboard binds 0.0.0.0, and ?limit=0 "
+            "divided by zero while ?limit=abc raised ValueError -- both dropping the "
+            "connection. On /api/history the zero case was worse: SQLite rejected "
+            "the query, the OperationalError handler caught it, and the endpoint "
+            "reported total: 0, indistinguishable from having no trades."
+        ),
+    ),
+    Mutation(
+        name="forensic-search-sequential",
+        path="memescanner/unified_scanner.py",
+        old="        outcomes = await asyncio.gather(\n"
+            "            *(self.x_search.search_token(query, \"\", mint) for query in queries),\n"
+            "            return_exceptions=True,\n"
+            "        )",
+        new="        outcomes = []\n"
+            "        for _q in queries:\n"
+            "            try:\n"
+            "                outcomes.append(\n"
+            "                    await self.x_search.search_token(_q, \"\", mint)\n"
+            "                )\n"
+            "            except Exception as _e:\n"
+            "                outcomes.append(_e)",
+        tests="tests/test_gate_rejections.py",
+        defect=(
+            "Serialising two independent forensic lookups. At the measured 40-90 "
+            "second X.ai latency this adds about 90 seconds per candidate, and a "
+            "live cycle was observed spending 256 seconds on one candidate."
+        ),
+    ),
+    Mutation(
         name="baseline-outcome-unguarded",
         path="memescanner/database.py",
         old="                if baseline is not None and float(baseline[\"price_usd\"]) > 0:",
