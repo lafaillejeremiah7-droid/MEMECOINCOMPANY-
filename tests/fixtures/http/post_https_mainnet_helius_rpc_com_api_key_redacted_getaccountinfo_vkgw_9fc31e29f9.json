@@ -1,0 +1,58 @@
+{
+  "headers": {
+    "content-type": "application/json"
+  },
+  "json": {
+    "id": 1,
+    "jsonrpc": "2.0",
+    "result": {
+      "context": {
+        "apiVersion": "4.3.0-alpha.2",
+        "slot": 441824468
+      },
+      "value": {
+        "data": {
+          "parsed": {
+            "info": {
+              "decimals": 6,
+              "extensions": [
+                {
+                  "extension": "metadataPointer",
+                  "state": {
+                    "authority": null,
+                    "metadataAddress": "VkGwWUW2wCmTkWreyE8eNAXENNrD46EVf9i27LHpump"
+                  }
+                },
+                {
+                  "extension": "tokenMetadata",
+                  "state": {
+                    "additionalMetadata": [],
+                    "mint": "VkGwWUW2wCmTkWreyE8eNAXENNrD46EVf9i27LHpump",
+                    "name": "Green Pill Dumpings",
+                    "symbol": "GPD",
+                    "updateAuthority": null,
+                    "uri": "https://ipfs.io/ipfs/bafkreibhqjb2qsc6vk6rqhws3zejdemmzwuknnuaxnyzbtyhr7wlrlw4ki"
+                  }
+                }
+              ],
+              "freezeAuthority": null,
+              "isInitialized": true,
+              "mintAuthority": null,
+              "supply": "977453251429694"
+            },
+            "type": "mint"
+          },
+          "program": "spl-token-2022",
+          "space": 420
+        },
+        "executable": false,
+        "lamports": 3814080,
+        "owner": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb",
+        "rentEpoch": 18446744073709551615,
+        "space": 420
+      }
+    }
+  },
+  "signature": "POST https://mainnet.helius-rpc.com/?api-key=REDACTED getAccountInfo:VkGwWUW2wCmTkWreyE8eNAXENNrD46EVf9i27LHpump",
+  "status": 200
+}

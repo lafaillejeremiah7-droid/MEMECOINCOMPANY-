@@ -1,0 +1,160 @@
+{
+  "headers": {
+    "content-type": "application/json; charset=utf-8"
+  },
+  "json": {
+    "pairs": [
+      {
+        "baseToken": {
+          "address": "VkGwWUW2wCmTkWreyE8eNAXENNrD46EVf9i27LHpump",
+          "name": "Green Pill Dumpings",
+          "symbol": "GPD"
+        },
+        "chainId": "solana",
+        "dexId": "pumpswap",
+        "fdv": 68309,
+        "info": {
+          "header": "https://cdn.dexscreener.com/cms/images/G-sNvgkZBgevkqgK?width=1500&height=500&quality=95&format=auto",
+          "imageUrl": "https://cdn.dexscreener.com/cms/images/gCmNTZeGmNX-fLx7?width=800&height=800&quality=95&format=auto",
+          "openGraph": "https://cdn.dexscreener.com/token-images/og/solana/VkGwWUW2wCmTkWreyE8eNAXENNrD46EVf9i27LHpump?timestamp=1787731800000",
+          "socials": [
+            {
+              "type": "twitter",
+              "url": "https://x.com/GreenDumpings"
+            },
+            {
+              "type": "telegram",
+              "url": "https://t.me/GreenPillDumpings"
+            }
+          ],
+          "websites": [
+            {
+              "label": "Website",
+              "url": "https://greenpilldumpings.fun/"
+            }
+          ]
+        },
+        "liquidity": {
+          "base": 160577577,
+          "quote": 96.553,
+          "usd": 20374.31
+        },
+        "marketCap": 68309,
+        "pairAddress": "3psFsiY1yo7GpREfqKjR1GybWFGkvAGzZjbD9GBpcGcM",
+        "pairCreatedAt": 1787731211000,
+        "priceChange": {
+          "h1": 71.51,
+          "h24": 71.51,
+          "h6": 71.51,
+          "m5": -49.57
+        },
+        "priceNative": "0.0000007036",
+        "priceUsd": "0.00006841",
+        "quoteToken": {
+          "address": "So11111111111111111111111111111111111111112",
+          "name": "Wrapped SOL",
+          "symbol": "SOL"
+        },
+        "txns": {
+          "h1": {
+            "buys": 1269,
+            "sells": 1038
+          },
+          "h24": {
+            "buys": 1269,
+            "sells": 1038
+          },
+          "h6": {
+            "buys": 1269,
+            "sells": 1038
+          },
+          "m5": {
+            "buys": 572,
+            "sells": 485
+          }
+        },
+        "url": "https://dexscreener.com/solana/3psfsiy1yo7gprefqkjr1gybwfgkvagzzjbd9gbpcgcm",
+        "volume": {
+          "h1": 259527.88,
+          "h24": 259527.88,
+          "h6": 259527.88,
+          "m5": 114238.39
+        }
+      },
+      {
+        "baseToken": {
+          "address": "VkGwWUW2wCmTkWreyE8eNAXENNrD46EVf9i27LHpump",
+          "name": "Green Pill Dumpings",
+          "symbol": "GPD"
+        },
+        "chainId": "solana",
+        "dexId": "pumpfun",
+        "fdv": 39847.16,
+        "info": {
+          "header": "https://cdn.dexscreener.com/cms/images/G-sNvgkZBgevkqgK?width=1500&height=500&quality=95&format=auto",
+          "imageUrl": "https://cdn.dexscreener.com/cms/images/gCmNTZeGmNX-fLx7?width=800&height=800&quality=95&format=auto",
+          "openGraph": "https://cdn.dexscreener.com/token-images/og/solana/VkGwWUW2wCmTkWreyE8eNAXENNrD46EVf9i27LHpump?timestamp=1787731800000",
+          "socials": [
+            {
+              "type": "twitter",
+              "url": "https://x.com/GreenDumpings"
+            },
+            {
+              "type": "telegram",
+              "url": "https://t.me/GreenPillDumpings"
+            }
+          ],
+          "websites": [
+            {
+              "label": "Website",
+              "url": "https://greenpilldumpings.fun/"
+            }
+          ]
+        },
+        "marketCap": 39847.16,
+        "pairAddress": "2L3afsq6mECWYnsot6hipQVKuAtXVRjCJXrwUjUzHrX1",
+        "pairCreatedAt": 1787731210000,
+        "priceChange": {
+          "h1": 1365,
+          "h24": 1365,
+          "h6": 1365
+        },
+        "priceNative": "0.0000004108",
+        "priceUsd": "0.00003984",
+        "quoteToken": {
+          "address": "So11111111111111111111111111111111111111112",
+          "name": "Wrapped SOL",
+          "symbol": "SOL"
+        },
+        "txns": {
+          "h1": {
+            "buys": 6,
+            "sells": 0
+          },
+          "h24": {
+            "buys": 6,
+            "sells": 0
+          },
+          "h6": {
+            "buys": 6,
+            "sells": 0
+          },
+          "m5": {
+            "buys": 0,
+            "sells": 0
+          }
+        },
+        "url": "https://dexscreener.com/solana/2l3afsq6mecwynsot6hipqvkuatxvrjcjxrwujuzhrx1",
+        "volume": {
+          "h1": 8243.81,
+          "h24": 8243.81,
+          "h6": 8243.81,
+          "m5": 0
+        }
+      }
+    ],
+    "schemaVersion": "1.0.0"
+  },
+  "signature": "GET https://api.dexscreener.com/latest/dex/tokens/VkGwWUW2wCmTkWreyE8eNAXENNrD46EVf9i27LHpump",
+  "status": 200
+}

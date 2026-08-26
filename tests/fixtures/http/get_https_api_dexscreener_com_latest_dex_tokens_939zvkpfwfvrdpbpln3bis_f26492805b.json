@@ -1,0 +1,74 @@
+{
+  "headers": {
+    "content-type": "application/json; charset=utf-8"
+  },
+  "json": {
+    "pairs": [
+      {
+        "baseToken": {
+          "address": "939ZvkpFWfvRDPbpLn3bis1nYNKjCX5vgtJTVrQppump",
+          "name": "Eat Trade Fart",
+          "symbol": "ETF"
+        },
+        "chainId": "solana",
+        "dexId": "pumpfun",
+        "fdv": 12614.69,
+        "info": {
+          "imageUrl": "https://cdn.dexscreener.com/cms/images/oWGla7bmj18OhDfr?width=800&height=800&quality=95&format=auto",
+          "openGraph": "https://cdn.dexscreener.com/token-images/og/solana/939ZvkpFWfvRDPbpLn3bis1nYNKjCX5vgtJTVrQppump?timestamp=1787731800000",
+          "socials": [
+            {
+              "type": "twitter",
+              "url": "https://x.com/himgajria/status/2092523283392729348?s=20"
+            }
+          ],
+          "websites": []
+        },
+        "marketCap": 12614.69,
+        "pairAddress": "4M57Yh8mojsU8xoJLyL7QHZyU8g27DwFnhgWsCsLbrdd",
+        "pairCreatedAt": 1787731301000,
+        "priceChange": {
+          "h1": 284,
+          "h24": 284,
+          "h6": 284,
+          "m5": 46.1
+        },
+        "priceNative": "0.0000001297",
+        "priceUsd": "0.00001261",
+        "quoteToken": {
+          "address": "So11111111111111111111111111111111111111112",
+          "name": "Wrapped SOL",
+          "symbol": "SOL"
+        },
+        "txns": {
+          "h1": {
+            "buys": 933,
+            "sells": 626
+          },
+          "h24": {
+            "buys": 933,
+            "sells": 626
+          },
+          "h6": {
+            "buys": 933,
+            "sells": 626
+          },
+          "m5": {
+            "buys": 295,
+            "sells": 255
+          }
+        },
+        "url": "https://dexscreener.com/solana/4m57yh8mojsu8xojlyl7qhzyu8g27dwfnhgwscslbrdd",
+        "volume": {
+          "h1": 63740.05,
+          "h24": 63740.05,
+          "h6": 63740.05,
+          "m5": 22437.06
+        }
+      }
+    ],
+    "schemaVersion": "1.0.0"
+  },
+  "signature": "GET https://api.dexscreener.com/latest/dex/tokens/939ZvkpFWfvRDPbpLn3bis1nYNKjCX5vgtJTVrQppump",
+  "status": 200
+}

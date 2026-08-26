@@ -1,0 +1,58 @@
+{
+  "headers": {
+    "content-type": "application/json"
+  },
+  "json": {
+    "id": 1,
+    "jsonrpc": "2.0",
+    "result": [
+      {
+        "blockTime": 1787731814,
+        "confirmationStatus": "finalized",
+        "err": null,
+        "memo": null,
+        "signature": "3y8yPrqrhhdntxbYRYiZ6XeETHj7fRBDVfZCMiCEHcA6x8dAjDomc36JB7fVA2ZwFFqWErFLyonnEefGjEefedVT",
+        "slot": 441824479,
+        "transactionIndex": 312
+      },
+      {
+        "blockTime": 1787731814,
+        "confirmationStatus": "finalized",
+        "err": null,
+        "memo": null,
+        "signature": "2jU1vXSTSvqZLU32AQfLdEGEhe96yjqGAotBvxSgzguAN7GSFg6Nxi9DoBCE9SvARFXb1hmMFWBa1ESFn45oUVUe",
+        "slot": 441824479,
+        "transactionIndex": 187
+      },
+      {
+        "blockTime": 1787731814,
+        "confirmationStatus": "finalized",
+        "err": null,
+        "memo": null,
+        "signature": "5FNRYbJW9wF6v2msKE9C8P4vrETrtp9Q1hKKqLt6KEjroac9PA8QxyxbbBvoSZ3tRM6t6Dcr8ohDwabAKbYroBis",
+        "slot": 441824479,
+        "transactionIndex": 155
+      },
+      {
+        "blockTime": 1787731814,
+        "confirmationStatus": "finalized",
+        "err": null,
+        "memo": null,
+        "signature": "3znLocSfTrRVzX1p3ozkpBFtAvwUR3oTjh2Y8fyvH5AEzpgvBGaLZkUfmLAjmk4wcMEofjR1P33wHguTzZQSrrTZ",
+        "slot": 441824479,
+        "transactionIndex": 154
+      },
+      {
+        "blockTime": 1787731813,
+        "confirmationStatus": "finalized",
+        "err": null,
+        "memo": null,
+        "signature": "2NbxUKyY767HPnAdSn9iahHVtmrHX1VLnDQ9WaY6w2U9d5qUKU6z26NsGBhB8f8Zd3aQR9BYMnFuWsgx9Trew7B8",
+        "slot": 441824478,
+        "transactionIndex": 119
+      }
+    ]
+  },
+  "signature": "POST https://mainnet.helius-rpc.com/?api-key=REDACTED getSignaturesForAddress:3psFsiY1yo7GpREfqKjR1GybWFGkvAGzZjbD9GBpcGcM",
+  "status": 200
+}
