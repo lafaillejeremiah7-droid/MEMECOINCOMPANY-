@@ -43,6 +43,22 @@ ignore = [
 # Tests construct deliberately malformed payloads and reach into private helpers.
 "tests/*" = ["E501"]
 
+[tool.coverage.run]
+source = ["memescanner"]
+branch = true
+
+[tool.coverage.report]
+# A floor, not a target. It exists so new untested code cannot be added silently;
+# raise it when coverage genuinely improves, never lower it to make a build pass.
+fail_under = 80
+precision = 1
+show_missing = true
+exclude_also = [
+    "if TYPE_CHECKING:",
+    "raise NotImplementedError",
+    "if __name__ == .__main__.:",
+]
+
 [tool.mypy]
 python_version = "3.11"
 ignore_missing_imports = true
@@ -51,17 +67,12 @@ ignore_missing_imports = true
 warn_unused_ignores = true
 warn_redundant_casts = true
 
-# Ratchet: these modules carry pre-existing annotation debt and are excluded so
-# the gate can be enforced today rather than deferred. They are ordered by size
-# of backlog. Removing an entry here is the unit of progress, and the gate
-# prevents any module currently passing from regressing.
-#   onchain.py   ~28 findings, mostly Optional arithmetic in holder analysis
-#   outcomes.py  ~7
-#   database.py  ~5
-[[tool.mypy.overrides]]
-module = [
-    "memescanner.onchain",
-    "memescanner.outcomes",
-    "memescanner.database",
-]
-ignore_errors = true
+# No module exclusions. The ratchet that previously exempted onchain.py,
+# outcomes.py and database.py is closed: every module in the package is checked.
+#
+# Closing it was worth doing rather than cosmetic. onchain.py's _rpc_call was
+# annotated as returning a dict, but Solana returns a bare array for
+# getSignaturesForAddress -- three call sites already narrowed with
+# isinstance(..., list), so the author knew and the annotation never followed.
+# Correcting it surfaced four further sites that consumed the result without
+# checking its shape, in the module every safety gate depends on.

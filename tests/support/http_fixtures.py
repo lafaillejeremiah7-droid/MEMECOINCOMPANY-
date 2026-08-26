@@ -34,7 +34,7 @@ import json
 import re
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Callable, Dict, Iterator, List, Optional
+from typing import Any, Callable, Dict, Iterator, List, Optional, Union
 from unittest.mock import patch
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
@@ -270,7 +270,9 @@ def frozen_clock() -> Iterator[float]:
 
 
 @contextmanager
-def patched_httpx(transport: httpx.BaseTransport) -> Iterator[None]:
+def patched_httpx(
+    transport: Union[httpx.BaseTransport, httpx.AsyncBaseTransport],
+) -> Iterator[None]:
     """Force every ``httpx.AsyncClient`` in the process onto ``transport``.
 
     Five modules construct their own client inline rather than accepting an

@@ -114,7 +114,7 @@ class OutcomeWorker:
         candidate_ids: Optional[Sequence[int]] = None,
     ) -> Dict[str, Any]:
         """Capture bounded due jobs concurrently, one active lease per request."""
-        totals = {
+        totals: Dict[str, Any] = {
             "claimed": 0,
             "captured": 0,
             "retried_or_terminal_missing": 0,

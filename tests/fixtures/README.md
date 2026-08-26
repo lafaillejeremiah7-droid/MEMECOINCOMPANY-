@@ -45,7 +45,16 @@ reported.
 
 This matters because recorded fixtures introduce their own failure mode: a stale
 fixture keeps the suite green while production misparses live data. `--check` is
-the guard against trading one blind spot for another.
+the guard against trading one blind spot for another, and it runs weekly in CI via
+`.github/workflows/fixture-drift.yml` (on a schedule rather than per-commit,
+because it needs live providers and provider drift is not caused by our commits).
+
+Relatedly, `scripts/mutation_check.py` verifies that the tests here would actually
+fail if the defects they describe returned. It found a vacuous assertion on its
+first run, and it records one honest negative result: the mention-count floor is
+*not* caught by these fixtures, because the recorded BONK response has eleven
+distinct citations where both the correct and the buggy formula agree. Unit tests
+guard that case instead.
 
 ## Layout
 

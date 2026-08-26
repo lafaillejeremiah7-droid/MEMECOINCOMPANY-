@@ -47,11 +47,38 @@ jobs:
       - name: Type-check (mypy)
         run: python -m mypy memescanner/
 
-      - name: Tests
-        run: python -m pytest -q
+      # Coverage is gated by fail_under in pyproject.toml. The floor exists so new
+      # untested code cannot arrive unnoticed; it is raised, never lowered.
+      - name: Tests with coverage gate
+        run: python -m pytest -q --cov
 
       # Duplicated from secret-patterns.yml on purpose: this job is the single
       # required check, and a credential must not be mergeable if the other
       # workflow is ever disabled or renamed.
       - name: Credential pattern scan
         run: python3 scripts/check_secrets.py
+
+  mutation:
+    name: Tests must fail when known defects return
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-dev.txt
+
+      - name: Install dependencies
+        run: pip install -r requirements-dev.txt
+
+      # A green suite proves nothing by itself: every serious defect here shipped
+      # while hundreds of tests passed. This reintroduces each of those defects and
+      # requires the suite to notice. It found a vacuous assertion on its first run.
+      - name: Mutation check
+        run: PYTHONPATH=. python scripts/mutation_check.py

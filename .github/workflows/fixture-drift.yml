@@ -1,0 +1,52 @@
+# Detects provider API drift against the recorded fixtures.
+#
+# Recorded fixtures remove one blind spot and introduce another: a stale fixture
+# keeps the whole suite green while production misparses live data. That failure is
+# invisible to CI by construction, because CI deliberately runs offline.
+#
+# This job is the guard. It runs on a schedule rather than per-commit because it
+# needs live providers and credentials, and because provider drift is not caused by
+# our commits. It compares response *shape* -- key names and value types -- so a
+# moving price is not drift, and a vanished field is only an error when a parser
+# actually reads it.
+name: Fixture drift
+
+on:
+  schedule:
+    # Weekly, early Monday UTC.
+    - cron: "17 5 * * 1"
+  workflow_dispatch:
+
+jobs:
+  drift:
+    name: Compare live provider shapes to recorded fixtures
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-dev.txt
+
+      - name: Install dependencies
+        run: pip install -r requirements-dev.txt
+
+      # Skipped rather than failed when credentials are absent, so a fork or a
+      # repository without secrets configured does not report a spurious failure.
+      - name: Check for drift
+        env:
+          MEMESCANNER_HELIUS_RPC_URL: ${{ secrets.MEMESCANNER_HELIUS_RPC_URL }}
+        run: |
+          if [ -z "${MEMESCANNER_HELIUS_RPC_URL}" ]; then
+            echo "MEMESCANNER_HELIUS_RPC_URL is not configured; skipping."
+            echo "Public endpoints would still be checked, but a partial result"
+            echo "reported as success is worse than an explicit skip."
+            exit 0
+          fi
+          PYTHONPATH=. python scripts/record_fixtures.py --check

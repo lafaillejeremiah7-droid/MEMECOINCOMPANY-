@@ -98,14 +98,18 @@ async def _run_once() -> Dict[str, Any]:
     result = await scanner.run_cycle()
 
     assert database._db is not None
-    async with database._db.execute("SELECT COUNT(*) FROM cohort_candidates") as cur:
-        cohort = (await cur.fetchone())[0]
-    async with database._db.execute("SELECT COUNT(*) FROM discovery_cycles") as cur:
-        cycles = (await cur.fetchone())[0]
-    async with database._db.execute(
+
+    async def scalar_row(sql: str) -> tuple:
+        async with database._db.execute(sql) as cur:  # type: ignore[union-attr]
+            row = await cur.fetchone()
+        assert row is not None, f"aggregate query returned no row: {sql}"
+        return tuple(row)
+
+    (cohort,) = await scalar_row("SELECT COUNT(*) FROM cohort_candidates")
+    (cycles,) = await scalar_row("SELECT COUNT(*) FROM discovery_cycles")
+    jobs_total, jobs_horizons = await scalar_row(
         "SELECT COUNT(*), COUNT(DISTINCT horizon_seconds) FROM outcome_jobs"
-    ) as cur:
-        jobs_total, jobs_horizons = await cur.fetchone()
+    )
     await database.close()
     await http.close()
 
@@ -201,6 +205,18 @@ def test_evidence_health_is_reported(cycle):
             assert isinstance(count, int) and count > 0, (
                 f"{provider} reported a non-positive count for {status}"
             )
+
+    # Non-vacuous on purpose. Asserting only the shape let a stubbed-out tally of
+    # {"x": {}, "onchain": {}} pass, because the loop above simply never ran --
+    # which is the same silence the tally was added to break. The offline cycle
+    # verifies on-chain evidence for at least one candidate, so at least one
+    # provider must have reported something.
+    assert any(tally for tally in health.values()), (
+        "every provider tally is empty, so a total outage would still look normal"
+    )
+    assert health["onchain"], (
+        "the offline cycle reaches on-chain evidence, so its tally cannot be empty"
+    )
 
 
 def test_every_candidate_is_enrolled_in_the_cohort(cycle):
