@@ -4,10 +4,10 @@ import tempfile
 from collections import Counter
 from pathlib import Path
 
+from memescanner.__main__ import build_default_sources
 from memescanner.config import Config
 from memescanner.database import Database
 from memescanner.discovery import DexScreenerPairClient, DiscoveryCoordinator, ResilientHttpClient
-from memescanner.__main__ import build_default_sources
 from memescanner.onchain import OnchainAnalyzer
 from memescanner.unified_scanner import CommonEvaluator, UnifiedSolanaScanner
 from memescanner.x_search import XSearchClient
@@ -52,7 +52,6 @@ async def run():
                     reason_counts[r] += 1
 
         # Gather some examples of what passed each stage
-        passed_age = [d for d in decisions if d.decision not in ("REJECTED",) or "AGE" not in " ".join(d.reasons)]
         had_market = [d for d in decisions if d.market is not None]
         qualified = [d for d in decisions if d.decision in ("QUALIFIED", "QUALIFIED_NOT_SELECTED", "ALERT_PENDING", "ALERTED")]
 
@@ -90,7 +89,7 @@ async def run():
         print(f"  Min buy/sell:     {config.filters.min_buy_sell_ratio}")
         print(f"  Max dev holding:  {config.filters.max_dev_holding_pct}%")
         print(f"  Market checks:    {config.scanner.max_market_checks_per_cycle}/cycle")
-        print(f"  On-chain checks:  5/cycle")
+        print("  On-chain checks:  5/cycle")
         print()
         print("--- ASSESSMENT ---")
         if x_deferred > 0 and len(qualified) == 0:

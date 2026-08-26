@@ -1,15 +1,16 @@
 """Tests for the on-chain verification module."""
 
+from unittest.mock import AsyncMock, MagicMock, patch
+
 import pytest
-from unittest.mock import AsyncMock, patch, MagicMock
 
 from memescanner.onchain import (
-    OnchainAnalyzer,
     HELIUS_API_KEY,
     HELIUS_RPC,
     MAX_ONCHAIN_CHECKS_PER_CYCLE,
     RPC_CALL_DELAY,
     RPC_TIMEOUT,
+    OnchainAnalyzer,
 )
 
 

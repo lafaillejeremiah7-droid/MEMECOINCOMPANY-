@@ -704,9 +704,7 @@ class OnchainAnalyzer:
                 )
 
             # Concentration risk determination
-            if result["top_holder_pct_of_mc"] > 20:
-                result["concentration_risk"] = "HIGH"
-            elif result["top3_pct_of_mc"] > 40:
+            if result["top_holder_pct_of_mc"] > 20 or result["top3_pct_of_mc"] > 40:
                 result["concentration_risk"] = "HIGH"
             elif result["top_holder_pct_of_mc"] > 10:
                 result["concentration_risk"] = "MEDIUM"
@@ -1159,7 +1157,7 @@ class OnchainAnalyzer:
             ):
                 # Calculate top 10 concentration
                 top10_amounts = []
-                for i, account in enumerate(largest_accounts[:10]):
+                for account in largest_accounts[:10]:
                     amount_str = account.get("amount", "0")
                     decimals = account.get("decimals", 0)
                     try:

@@ -1,7 +1,6 @@
 """Safety and robustness coverage for the unified default Solana pipeline."""
 
 import time
-from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
@@ -18,7 +17,7 @@ from memescanner.discovery import (
     ResilientHttpClient,
     _social_urls,
 )
-from memescanner.onchain import OnchainAnalyzer, TOKEN_2022_PROGRAM_ID
+from memescanner.onchain import TOKEN_2022_PROGRAM_ID, OnchainAnalyzer
 from memescanner.unified_scanner import (
     CommonEvaluator,
     UnifiedSolanaScanner,
@@ -1224,7 +1223,7 @@ async def test_forensic_search_passes_when_no_scam_found():
 
 def test_format_signal_includes_bubblemaps_link():
     """format_signal output includes a Bubblemaps link."""
-    from memescanner.unified_scanner import format_signal, CandidateDecision
+    from memescanner.unified_scanner import CandidateDecision, format_signal
 
     decision = CandidateDecision(
         candidate=candidate(mint="TestMint123"),
@@ -1248,7 +1247,7 @@ def test_format_signal_includes_bubblemaps_link():
 
 def test_format_signal_includes_holder_funding_sources():
     """format_signal shows funding sources when holder_suspicion has them."""
-    from memescanner.unified_scanner import format_signal, CandidateDecision
+    from memescanner.unified_scanner import CandidateDecision, format_signal
 
     decision = CandidateDecision(
         candidate=candidate(mint="TestMint456"),
@@ -1285,7 +1284,7 @@ def test_format_signal_includes_holder_funding_sources():
 
 def test_format_signal_no_holder_flags_on_low_risk():
     """format_signal does not show holder flags when risk is LOW."""
-    from memescanner.unified_scanner import format_signal, CandidateDecision
+    from memescanner.unified_scanner import CandidateDecision, format_signal
 
     decision = CandidateDecision(
         candidate=candidate(mint="TestMint789"),
@@ -1676,7 +1675,7 @@ async def test_rejected_decision_keeps_default_target():
 
 def test_format_signal_includes_take_profit_target():
     """The alert surfaces the target with an explicit non-prediction caveat."""
-    from memescanner.unified_scanner import format_signal, CandidateDecision
+    from memescanner.unified_scanner import CandidateDecision, format_signal
 
     decision = CandidateDecision(
         candidate(), "QUALIFIED", [],
@@ -2017,7 +2016,7 @@ def test_take_profit_target_honours_custom_reference():
 
 def test_format_signal_shows_known_average_trade_size():
     """The alert reports average trade size as a labelled proxy observation."""
-    from memescanner.unified_scanner import format_signal, CandidateDecision
+    from memescanner.unified_scanner import CandidateDecision, format_signal
 
     market = valid_pair()
     market.update({"volume_24h": 84_000, "buys_24h": 600, "sells_24h": 400})
@@ -2036,7 +2035,7 @@ def test_format_signal_shows_known_average_trade_size():
 
 def test_format_signal_shows_unknown_average_trade_size():
     """An unknown average trade size prints unknown, not a substitute value."""
-    from memescanner.unified_scanner import format_signal, CandidateDecision
+    from memescanner.unified_scanner import CandidateDecision, format_signal
 
     market = valid_pair()
     market.update({"volume_24h": 50_000, "buys_24h": 0, "sells_24h": 0})
@@ -2106,3 +2105,74 @@ def test_reference_avg_trade_size_is_configurable_and_not_a_filter():
         {"filters": {"reference_avg_trade_size_usd": 125.0}}
     )
     assert parsed.filters.reference_avg_trade_size_usd == 125.0
+
+
+
+class TestEvidenceHealthTally:
+    """A provider failing for every candidate must not look like a quiet market.
+
+    ``source_failures`` reports discovery outages, but nothing reported on the
+    evidence providers consulted afterwards. When the X search timed out on every
+    request it logged an empty message and deferred every candidate, while the
+    cycle summary still showed a healthy discovery count. The tally exists so that
+    a systematic outage is distinguishable from "nothing qualified today".
+    """
+
+    @staticmethod
+    def _decision(evidence):
+        from memescanner.unified_scanner import CandidateDecision
+
+        candidate = NormalizedCandidate(
+            chain_id="solana", mint="Mint1", sources={"src"}
+        )
+        return CandidateDecision(candidate, "DEFERRED", ["R"], evidence)
+
+    def test_total_x_outage_is_visible(self):
+        from memescanner.unified_scanner import UnifiedSolanaScanner
+
+        decisions = [
+            self._decision({"x": {"evidence_availability": "UNAVAILABLE"}})
+            for _ in range(8)
+        ]
+        health = UnifiedSolanaScanner._evidence_health(decisions)
+        assert health["x"] == {"UNAVAILABLE": 8}, (
+            "a provider that failed for every candidate is not being reported"
+        )
+
+    def test_mixed_outcomes_are_counted_separately(self):
+        from memescanner.unified_scanner import UnifiedSolanaScanner
+
+        decisions = [
+            self._decision({"x": {"evidence_availability": "AVAILABLE"}}),
+            self._decision({"x": {"evidence_availability": "AVAILABLE"}}),
+            self._decision({"x": {"evidence_availability": "UNAVAILABLE"}}),
+            self._decision({"onchain": {"evidence_status": "VERIFIED"}}),
+        ]
+        health = UnifiedSolanaScanner._evidence_health(decisions)
+        assert health["x"] == {"AVAILABLE": 2, "UNAVAILABLE": 1}
+        assert health["onchain"] == {"VERIFIED": 1}
+
+    def test_candidates_rejected_before_evidence_are_not_counted(self):
+        """Most candidates never reach a provider, so absence must not be a status."""
+        from memescanner.unified_scanner import UnifiedSolanaScanner
+
+        health = UnifiedSolanaScanner._evidence_health(
+            [self._decision({}), self._decision({})]
+        )
+        assert health == {"x": {}, "onchain": {}}
+
+    def test_malformed_evidence_block_does_not_raise(self):
+        from memescanner.unified_scanner import UnifiedSolanaScanner
+
+        health = UnifiedSolanaScanner._evidence_health(
+            [self._decision({"x": "not-a-dict"}), self._decision({"x": None})]
+        )
+        assert health == {"x": {}, "onchain": {}}
+
+    def test_missing_status_key_is_reported_as_unknown(self):
+        from memescanner.unified_scanner import UnifiedSolanaScanner
+
+        health = UnifiedSolanaScanner._evidence_health(
+            [self._decision({"x": {"status": "FOUND"}})]
+        )
+        assert health["x"] == {"UNKNOWN": 1}

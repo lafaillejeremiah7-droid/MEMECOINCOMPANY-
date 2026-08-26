@@ -2,23 +2,19 @@
 Tests for the paper trading module.
 """
 
-import asyncio
 import os
 import time
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-import pytest_asyncio
 
 from memescanner.paper_trader import (
     DEFAULT_TAKE_PROFIT_TARGET,
-    PaperTrader,
     MAX_OPEN_POSITIONS,
     TAKE_PROFIT_PCT,
-    STOP_LOSS_PCT,
+    PaperTrader,
     _format_hold_time,
 )
-
 
 # Use a test database path
 TEST_DB_PATH = "test_paper_trader.db"

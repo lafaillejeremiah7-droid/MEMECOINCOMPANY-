@@ -1,11 +1,10 @@
 """Debug on-chain results — shows why tokens get UNVERIFIED."""
 import asyncio
-import os
 
+from memescanner.__main__ import build_default_sources
 from memescanner.config import Config
 from memescanner.database import Database
 from memescanner.discovery import DexScreenerPairClient, DiscoveryCoordinator, ResilientHttpClient
-from memescanner.__main__ import build_default_sources
 from memescanner.onchain import OnchainAnalyzer
 from memescanner.unified_scanner import CommonEvaluator, UnifiedSolanaScanner
 from memescanner.x_search import XSearchClient

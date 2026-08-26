@@ -15,10 +15,10 @@ from memescanner.celebrity_scanner import (
 )
 from memescanner.database import Database
 from memescanner.discovery import (
+    SOLANA_CHAIN_ID,
     DexScreenerPairClient,
     DiscoveryCoordinator,
     NormalizedCandidate,
-    SOLANA_CHAIN_ID,
 )
 from memescanner.onchain import MAX_ONCHAIN_CHECKS_PER_CYCLE, OnchainAnalyzer
 from memescanner.x_search import XSearchClient
@@ -799,7 +799,38 @@ class UnifiedSolanaScanner:
             "source_failures": discovery_result.source_failures,
             "decisions": decisions,
             "alerted": winner if winner and winner.alerted else None,
+            "evidence_health": self._evidence_health(decisions),
         }
+
+    @staticmethod
+    def _evidence_health(
+        decisions: List[CandidateDecision],
+    ) -> Dict[str, Dict[str, int]]:
+        """Tally evidence-provider outcomes for one cycle.
+
+        ``source_failures`` covers discovery, but nothing reported on the evidence
+        providers consulted afterwards. A provider failing for every single
+        candidate was therefore invisible: those candidates are deferred, and the
+        cycle line still shows a healthy discovery count. That is precisely how an
+        X search which timed out on every request went unnoticed -- it logged an
+        empty message and deferred everything, while the cycle summary looked
+        normal.
+
+        Emitting the tally makes a systematic outage look different from a quiet
+        market, which is the distinction that matters when nothing is alerting.
+        """
+        health: Dict[str, Dict[str, int]] = {"x": {}, "onchain": {}}
+        for provider, status_key in (
+            ("x", "evidence_availability"),
+            ("onchain", "evidence_status"),
+        ):
+            for item in decisions:
+                block = item.evidence.get(provider)
+                if not isinstance(block, dict):
+                    continue
+                status = str(block.get(status_key) or "UNKNOWN")
+                health[provider][status] = health[provider].get(status, 0) + 1
+        return health
 
     @staticmethod
     def _cohort_candidate(candidate: NormalizedCandidate) -> Dict[str, Any]:

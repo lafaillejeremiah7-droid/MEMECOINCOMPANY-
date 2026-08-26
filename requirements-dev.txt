@@ -1,0 +1,6 @@
+-r requirements.txt
+
+# Pinned so the CI gate and a local run agree. A gate that passes locally and
+# fails in CI (or the reverse) gets ignored, which is worse than no gate.
+ruff==0.16.1
+mypy==2.3.0

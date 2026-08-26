@@ -11,11 +11,10 @@ import asyncio
 import json
 import math
 import time
-from typing import Any, Dict, Iterable, List, Sequence, Tuple
+from typing import Any, Dict, List, Sequence, Tuple
 
 from memescanner.config import CalibrationConfig, Config
 from memescanner.database import Database
-
 
 SCORE_BANDS: Sequence[Tuple[float, float]] = (
     (0.0, 1.0),

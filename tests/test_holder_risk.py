@@ -1,7 +1,8 @@
 """Tests for the dollar-denominated holder risk analysis."""
 
+from unittest.mock import AsyncMock, patch
+
 import pytest
-from unittest.mock import AsyncMock, patch, MagicMock
 
 from memescanner.onchain import OnchainAnalyzer
 

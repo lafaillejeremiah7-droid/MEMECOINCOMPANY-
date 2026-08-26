@@ -1,7 +1,8 @@
 """Tests for coordinated buy detection in the on-chain module."""
 
-import pytest
 from unittest.mock import AsyncMock, patch
+
+import pytest
 
 from memescanner.onchain import OnchainAnalyzer
 

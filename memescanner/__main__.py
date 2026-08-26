@@ -205,9 +205,13 @@ async def main_loop(config: Optional[Config] = None) -> None:
                 ),
             )
             await paper_trader.initialize()
-            paper_callback = lambda candidate, market, take_profit_target: _paper_buyer(
-                paper_trader, candidate, market, take_profit_target  # type: ignore[arg-type]
-            )
+            async def paper_callback(candidate, market, take_profit_target):
+                return await _paper_buyer(
+                    paper_trader,
+                    candidate,
+                    market,
+                    take_profit_target,
+                )
 
         outcome_worker = None
         calibration_reporter = None
@@ -265,10 +269,12 @@ async def main_loop(config: Optional[Config] = None) -> None:
             try:
                 result = await scanner.run_cycle()
                 logger.info(
-                    "Cycle: discovered=%d alerted=%s source_failures=%s",
+                    "Cycle: discovered=%d alerted=%s source_failures=%s "
+                    "evidence_health=%s",
                     result["discovered"],
                     bool(result["alerted"]),
                     sorted(result["source_failures"]),
+                    result.get("evidence_health"),
                 )
                 now = loop.time()
                 if paper_trader is not None:

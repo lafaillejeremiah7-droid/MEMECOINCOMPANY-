@@ -1,0 +1,57 @@
+# Correctness gate for every push and pull request.
+#
+# This repository previously had CI that ran the scanner and scanned for
+# credential patterns, but nothing that ran the test suite. All 396 tests
+# executed only when someone remembered to invoke pytest by hand, so a change
+# that broke every one of them could be merged with a green checkmark.
+#
+# Each step below is a gate that has already caught a real defect in this
+# codebase: ruff caught a broken indentation edit and a stale type: ignore, mypy
+# caught an annotation that disagreed with the code, and the test suite pins the
+# schema-ownership and mention-counting invariants that two silent production
+# bugs violated.
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  test:
+    name: Lint, type-check and test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-dev.txt
+
+      - name: Install dependencies
+        run: pip install -r requirements-dev.txt
+
+      # Byte-compiles every module, so a syntax error cannot reach a reviewer.
+      - name: Compile all sources
+        run: python -m py_compile memescanner/*.py scripts/*.py tests/*.py
+
+      - name: Lint (ruff)
+        run: python -m ruff check .
+
+      - name: Type-check (mypy)
+        run: python -m mypy memescanner/
+
+      - name: Tests
+        run: python -m pytest -q
+
+      # Duplicated from secret-patterns.yml on purpose: this job is the single
+      # required check, and a credential must not be mergeable if the other
+      # workflow is ever disabled or renamed.
+      - name: Credential pattern scan
+        run: python3 scripts/check_secrets.py

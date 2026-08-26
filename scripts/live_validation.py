@@ -1,7 +1,6 @@
 """Live validation — confirms bot uses real market data while paper trading."""
 import asyncio
 import os
-import time
 from collections import Counter
 
 os.environ.setdefault(
@@ -13,10 +12,10 @@ os.environ.setdefault(
     os.environ.get("MEMESCANNER_HELIUS_RPC_URL", ""),
 )
 
+from memescanner.__main__ import build_default_sources
 from memescanner.config import Config
 from memescanner.database import Database
 from memescanner.discovery import DexScreenerPairClient, DiscoveryCoordinator, ResilientHttpClient
-from memescanner.__main__ import build_default_sources
 from memescanner.onchain import OnchainAnalyzer
 from memescanner.unified_scanner import CommonEvaluator, UnifiedSolanaScanner
 from memescanner.x_search import XSearchClient
@@ -158,10 +157,10 @@ async def run():
         m = w.market or {}
         print(f"  Would paper buy: ${w.candidate.symbol} at MC "
               f"${m.get('market_cap', 0):,.0f}")
-        print(f"  Position size: $50 (virtual)")
-        print(f"  This is REAL market data being paper traded")
+        print("  Position size: $50 (virtual)")
+        print("  This is REAL market data being paper traded")
     else:
-        print(f"  No alert this cycle — filters working correctly")
+        print("  No alert this cycle — filters working correctly")
         print(f"  {len(onchain_verified)} tokens passed on-chain but blocked by other gates")
     print()
 
@@ -171,9 +170,9 @@ async def run():
     print(f"  Alchemy RPC: {'CONNECTED' if has_alchemy and onchain_verified else 'NOT REACHED' if has_alchemy else 'DISABLED'}")
     print(f"  X.ai/Grok:   {'CONNECTED' if x_searched else 'NOT REACHED' if has_xai else 'DISABLED'}")
     print(f"  DEXScreener:  CONNECTED ({discovered} candidates)")
-    print(f"  GeckoTerminal: CONNECTED")
-    print(f"  Pump.fun:     CONNECTED")
-    print(f"  All data is REAL and LIVE — paper trades use actual market prices")
+    print("  GeckoTerminal: CONNECTED")
+    print("  Pump.fun:     CONNECTED")
+    print("  All data is REAL and LIVE — paper trades use actual market prices")
     print()
 
     print("--- ACTIVE FILTERS ---")
