@@ -382,7 +382,7 @@ class Database:
                (observed_at, source_status_json, candidate_count)
                VALUES (?, ?, ?)""",
             (
-                datetime.utcnow().isoformat(),
+                datetime.now(timezone.utc).isoformat(),
                 json.dumps(source_status, sort_keys=True),
                 candidate_count,
             ),
@@ -469,7 +469,7 @@ class Database:
             """INSERT OR IGNORE INTO candidate_alert_claims
                (chain_id, mint, status, claimed_at)
                VALUES (?, ?, 'PENDING', ?)""",
-            (chain_id, mint, datetime.utcnow().isoformat()),
+            (chain_id, mint, datetime.now(timezone.utc).isoformat()),
         )
         await self._db.commit()
         return cursor.rowcount == 1
@@ -481,7 +481,7 @@ class Database:
             """UPDATE candidate_alert_claims
                SET status = 'SENT', completed_at = ?
                WHERE chain_id = ? AND mint = ?""",
-            (datetime.utcnow().isoformat(), chain_id, mint),
+            (datetime.now(timezone.utc).isoformat(), chain_id, mint),
         )
         await self._db.commit()
 

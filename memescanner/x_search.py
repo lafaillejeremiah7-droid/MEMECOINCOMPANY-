@@ -201,15 +201,26 @@ class XSearchClient:
         still answers, so a single outage does not blank out the evidence and
         strand every candidate on ``X_EVIDENCE_UNAVAILABLE``.
         """
-        tavily_result, xai_result = await asyncio.gather(
+        outcomes = await asyncio.gather(
             self._search_tavily(symbol, name, mint),
             self._search_xai(symbol, name, mint),
             return_exceptions=True,
         )
-        if isinstance(tavily_result, BaseException):
-            tavily_result = self._empty_result()
-        if isinstance(xai_result, BaseException):
-            xai_result = self._empty_result()
+        results: List[Dict[str, Any]] = []
+        for backend, outcome in zip(("tavily", "x.ai"), outcomes, strict=True):
+            if isinstance(outcome, BaseException):
+                # Named explicitly: a backend that raises every time is otherwise
+                # indistinguishable from a token that genuinely has no mentions.
+                logger.warning(
+                    "X evidence backend %s raised %s for %s",
+                    backend,
+                    type(outcome).__name__,
+                    symbol,
+                )
+                results.append(self._empty_result())
+            else:
+                results.append(outcome)
+        tavily_result, xai_result = results
 
         tavily_ok = tavily_result.get("evidence_availability") == "AVAILABLE"
         xai_ok = xai_result.get("evidence_availability") == "AVAILABLE"
@@ -308,9 +319,12 @@ class XSearchClient:
             )
             for match in url_pattern.finditer(output_text):
                 handle = match.group(1).lower()
-                if handle not in ("search", "home", "explore", "hashtag", "i"):
-                    if handle not in accounts:
-                        accounts.append(handle)
+                # "i" is not a handle: X.ai returns post URLs as x.com/i/status/<id>.
+                if (
+                    handle not in ("search", "home", "explore", "hashtag", "i")
+                    and handle not in accounts
+                ):
+                    accounts.append(handle)
 
             result["accounts"] = accounts
             result["evidence"] = evidence

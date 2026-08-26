@@ -1,21 +1,22 @@
 """Tests for the X search integration module (X.ai and Tavily backends)."""
 
+from unittest.mock import AsyncMock, MagicMock, patch
+
 import pytest
-from unittest.mock import AsyncMock, patch, MagicMock
 
 from memescanner.x_search import (
-    XSearchClient,
+    BIG_ACCOUNTS,
+    SCAM_KEYWORDS,
     TAVILY_API_KEY,
     TAVILY_ENDPOINT,
     TAVILY_MAX_RESULTS,
+    TAVILY_TIMEOUT,
     XAI_ENDPOINT,
     XAI_MODEL,
-    TAVILY_TIMEOUT,
-    BIG_ACCOUNTS,
-    SCAM_KEYWORDS,
-    build_x_search_query,
+    XSearchClient,
     _extract_handle_from_url,
     _is_xai_key,
+    build_x_search_query,
 )
 
 

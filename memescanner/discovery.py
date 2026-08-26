@@ -195,7 +195,7 @@ class ResilientHttpClient:
                     )
                 except ValueError:
                     try:
-                        parsed = parsedate_to_datetime(retry_after)  # type: ignore[arg-type]
+                        parsed = parsedate_to_datetime(retry_after)
                         delay = max(0.0, parsed.timestamp() - time.time())
                     except (TypeError, ValueError, OverflowError):
                         delay = self.base_backoff * (2 ** attempt)
@@ -288,7 +288,9 @@ class GeckoTerminalNewPoolsSource:
                 token = included.get(token_id, {}).get("attributes", {})
                 mint = token.get("address") or self._mint_from_id(token_id)
                 token_options.append((str(mint) if mint else None, token))
-            selected = next(
+            # Always a tuple: the outer next() falls back to the inner next(),
+            # which itself defaults to (None, {}).
+            selected: Tuple[Optional[str], Dict[str, Any]] = next(
                 (
                     (mint, token) for mint, token in token_options
                     if mint and mint not in COMMON_SOLANA_QUOTE_MINTS
@@ -374,7 +376,10 @@ class DiscoveryCoordinator:
         )
         merged: Dict[Tuple[str, str], NormalizedCandidate] = {}
         failures: Dict[str, str] = {}
-        for source, outcome in zip(self.sources, outcomes):
+        # gather() returns exactly one outcome per source, so a length mismatch
+        # would mean the pairing had silently drifted; strict makes that raise
+        # rather than dropping a source's results.
+        for source, outcome in zip(self.sources, outcomes, strict=True):
             if isinstance(outcome, BaseException):
                 failures[source.name] = type(outcome).__name__
                 logger.warning("Discovery source %s unavailable: %s", source.name, outcome)

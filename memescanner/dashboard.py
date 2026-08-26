@@ -12,9 +12,9 @@ Run with: python -m memescanner.dashboard
 import json
 import sqlite3
 import time
-from datetime import datetime, timezone, timedelta
-from http.server import HTTPServer, BaseHTTPRequestHandler
-from urllib.parse import urlparse, parse_qs, quote
+from datetime import datetime, timedelta, timezone
+from http.server import BaseHTTPRequestHandler, HTTPServer
+from urllib.parse import parse_qs, quote, urlparse
 
 # Overwritten in main() from the same config the bot reads. Kept as a module
 # global so it stays overridable in tests.
@@ -207,7 +207,6 @@ def api_positions():
         now = time.time()
         positions = []
         for row in rows:
-            entry_price = safe_float(row["entry_price"])
             entry_mc = safe_float(row["entry_mc"])
             hold_time = now - safe_float(row["entry_time"], now)
 

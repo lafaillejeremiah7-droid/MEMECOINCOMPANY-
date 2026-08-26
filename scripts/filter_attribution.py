@@ -14,7 +14,6 @@ Run against the live database the bot writes to:
 from __future__ import annotations
 
 import argparse
-import asyncio
 import json
 import math
 import sqlite3

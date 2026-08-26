@@ -1,0 +1,67 @@
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+extend-exclude = [".pytest_cache", "__pycache__"]
+
+[tool.ruff.lint]
+# Deliberately scoped to rules that catch defects rather than style. Every bug
+# found in this repository so far has been of the form "two things that must
+# agree, do not" -- a mention counter measured on one scale compared against a
+# threshold set on another, a table created by two owners, a timeout budgeted for
+# one backend applied to another. Those are not caught by formatters, so the gate
+# selects correctness rules and leaves cosmetics alone.
+select = [
+    "E4",    # import shadowing / placement errors
+    "E7",    # comparison and statement errors
+    "E9",    # syntax and IO errors
+    "F",     # pyflakes: undefined names, unused variables, bad f-strings
+    "B",     # bugbear: mutable defaults, zip without strict, loop-var misuse
+    "I",     # import ordering, so merges stop producing import churn
+    "DTZ",   # naive datetimes; this codebase stores and compares timestamps
+    "SIM102", # collapsible nested if
+    "SIM114", # duplicated if arms
+]
+ignore = [
+    # Blind `except Exception` is a deliberate pattern here, not an accident: the
+    # scanner is evidence-gated, so a failing provider must degrade to
+    # "evidence unavailable" and defer rather than crash a cycle. The risk that
+    # matters is a swallowed exception being invisible, and that is addressed by
+    # logging the exception type and by the per-cycle evidence-health tally in
+    # unified_scanner, not by removing the handlers.
+    "BLE001",
+    # Stylistic only, and both fire heavily inside formatting and reporting code.
+    "RUF059",  # unused unpacked variable
+    "SIM105",  # prefers contextlib.suppress over try/except/pass
+    # Fires on the emoji and box-drawing characters used in Telegram and
+    # dashboard output, which are intentional.
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Tests construct deliberately malformed payloads and reach into private helpers.
+"tests/*" = ["E501"]
+
+[tool.mypy]
+python_version = "3.11"
+ignore_missing_imports = true
+# Not strict mode. The value here is catching contract mismatches between
+# modules, which is the failure class this repository actually suffers from.
+warn_unused_ignores = true
+warn_redundant_casts = true
+
+# Ratchet: these modules carry pre-existing annotation debt and are excluded so
+# the gate can be enforced today rather than deferred. They are ordered by size
+# of backlog. Removing an entry here is the unit of progress, and the gate
+# prevents any module currently passing from regressing.
+#   onchain.py   ~28 findings, mostly Optional arithmetic in holder analysis
+#   outcomes.py  ~7
+#   database.py  ~5
+[[tool.mypy.overrides]]
+module = [
+    "memescanner.onchain",
+    "memescanner.outcomes",
+    "memescanner.database",
+]
+ignore_errors = true

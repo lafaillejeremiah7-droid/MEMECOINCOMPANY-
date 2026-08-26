@@ -1,11 +1,11 @@
 """Verify Telegram signal accuracy by comparing against raw DEXScreener data."""
 import asyncio
 
+from memescanner.config import Config
 from memescanner.discovery import DexScreenerPairClient, NormalizedCandidate, ResilientHttpClient
 from memescanner.onchain import OnchainAnalyzer
 from memescanner.unified_scanner import CommonEvaluator, compute_take_profit_target, format_signal
 from memescanner.x_search import XSearchClient
-from memescanner.config import Config
 
 
 async def run():

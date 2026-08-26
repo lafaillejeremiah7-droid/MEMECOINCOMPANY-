@@ -2,7 +2,6 @@
 Tests for the smart recovery checker module.
 """
 
-import os
 from unittest.mock import AsyncMock, patch
 
 import pytest

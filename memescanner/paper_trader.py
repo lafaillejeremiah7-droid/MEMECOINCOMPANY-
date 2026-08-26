@@ -8,13 +8,18 @@ and trailing stop. Persists positions via aiosqlite.
 import logging
 import time
 from datetime import datetime, timezone
-from typing import Any, Awaitable, Callable, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Awaitable, Callable, Dict, List, Optional
 
 import aiosqlite
-import httpx
 
 from memescanner.recovery_checker import RecoveryChecker
 from memescanner.scanner import fetch_dex_data, send_telegram_message
+
+if TYPE_CHECKING:
+    # Imported for annotations only. A runtime import would be circular, since
+    # both modules are constructed by __main__ alongside this one.
+    from memescanner.onchain import OnchainAnalyzer
+    from memescanner.x_search import XSearchClient
 
 logger = logging.getLogger(__name__)
 
@@ -432,14 +437,17 @@ class PaperTrader:
                         continue
 
                     # Check hard stop (-70%) for positions that passed recovery check
-                    if pos.get("recovery_checked") and not pos.get("breakeven_stop"):
-                        if stop_pnl_pct <= HARD_STOP_PCT:
-                            closed = await self._close_position(
-                                pos, current_price, "Hard stop (-70% after recovery hold)"
-                            )
-                            closed_this_cycle.append(closed)
-                            positions_to_remove.append(i)
-                            continue
+                    if (
+                        pos.get("recovery_checked")
+                        and not pos.get("breakeven_stop")
+                        and stop_pnl_pct <= HARD_STOP_PCT
+                    ):
+                        closed = await self._close_position(
+                            pos, current_price, "Hard stop (-70% after recovery hold)"
+                        )
+                        closed_this_cycle.append(closed)
+                        positions_to_remove.append(i)
+                        continue
 
                     # Smart stop loss: when position hits -50%
                     if stop_pnl_pct <= STOP_LOSS_PCT:
@@ -529,7 +537,8 @@ class PaperTrader:
         await self._notify(recovery_msg)
 
         if decision == "SELL":
-            closed = await self._close_position(
+            # The caller reads self.closed_trades[-1] on a "CLOSED" result.
+            await self._close_position(
                 pos, current_price, f"Recovery heuristic: SELL (score={prob_pct:.0f}/100)"
             )
             return "CLOSED"
@@ -914,7 +923,6 @@ class PaperTrader:
 
     def _get_today_trades(self) -> List[Dict[str, Any]]:
         """Get trades closed today (UTC)."""
-        now = time.time()
         # Start of today in UTC
         today_start = datetime.now(timezone.utc).replace(
             hour=0, minute=0, second=0, microsecond=0
