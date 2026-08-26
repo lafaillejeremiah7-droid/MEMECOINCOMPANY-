@@ -3,7 +3,7 @@ Configuration module for the Memescanner bot.
 
 Loads and validates configuration from a YAML file, providing typed access
 to all settings including Telegram credentials, scanner parameters,
-filter thresholds, scoring weights, adaptation settings, and database path.
+filter thresholds, calibration settings, and database path.
 """
 
 import logging
@@ -88,30 +88,6 @@ class FiltersConfig:
 
 
 @dataclass
-class ScoringWeights:
-    """Legacy compatibility scoring weights; not predictively calibrated."""
-
-    buy_sell_ratio: float = 0.25
-    liquidity: float = 0.25
-    volume_turnover: float = 0.20
-    engagement_velocity: float = 0.15
-    narrative: float = 0.10
-    momentum: float = 0.05
-
-
-@dataclass
-class AdaptationConfig:
-    """Self-adaptation engine configuration."""
-
-    track_outcomes: bool = True
-    outcome_check_intervals_hours: List[int] = field(
-        default_factory=lambda: [1, 6, 24]
-    )
-    min_samples_for_reweight: int = 50
-    reweight_day: str = "sunday"
-
-
-@dataclass
 class CalibrationConfig:
     """Prospective outcome collection and conservative reporting gates."""
 
@@ -173,8 +149,6 @@ class Config:
     sources: SourcesConfig = field(default_factory=SourcesConfig)
     evidence: EvidenceConfig = field(default_factory=EvidenceConfig)
     filters: FiltersConfig = field(default_factory=FiltersConfig)
-    scoring: ScoringWeights = field(default_factory=ScoringWeights)
-    adaptation: AdaptationConfig = field(default_factory=AdaptationConfig)
     calibration: CalibrationConfig = field(default_factory=CalibrationConfig)
     database: DatabaseConfig = field(default_factory=DatabaseConfig)
     logging: LoggingConfig = field(default_factory=LoggingConfig)
@@ -226,8 +200,6 @@ class Config:
         sources_data = data.get("sources", {})
         evidence_data = data.get("evidence", {})
         filters_data = data.get("filters", {})
-        scoring_data = data.get("scoring", {}).get("weights", {})
-        adaptation_data = data.get("adaptation", {})
         calibration_data = data.get("calibration", {})
         database_data = data.get("database", {})
         logging_data = data.get("logging", {})
@@ -282,24 +254,6 @@ class Config:
                 reference_avg_trade_size_usd=filters_data.get(
                     "reference_avg_trade_size_usd", 50.0
                 ),
-            ),
-            scoring=ScoringWeights(
-                buy_sell_ratio=scoring_data.get("buy_sell_ratio", 0.25),
-                liquidity=scoring_data.get("liquidity", 0.25),
-                volume_turnover=scoring_data.get("volume_turnover", 0.20),
-                engagement_velocity=scoring_data.get("engagement_velocity", 0.15),
-                narrative=scoring_data.get("narrative", 0.10),
-                momentum=scoring_data.get("momentum", 0.05),
-            ),
-            adaptation=AdaptationConfig(
-                track_outcomes=adaptation_data.get("track_outcomes", True),
-                outcome_check_intervals_hours=adaptation_data.get(
-                    "outcome_check_intervals_hours", [1, 6, 24]
-                ),
-                min_samples_for_reweight=adaptation_data.get(
-                    "min_samples_for_reweight", 50
-                ),
-                reweight_day=adaptation_data.get("reweight_day", "sunday"),
             ),
             calibration=CalibrationConfig(
                 collect_outcomes=calibration_data.get("collect_outcomes", True),

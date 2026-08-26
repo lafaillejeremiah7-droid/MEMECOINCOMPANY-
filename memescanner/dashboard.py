@@ -32,11 +32,6 @@ def get_db():
         id INTEGER PRIMARY KEY CHECK (id = 1), balance REAL,
         starting_balance REAL, trade_size REAL)""")
     conn.execute("INSERT OR IGNORE INTO paper_balance (id, balance, starting_balance, trade_size) VALUES (1, 1000, 1000, 50)")
-    conn.execute("""CREATE TABLE IF NOT EXISTS wave_keywords (
-        keyword TEXT PRIMARY KEY, appearances INTEGER, last_seen REAL, avg_mc REAL)""")
-    conn.execute("""CREATE TABLE IF NOT EXISTS deployers (
-        twitter_account TEXT PRIMARY KEY, token_count INTEGER NOT NULL DEFAULT 0,
-        last_seen REAL, tokens_json TEXT)""")
     conn.execute("""CREATE TABLE IF NOT EXISTS discovery_cycles (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         observed_at TEXT NOT NULL,
@@ -426,46 +421,6 @@ def api_stats():
             "today_trades": 0,
             "scan_count": 0,
         }
-
-
-def api_waves():
-    """Current hot/cold narrative keywords."""
-    try:
-        db = get_db()
-        cursor = db.cursor()
-
-        cursor.execute(
-            "SELECT keyword, appearances, last_seen, avg_mc FROM wave_keywords "
-            "ORDER BY appearances DESC"
-        )
-        rows = cursor.fetchall()
-
-        now = time.time()
-        keywords = []
-        for row in rows:
-            last_seen = safe_float(row["last_seen"])
-            hours_ago = (now - last_seen) / 3600 if last_seen > 0 else 999
-
-            if hours_ago <= 24 and safe_int(row["appearances"]) >= 3:
-                status = "hot"
-            elif hours_ago > 48 or safe_int(row["appearances"]) <= 1:
-                status = "cold"
-            else:
-                status = "neutral"
-
-            keywords.append({
-                "keyword": row["keyword"] or "",
-                "appearances": safe_int(row["appearances"]),
-                "last_seen": last_seen,
-                "hours_ago": round(hours_ago, 1),
-                "avg_mc": safe_float(row["avg_mc"]),
-                "status": status,
-            })
-
-        db.close()
-        return {"keywords": keywords, "count": len(keywords)}
-    except sqlite3.OperationalError:
-        return {"keywords": [], "count": 0}
 
 
 # --- New Pipeline / Calibration API endpoints ---
@@ -1172,23 +1127,6 @@ HTML_TEMPLATE = """<!DOCTYPE html>
             color: #00ff41;
             font-weight: bold;
         }
-        .keyword-item {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            padding: 4px 0;
-            font-size: 0.75rem;
-        }
-        .keyword-name {
-            color: #ffd700;
-        }
-        .keyword-cold {
-            color: #666666;
-        }
-        .keyword-count {
-            color: #00d4ff;
-            font-size: 0.65rem;
-        }
         .countdown {
             text-align: center;
             font-size: 1.2rem;
@@ -1598,13 +1536,6 @@ HTML_TEMPLATE = """<!DOCTYPE html>
             </div>
 
             <div class="sidebar-section">
-                <div class="sidebar-title">HOT NARRATIVES</div>
-                <div id="narratives-container">
-                    <div class="empty-state">NO DATA</div>
-                </div>
-            </div>
-
-            <div class="sidebar-section">
                 <div class="sidebar-title">TODAY</div>
                 <div class="sidebar-stat">
                     <span class="sidebar-stat-label">Trades</span>
@@ -1851,39 +1782,6 @@ HTML_TEMPLATE = """<!DOCTYPE html>
             const todayEl = document.getElementById('today-pnl');
             todayEl.textContent = formatMoney(todayPnl);
             todayEl.style.color = todayPnl >= 0 ? '#00ff41' : '#ff3333';
-        }
-
-        async function loadWaves() {
-            const data = await fetchJSON('/api/waves');
-            const container = document.getElementById('narratives-container');
-
-            if (!data || data.keywords.length === 0) {
-                container.innerHTML = '<div class="empty-state">NO DATA</div>';
-                return;
-            }
-
-            let html = '';
-            const hotKeywords = data.keywords.filter(k => k.status === 'hot').slice(0, 8);
-            const coldKeywords = data.keywords.filter(k => k.status === 'cold').slice(0, 3);
-
-            for (const kw of hotKeywords) {
-                html += '<div class="keyword-item">' +
-                    '<span class="keyword-name">\\ud83d\\udd25 ' + kw.keyword + '</span>' +
-                    '<span class="keyword-count">' + kw.appearances + 'x</span>' +
-                '</div>';
-            }
-            for (const kw of coldKeywords) {
-                html += '<div class="keyword-item">' +
-                    '<span class="keyword-cold">\\u2744\\ufe0f ' + kw.keyword + '</span>' +
-                    '<span class="keyword-count">' + kw.appearances + 'x</span>' +
-                '</div>';
-            }
-
-            if (html === '') {
-                html = '<div class="empty-state">NO HOT NARRATIVES</div>';
-            }
-
-            container.innerHTML = html;
         }
 
         // --- PIPELINE TAB ---
@@ -2156,7 +2054,6 @@ HTML_TEMPLATE = """<!DOCTYPE html>
                 loadPositions(),
                 loadHistory(currentPage),
                 loadStats(),
-                loadWaves(),
                 loadPipelineSummary(),
             ]);
             countdownVal = 15;
@@ -2236,8 +2133,6 @@ class DashboardHandler(BaseHTTPRequestHandler):
             self._send_json(api_history(page, limit))
         elif path == "/api/stats":
             self._send_json(api_stats())
-        elif path == "/api/waves":
-            self._send_json(api_waves())
         elif path == "/api/discovery":
             page = int(params.get("page", ["1"])[0])
             limit = int(params.get("limit", ["50"])[0])
