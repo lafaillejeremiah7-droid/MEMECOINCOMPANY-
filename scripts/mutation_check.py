@@ -26,6 +26,7 @@ lose work.
 from __future__ import annotations
 
 import argparse
+import shutil
 import subprocess
 import sys
 from dataclasses import dataclass
@@ -338,7 +339,25 @@ def _apply(mutation: Mutation) -> bool:
 
 
 def _revert(mutation: Mutation) -> None:
+    """Restore the source, and discard the bytecode compiled from the mutation.
+
+    Restoring the text is not enough. CPython validates a cached ``.pyc`` against
+    the source's (mtime, size), and one mutation here is byte-length identical to
+    the code it replaces -- ``max_top10_concentration_pct: float = 30.0`` becomes
+    ``25.0``, 41 bytes either way. Filesystem mtime granularity is coarse enough
+    that the mutation write and this restore can land in the same tick, and then
+    both halves of the validation key match and the stale bytecode is accepted.
+
+    The result is a *later* pytest run importing the mutated constant from cache
+    while the source on disk is correct, which surfaces as
+    test_policy_versioning.py failing against code that is actually right. That
+    reproduces on unmodified main, so this harness has been able to poison the
+    runs that follow it. Dropping the cache next to the reverted file closes it.
+    """
     _run(["git", "checkout", "--", mutation.path])
+    cache = Path(mutation.path).resolve().parent / "__pycache__"
+    if cache.is_dir():
+        shutil.rmtree(cache, ignore_errors=True)
 
 
 def main() -> int:
