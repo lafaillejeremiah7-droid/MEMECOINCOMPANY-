@@ -35,6 +35,24 @@ single most important invariant in the module and is tested directly.
 
 ``call_age_seconds`` is recorded alongside every measurement so a call made an hour
 ago is never scored as a mature failure.
+
+Two measured limits of the price source
+---------------------------------------
+*The measurable window is about 3.5 days.* 1000 five-minute candles is 5000
+minutes, and GeckoTerminal returns the most recent 1000, so a call older than
+roughly 3.5 days falls off the back of the window and returns
+``CALL_BEFORE_OHLCV_WINDOW``. Verified against a live pool: the oldest candle
+returned was 3.44 days old. This is a hard constraint on the archive, not a bug --
+it means calls have to be measured within days of being archived, and it is the
+main reason the two scripts are meant to run on a schedule rather than once.
+Dividing by the earliest available candle instead would be the launch-price version
+of the data leak this module refuses to commit.
+
+*The endpoint rate-limits.* Five sequential measurements (ten requests) were enough
+to draw retryable HTTP errors that exhausted ``ResilientHttpClient``'s three
+attempts. That is why ``UNREACHABLE`` is classified as non-terminal: it describes
+our failure to observe, not the call, and freezing it as an answer would let one
+rate-limit burst permanently mark a measurable call as unmeasurable.
 """
 
 from __future__ import annotations
@@ -98,6 +116,16 @@ class PeakStatus(str, Enum):
     UNREACHABLE = "UNREACHABLE"
 
 
+# Statuses that describe our failure to observe rather than a fact about the call.
+# These must not be persisted as answers: the verification ledger is keyed by
+# (call_id, definition_version), so storing one would make a single rate-limit
+# burst permanently mark a measurable call as unmeasurable and remove it from the
+# backlog forever. Measured on the first live run: five sequential measurements
+# were enough to exhaust the HTTP client's retries on two of them, and both mints
+# resolved normally moments later.
+NON_TERMINAL_PEAK_STATUSES = frozenset({PeakStatus.UNREACHABLE})
+
+
 class TweetStatus(str, Enum):
     """Outcome of attributing a post to a handle.
 
@@ -145,6 +173,16 @@ class PeakMeasurement:
     def measured(self) -> bool:
         """True only for a real measurement, so callers can filter on one flag."""
         return self.status is PeakStatus.MEASURED
+
+    @property
+    def is_terminal(self) -> bool:
+        """Whether this result is safe to persist as the answer for this call.
+
+        False for ``UNREACHABLE``, which says the source did not answer us. Storing
+        that would consume the call's one verification slot for this definition and
+        retire it from the backlog on the strength of a transient failure.
+        """
+        return self.status not in NON_TERMINAL_PEAK_STATUSES
 
     @property
     def measured_at(self) -> str:

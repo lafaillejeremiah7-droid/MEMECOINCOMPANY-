@@ -1089,8 +1089,12 @@ class Database:
     ) -> List[Dict[str, Any]]:
         """Calls with no measurement yet under ``definition_version``.
 
-        Oldest call first, so the calls with the most price history behind them --
-        the ones a measurement is actually meaningful for -- are verified first.
+        Newest call first, which is the opposite of the obvious choice and is what
+        the first live run corrected. The price source returns about 3.5 days of
+        5-minute candles, and that window slides: a call older than that can never
+        be measured, while a fresh one can. Oldest-first therefore spends every run
+        re-confirming calls that already aged out, and lets the measurable ones age
+        out behind them. Newest-first measures each call while it still can.
         """
         assert self._db is not None
         join_condition = "v.call_id = c.id"
@@ -1104,7 +1108,7 @@ class Database:
             f"""SELECT c.* FROM caller_calls c
                 LEFT JOIN caller_call_verifications v ON {join_condition}
                 WHERE v.id IS NULL
-                ORDER BY c.call_epoch ASC, c.id ASC
+                ORDER BY c.call_epoch DESC, c.id DESC
                 LIMIT ?""",
             (*params, int(limit)),
         ) as cursor:

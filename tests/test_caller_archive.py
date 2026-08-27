@@ -545,7 +545,7 @@ class TestCallerCounts:
 
 class TestVerificationLedger:
     @pytest.mark.asyncio
-    async def test_unverified_calls_are_oldest_first_and_scoped_by_definition(self, db):
+    async def test_unverified_calls_are_newest_first_and_scoped_by_definition(self, db):
         http = _client(_payload())
         try:
             await CallerArchiver(http).archive(db, retrieved_epoch=RETRIEVED_EPOCH)
@@ -555,7 +555,10 @@ class TestVerificationLedger:
         pending = await db.get_unverified_calls(10, definition_version="v1")
         assert len(pending) == 3
         epochs = [row["call_epoch"] for row in pending]
-        assert epochs == sorted(epochs)
+        # Newest first. The price source keeps ~3.5 days of 5-minute candles and
+        # that window slides, so a call must be measured before it ages out;
+        # oldest-first would spend every run on calls that are already unmeasurable.
+        assert epochs == sorted(epochs, reverse=True)
 
         await db.record_call_verification(
             {

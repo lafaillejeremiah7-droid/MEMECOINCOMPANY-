@@ -11,7 +11,14 @@ to be 9x to 60x above what the price history showed.
 
 Safely re-runnable. Results are keyed by ``(call_id, definition_version)``, so a
 second run re-measures nothing and only picks up calls that have no measurement
-under the current definition.
+under the current definition. ``UNREACHABLE`` is the one status that is *not*
+stored: it describes the source failing to answer us, not the call, and persisting
+it would spend the call's verification slot on a transient error. Those calls stay
+in the backlog and are retried next run.
+
+Requests are paced by ``--delay`` because the price endpoint rate-limits: five
+sequential measurements (ten requests) were enough to exhaust the HTTP client's
+retries on the first live run.
 """
 
 from __future__ import annotations
@@ -43,6 +50,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="measurement definition to record results under",
     )
     parser.add_argument("--timeout", type=float, default=30.0, help="HTTP timeout")
+    parser.add_argument(
+        "--delay",
+        type=float,
+        default=1.0,
+        help="seconds to wait between calls; the price endpoint rate-limits",
+    )
     return parser
 
 
@@ -58,8 +71,11 @@ def _print_report(
     print("=" * 72)
     print(f"definition_version     {definition_version}")
     print(f"calls selected         {len(calls)}")
+    retryable = [m for m in measurements if not m.is_terminal]
     print(f"verifications stored   {stored_new} new "
-          f"({len(measurements) - stored_new} already measured, no-op)")
+          f"({len(measurements) - stored_new - len(retryable)} already measured, no-op)")
+    print(f"left in the backlog    {len(retryable)} "
+          "(source did not answer; not stored, retried next run)")
     print()
     print("-- tally by status -----------------------------------------------------")
     tally = tally_statuses(measurements)
@@ -88,8 +104,11 @@ def _print_report(
         print("-- unmeasured -----------------------------------------------------------")
         print("These carry a NULL peak, not a zero. An unmeasurable call is missing")
         print("data; scoring it as 0.0 or 1.0 would corrupt every average built on it.")
+        print("CALL_BEFORE_OHLCV_WINDOW means the call is older than the ~3.5 days of")
+        print("5-minute candles the source returns, so it can never be measured now.")
         for measurement in unmeasured[:20]:
-            print(f"  {measurement.mint[:44]:<45} {measurement.status.value}")
+            note = "" if measurement.is_terminal else "  (will retry)"
+            print(f"  {measurement.mint[:44]:<45} {measurement.status.value}{note}")
     print("=" * 72)
 
 
@@ -104,11 +123,18 @@ async def run(args: argparse.Namespace) -> int:
         verifier = PeakVerifier(http, definition_version=args.definition_version)
         measurements: List[PeakMeasurement] = []
         stored_new = 0
-        for call in calls:
+        for index, call in enumerate(calls):
+            if index and args.delay > 0:
+                await asyncio.sleep(args.delay)
             measurement = await verifier.measure_peak_multiple(
                 str(call["mint"]), float(call["call_epoch"])
             )
             measurements.append(measurement)
+            if not measurement.is_terminal:
+                # UNREACHABLE is our failure, not the call's. Leaving it unstored
+                # keeps the call in the backlog instead of retiring it on a
+                # rate-limit burst.
+                continue
             _, inserted = await database.record_call_verification(
                 measurement.as_row(call_id=int(call["id"]))
             )

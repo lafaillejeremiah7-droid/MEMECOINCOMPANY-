@@ -24,6 +24,7 @@ import pytest
 
 from memescanner.discovery import ResilientHttpClient
 from memescanner.peak_verifier import (
+    NON_TERMINAL_PEAK_STATUSES,
     PEAK_DEFINITION_VERSION,
     Candle,
     PeakStatus,
@@ -294,6 +295,37 @@ class TestPeakMeasurement:
             # mature failure.
             assert result.call_age_seconds == pytest.approx(6 * 3_600)
             assert result.as_row(call_id=1)["peak_multiple"] is None
+
+    @pytest.mark.asyncio
+    async def test_only_unreachable_is_non_terminal(self):
+        """A failure to observe must not be storable as the call's answer.
+
+        Verifications are keyed by (call_id, definition_version), so persisting an
+        UNREACHABLE spends the call's one slot and retires it from the backlog. The
+        first live run drew rate-limited errors on 2 of 5 measurements, and both
+        mints resolved normally moments later -- exactly the case this protects.
+        """
+        rows = [
+            [CALL_EPOCH - 300, 1.0, 1.0, 1.0, 1.0, 10.0],
+            [CALL_EPOCH + 300, 1.0, 2.0, 1.0, 2.0, 10.0],
+        ]
+        cases = [
+            (_route(pools=_pools_payload(), ohlcv=_ohlcv_payload(rows)), True),
+            (_route(pools={"data": []}), True),
+            (_route(pools=_pools_payload(), ohlcv=_ohlcv_payload([])), True),
+            (_route(pools=httpx.ConnectError("rate limited")), False),
+        ]
+        for handler, expected_terminal in cases:
+            verifier = _verifier(handler)
+            try:
+                result = await verifier.measure_peak_multiple(MINT, CALL_EPOCH)
+            finally:
+                await verifier.http.close()
+            assert result.is_terminal is expected_terminal, (
+                f"{result.status.value} classified as "
+                f"{'terminal' if result.is_terminal else 'non-terminal'}"
+            )
+        assert NON_TERMINAL_PEAK_STATUSES == {PeakStatus.UNREACHABLE}
 
     @pytest.mark.asyncio
     async def test_zero_price_at_call_records_the_price_it_saw(self):
