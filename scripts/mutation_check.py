@@ -267,6 +267,49 @@ MUTATIONS: List[Mutation] = [
             "every outcome against nothing."
         ),
     ),
+    Mutation(
+        name="peak-window-starts-before-call",
+        path="memescanner/peak_verifier.py",
+        old="        window_start = call_epoch",
+        new="        window_start = call_epoch - 86_400.0",
+        tests="tests/test_peak_verifier.py",
+        defect=(
+            "Measuring a caller's peak from before they called. Widening the window "
+            "backwards silently substitutes the token's earlier high -- in the limit, "
+            "its all-time high or its launch price -- for the move the caller "
+            "actually preceded. This is the data-leakage bug the module exists to "
+            "prevent, and it is invisible in the output: every number still looks "
+            "like a measurement, just a larger one."
+        ),
+    ),
+    Mutation(
+        name="missing-peak-becomes-zero",
+        path="memescanner/peak_verifier.py",
+        old="            peak_multiple=None,",
+        new="            peak_multiple=0.0,",
+        tests="tests/test_peak_verifier.py",
+        defect=(
+            "Turning an unmeasurable call into a measured total loss. NO_POOL, "
+            "NO_OHLCV and UNREACHABLE all mean 'we do not know'; recording 0.0 (or "
+            "1.0) pools missing data into every average as if it were an observed "
+            "outcome, which is the same class of error as the fabricated multiples "
+            "this component was built to detect."
+        ),
+    ),
+    Mutation(
+        name="caller-archive-not-append-only",
+        path="memescanner/database.py",
+        old="""INSERT OR IGNORE INTO caller_calls (""",
+        new="""INSERT OR REPLACE INTO caller_calls (""",
+        tests="tests/test_caller_archive.py",
+        defect=(
+            "Destroying the immutability of the call ledger. OR REPLACE deletes and "
+            "re-inserts the conflicting row, so every re-run re-issues its id and "
+            "resets first_seen_epoch -- orphaning the verifications joined to it and "
+            "making a call's recorded first-seen time move forward in time. The row "
+            "count stays right throughout, so nothing looks wrong."
+        ),
+    ),
 ]
 
 
