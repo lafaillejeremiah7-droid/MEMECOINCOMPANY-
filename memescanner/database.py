@@ -14,6 +14,10 @@ Tables:
     - market_observations: Captured point-in-time prices, including misses
     - candidate_outcomes: Derived returns per candidate and horizon
     - calibration_runs: Immutable, read-only calibration gate reports
+    - caller_archive_snapshots: One row per fetched caller snapshot, with the
+      source's own exclusion counters and its measured staleness
+    - caller_calls: Append-only ledger of (caller, mint, call timestamp)
+    - caller_call_verifications: Independently measured peak multiples per call
 """
 
 import json
@@ -187,6 +191,68 @@ class Database:
                 status TEXT NOT NULL,
                 report_json TEXT NOT NULL
             );
+
+            CREATE TABLE IF NOT EXISTS caller_archive_snapshots (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                source_name TEXT NOT NULL,
+                snapshot_generated_at TEXT NOT NULL,
+                snapshot_generated_epoch REAL NOT NULL,
+                retrieved_at TEXT NOT NULL,
+                retrieved_epoch REAL NOT NULL,
+                staleness_seconds REAL NOT NULL,
+                callouts_tracked INTEGER,
+                unique_callers INTEGER,
+                coins_on_map INTEGER,
+                min_market_cap REAL,
+                hidden_dust INTEGER,
+                bot_rows_dropped INTEGER,
+                bot_callers INTEGER,
+                rows_ingested INTEGER NOT NULL,
+                rows_new INTEGER NOT NULL,
+                stats_json TEXT NOT NULL,
+                UNIQUE(source_name, snapshot_generated_epoch)
+            );
+
+            CREATE TABLE IF NOT EXISTS caller_calls (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                source_name TEXT NOT NULL,
+                caller_key TEXT NOT NULL,
+                caller_username TEXT,
+                caller_wallet TEXT,
+                caller_followers INTEGER,
+                mint TEXT NOT NULL,
+                symbol TEXT,
+                call_at TEXT NOT NULL,
+                call_epoch REAL NOT NULL,
+                snapshot_market_cap_usd REAL,
+                source_reported_multiple REAL,
+                first_seen_at TEXT NOT NULL,
+                first_seen_epoch REAL NOT NULL,
+                raw_json TEXT NOT NULL,
+                UNIQUE(source_name, caller_key, mint, call_epoch)
+            );
+
+            CREATE TABLE IF NOT EXISTS caller_call_verifications (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                call_id INTEGER NOT NULL,
+                status TEXT NOT NULL,
+                price_at_call REAL,
+                max_price_after_call REAL,
+                peak_multiple REAL,
+                candles_after_call INTEGER,
+                call_age_seconds REAL,
+                measured_at TEXT NOT NULL,
+                measured_epoch REAL NOT NULL,
+                definition_version TEXT NOT NULL,
+                UNIQUE(call_id, definition_version)
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_caller_calls_caller
+                ON caller_calls(caller_key, mint);
+            CREATE INDEX IF NOT EXISTS idx_caller_calls_epoch
+                ON caller_calls(call_epoch);
+            CREATE INDEX IF NOT EXISTS idx_caller_verifications_status
+                ON caller_call_verifications(definition_version, status);
 
             CREATE INDEX IF NOT EXISTS idx_cohort_first_discovered
                 ON cohort_candidates(first_discovered_epoch);
@@ -856,3 +922,215 @@ class Database:
         )
         await self._db.commit()
         return self._require_rowid(cursor.lastrowid, "calibration_runs")
+
+
+    # --- Caller archive operations ---
+    #
+    # The caller ledger is append-only on purpose. A dataset whose rows can be
+    # rewritten after an outcome is known is not evidence, and the whole reason
+    # these tables exist is that every retrospective caller dataset available to
+    # this project turned out to be either gated (pump.fun's callout leaderboard
+    # returns 401), far too small (7 days, at most 7 unique-token calls per
+    # caller), or fabricated (an LLM overstating measured multiples by 9x to 60x).
+
+    async def record_caller_snapshot(self, snapshot: Dict[str, Any]) -> Tuple[int, bool]:
+        """Record one fetched snapshot; re-fetching an unchanged one is a no-op.
+
+        Uniqueness is ``(source_name, snapshot_generated_epoch)``, so a source that
+        has not regenerated its snapshot cannot produce a second row no matter how
+        often it is polled. Returns the row id and whether it was newly inserted.
+        """
+        assert self._db is not None
+        cursor = await self._db.execute(
+            """INSERT OR IGNORE INTO caller_archive_snapshots (
+                   source_name, snapshot_generated_at, snapshot_generated_epoch,
+                   retrieved_at, retrieved_epoch, staleness_seconds,
+                   callouts_tracked, unique_callers, coins_on_map, min_market_cap,
+                   hidden_dust, bot_rows_dropped, bot_callers, rows_ingested,
+                   rows_new, stats_json
+               ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                snapshot["source_name"],
+                snapshot["snapshot_generated_at"],
+                float(snapshot["snapshot_generated_epoch"]),
+                snapshot["retrieved_at"],
+                float(snapshot["retrieved_epoch"]),
+                float(snapshot["staleness_seconds"]),
+                snapshot.get("callouts_tracked"),
+                snapshot.get("unique_callers"),
+                snapshot.get("coins_on_map"),
+                snapshot.get("min_market_cap"),
+                snapshot.get("hidden_dust"),
+                snapshot.get("bot_rows_dropped"),
+                snapshot.get("bot_callers"),
+                int(snapshot.get("rows_ingested", 0)),
+                int(snapshot.get("rows_new", 0)),
+                snapshot["stats_json"],
+            ),
+        )
+        inserted = cursor.rowcount == 1
+        await self._db.commit()
+        if inserted:
+            return self._require_rowid(cursor.lastrowid, "caller_archive_snapshots"), True
+        async with self._db.execute(
+            """SELECT id FROM caller_archive_snapshots
+               WHERE source_name = ? AND snapshot_generated_epoch = ?""",
+            (
+                snapshot["source_name"],
+                float(snapshot["snapshot_generated_epoch"]),
+            ),
+        ) as row_cursor:
+            row = await row_cursor.fetchone()
+        if row is None:
+            raise RuntimeError(
+                "caller_archive_snapshots row missing for "
+                f"{snapshot['source_name']}@{snapshot['snapshot_generated_epoch']} "
+                "immediately after INSERT OR IGNORE"
+            )
+        return int(row["id"]), False
+
+    async def record_caller_calls(
+        self, calls: Sequence[Dict[str, Any]], *, first_seen_epoch: float
+    ) -> Tuple[int, int]:
+        """Append calls to the immutable ledger.
+
+        Returns ``(rows_ingested, rows_new)``: how many rows the snapshot offered
+        and how many the ledger had never seen. ``INSERT OR IGNORE`` is what makes
+        the ledger append-only -- ``INSERT OR REPLACE`` would delete and re-insert
+        the matching row, silently resetting ``first_seen_epoch`` and issuing a new
+        row id, which would break every verification joined to it.
+        """
+        assert self._db is not None
+        first_seen_at = datetime.fromtimestamp(first_seen_epoch, timezone.utc).isoformat()
+        rows_new = 0
+        for call in calls:
+            cursor = await self._db.execute(
+                """INSERT OR IGNORE INTO caller_calls (
+                       source_name, caller_key, caller_username, caller_wallet,
+                       caller_followers, mint, symbol, call_at, call_epoch,
+                       snapshot_market_cap_usd, source_reported_multiple,
+                       first_seen_at, first_seen_epoch, raw_json
+                   ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    call["source_name"],
+                    call["caller_key"],
+                    call.get("caller_username"),
+                    call.get("caller_wallet"),
+                    call.get("caller_followers"),
+                    call["mint"],
+                    call.get("symbol"),
+                    call["call_at"],
+                    float(call["call_epoch"]),
+                    call.get("snapshot_market_cap_usd"),
+                    call.get("source_reported_multiple"),
+                    first_seen_at,
+                    first_seen_epoch,
+                    call["raw_json"],
+                ),
+            )
+            if cursor.rowcount == 1:
+                rows_new += 1
+        await self._db.commit()
+        return len(calls), rows_new
+
+    async def record_call_verification(
+        self, verification: Dict[str, Any]
+    ) -> Tuple[int, bool]:
+        """Store one measured result, keyed by ``(call_id, definition_version)``.
+
+        Re-running the verifier under the same definition is a no-op, so the script
+        is safely re-runnable. A changed definition writes a new row rather than
+        overwriting a measurement taken under the old rules.
+        """
+        assert self._db is not None
+        cursor = await self._db.execute(
+            """INSERT OR IGNORE INTO caller_call_verifications (
+                   call_id, status, price_at_call, max_price_after_call,
+                   peak_multiple, candles_after_call, call_age_seconds,
+                   measured_at, measured_epoch, definition_version
+               ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                int(verification["call_id"]),
+                verification["status"],
+                verification.get("price_at_call"),
+                verification.get("max_price_after_call"),
+                # Stays NULL unless the status is MEASURED. A missing peak must
+                # never be persisted as 0.0 or 1.0; see memescanner.peak_verifier.
+                verification.get("peak_multiple"),
+                verification.get("candles_after_call"),
+                verification.get("call_age_seconds"),
+                verification["measured_at"],
+                float(verification["measured_epoch"]),
+                verification["definition_version"],
+            ),
+        )
+        inserted = cursor.rowcount == 1
+        await self._db.commit()
+        if inserted:
+            return (
+                self._require_rowid(cursor.lastrowid, "caller_call_verifications"),
+                True,
+            )
+        async with self._db.execute(
+            """SELECT id FROM caller_call_verifications
+               WHERE call_id = ? AND definition_version = ?""",
+            (int(verification["call_id"]), verification["definition_version"]),
+        ) as row_cursor:
+            row = await row_cursor.fetchone()
+        if row is None:
+            raise RuntimeError(
+                "caller_call_verifications row missing for call "
+                f"{verification['call_id']} immediately after INSERT OR IGNORE"
+            )
+        return int(row["id"]), False
+
+    async def get_unverified_calls(
+        self, limit: int = 50, *, definition_version: Optional[str] = None
+    ) -> List[Dict[str, Any]]:
+        """Calls with no measurement yet under ``definition_version``.
+
+        Newest call first, which is the opposite of the obvious choice and is what
+        the first live run corrected. The price source returns about 3.5 days of
+        5-minute candles, and that window slides: a call older than that can never
+        be measured, while a fresh one can. Oldest-first therefore spends every run
+        re-confirming calls that already aged out, and lets the measurable ones age
+        out behind them. Newest-first measures each call while it still can.
+        """
+        assert self._db is not None
+        join_condition = "v.call_id = c.id"
+        params: Tuple[Any, ...] = ()
+        if definition_version is not None:
+            # Scoped to one definition so redefining the measurement re-opens the
+            # backlog instead of treating old rows as already answered.
+            join_condition += " AND v.definition_version = ?"
+            params = (definition_version,)
+        async with self._db.execute(
+            f"""SELECT c.* FROM caller_calls c
+                LEFT JOIN caller_call_verifications v ON {join_condition}
+                WHERE v.id IS NULL
+                ORDER BY c.call_epoch DESC, c.id DESC
+                LIMIT ?""",
+            (*params, int(limit)),
+        ) as cursor:
+            return [dict(row) for row in await cursor.fetchall()]
+
+    async def get_caller_call_counts(self) -> List[Dict[str, Any]]:
+        """Per-caller unique-token counts, richest sample first.
+
+        Unique mints, not raw calls: a caller who posted about the same token nine
+        times has a sample size of one, and counting the nine is exactly how a
+        7-call dataset gets presented as though it could support a ranking.
+        """
+        assert self._db is not None
+        async with self._db.execute(
+            """SELECT caller_key,
+                      MAX(caller_username) AS caller_username,
+                      COUNT(DISTINCT mint) AS unique_mints,
+                      COUNT(*) AS total_calls,
+                      MIN(call_epoch) AS first_call_epoch,
+                      MAX(call_epoch) AS last_call_epoch
+               FROM caller_calls
+               GROUP BY caller_key
+               ORDER BY unique_mints DESC, total_calls DESC, caller_key ASC"""
+        ) as cursor:
+            return [dict(row) for row in await cursor.fetchall()]
