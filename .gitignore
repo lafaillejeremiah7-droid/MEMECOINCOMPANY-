@@ -11,7 +11,11 @@ __pycache__/
 htmlcov/
 coverage.xml
 config.yaml
-memescanner.log
+# Every log, not just memescanner.log. The bot writes dashboard.log and
+# scanner.log too, and naming a single file left those two committable -- they
+# showed up as untracked in a real deployment. Logs carry mints, candidate
+# decisions and fragments of provider responses, so none of them belong in git.
+*.log
 .pytest_cache/
 
 # Local credentials and private key material.
