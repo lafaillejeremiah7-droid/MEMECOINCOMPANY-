@@ -346,8 +346,14 @@ MUTATIONS: List[Mutation] = [
     ),
     Mutation(
         name="runner-target-is-a-hard-sell",
+        # Pattern updated when evaluate_runner_trail was refactored onto the
+        # shared _evaluate_peak_trail core: the stall condition moved from
+        # `config.stall_velocity_pct` to a parameter (the pre-tp1 trail passes
+        # None, because it has no stall exit). The defect being guarded is
+        # unchanged, and the mutation is still applied to the one place the stall
+        # test lives, so the runner target still becomes a hard sell under it.
         path="memescanner/paper_trader.py",
-        old="    if armed and velocity_pct <= config.stall_velocity_pct:",
+        old="    if armed and stall_velocity_pct is not None and velocity_pct <= stall_velocity_pct:",
         new="    if armed:",
         tests="tests/test_presence_ladder.py",
         defect=(
