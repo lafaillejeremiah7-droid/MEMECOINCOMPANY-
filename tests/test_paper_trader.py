@@ -446,7 +446,15 @@ class TestPaperTraderSummary:
     @pytest.mark.asyncio
     async def test_portfolio_summary_with_positions(self, patch_db_path, mock_telegram):
         """Test portfolio summary format with open positions."""
-        pt = PaperTrader(starting_balance=1000.0, trade_size=50.0)
+        # Two explicit slots. MAX_OPEN_POSITIONS is now 1, and a summary of a
+        # single position cannot exercise the sorting, the multi-line position
+        # block, or the mixed-sign unrealized total that this test checks. The
+        # cap is raised here rather than the assertions being reduced to one
+        # token, because the formatting this test covers is still reachable --
+        # any operator running more than one slot sees it.
+        pt = PaperTrader(
+            starting_balance=1000.0, trade_size=50.0, max_open_positions=2
+        )
         await pt.initialize()
 
         # Buy two tokens
@@ -619,17 +627,28 @@ class TestPaperTraderEdgeCases:
     @pytest.mark.asyncio
     async def test_multiple_buys_different_tokens(self, patch_db_path, mock_telegram):
         """Test buying multiple different tokens up to max positions."""
-        pt = PaperTrader(starting_balance=1000.0, trade_size=50.0)
+        # An explicit multi-slot trader. This test is about buying SEVERAL
+        # different tokens and the balance arithmetic accumulating across them;
+        # against the new MAX_OPEN_POSITIONS of 1 the loop would run once and the
+        # assertion would degenerate into "one buy costs $50", which
+        # test_buy_success already covers. Raising the cap here keeps the test
+        # testing what its name says instead of quietly becoming a duplicate.
+        # The concurrent-cap behaviour at the module default is covered by
+        # test_buy_max_positions, which still runs against MAX_OPEN_POSITIONS.
+        slots = 3
+        pt = PaperTrader(
+            starting_balance=1000.0, trade_size=50.0, max_open_positions=slots
+        )
         await pt.initialize()
 
-        for i in range(MAX_OPEN_POSITIONS):
+        for i in range(slots):
             token_data = {"mint": f"mint_{i}", "symbol": f"T{i}"}
             dex_data = {"market_cap": 100000 + i * 10000}
             pos = await pt.buy(token_data, dex_data)
             assert pos is not None
 
-        assert len(pt.positions) == MAX_OPEN_POSITIONS
-        assert pt.balance == 1000.0 - (MAX_OPEN_POSITIONS * 50.0)
+        assert len(pt.positions) == slots
+        assert pt.balance == 1000.0 - (slots * 50.0)
 
         await pt.close()
 

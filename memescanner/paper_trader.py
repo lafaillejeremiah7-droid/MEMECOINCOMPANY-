@@ -2,12 +2,28 @@
 Paper trading module for the Memescanner bot.
 
 Tracks virtual positions with buy/sell logic, stop loss, a two-stage take-profit
-ladder, and a peak-tracking trailing stop whose width scales with velocity.
-Persists positions via aiosqlite.
+ladder, and two peak-tracking trailing stops whose widths scale with velocity --
+a wide one before tp1 and a tighter one on the runner afterwards. The runner
+target ratchets upward while a token is still accelerating. Persists positions
+via aiosqlite.
 
 SIGNAL ONLY. Everything here is a simulation: there is no wallet, no signing, no
 transaction submission, and no live execution path. The operator decides sizing
 and execution manually.
+
+OPERATIONAL RISK -- ONE STUCK POSITION HALTS THE BOT.
+
+    ``MAX_OPEN_POSITIONS`` is now 1. There is no time-based exit anywhere in this
+    module: no max-hold, no age close, nothing on a clock. Every exit needs a
+    price event, so a position that never produces one never closes and holds the
+    only slot forever. The likely path there is unspectacular -- a runner
+    drifting above breakeven with the trail floored at entry -- and the only
+    symptom is an INFO log line from ``buy``.
+
+    With three slots the other two kept trading. With one, the scanner keeps
+    alerting while the paper trader declines every candidate. No timeout is
+    invented here on purpose: any value would be a guess and a wrong one closes
+    winners. Raise ``scanner.max_open_positions`` if that trade is not acceptable.
 """
 
 import json
@@ -22,6 +38,13 @@ import aiosqlite
 from memescanner.recovery_checker import RecoveryChecker
 from memescanner.scanner import fetch_dex_data, send_telegram_message
 
+# The absolute runner-target cap, imported rather than restated. The ratchet in
+# adapt_runner_target has to respect the same ceiling compute_runner_target
+# applies at buy time, and a second copy of 50.0 in this module would be free to
+# drift away from it. unified_scanner does not import this module, so there is no
+# cycle.
+from memescanner.unified_scanner import RUNNER_TARGET_MAX
+
 if TYPE_CHECKING:
     # Imported for annotations only. A runtime import would be circular, since
     # both modules are constructed by __main__ alongside this one.
@@ -30,7 +53,14 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-MAX_OPEN_POSITIONS = 3
+# Default concurrent virtual positions. One coin at a time, by operator request.
+#
+# Kept as a module constant so existing importers (memescanner/__main__.py, the
+# tests) keep working, but it is now only a DEFAULT: PaperTrader accepts
+# max_open_positions and __main__ passes config.scanner.max_open_positions.
+#
+# READ THE WARNING IN PaperTrader.__init__ BEFORE RUNNING THIS AT 1.
+MAX_OPEN_POSITIONS = 1
 DB_PATH = "memescanner.db"
 
 # Fallback take profit at +100% (2x) when a position has no valid dynamic
@@ -102,10 +132,89 @@ DEFAULT_RUNNER_TARGET_MULTIPLE = 1.5
 # Legacy exit reason, kept verbatim for the switched-off path.
 FIXED_BREAKEVEN_STOP_REASON = "Trailing stop (back to entry)"
 
+# ---------------------------------------------------------------------------
+# Runner-target ratchet: the second-stage target adapts instead of staying at
+# whatever buy-time presence produced.
+#
+# The defect. runner_target was computed once, at buy time, from a presence
+# score measured before the token had done anything. It then never changed. A
+# token that blew through 27x and was still going vertical got judged against a
+# threshold set hours earlier, which armed the tight trail at exactly the moment
+# the thesis was working hardest.
+#
+# A token that clears its runner target while still going vertical is not at its
+# top. Retiring it against a stale number is the same "guess where the top is"
+# mistake the runner target was designed to avoid -- it just moves the guess
+# earlier. Ratcheting the target up disarms the tight trail and hands the move
+# back its wide band, so it keeps running until momentum actually fades.
+#
+# Monotone upward only. Lowering the target would arm the tight trail SOONER and
+# risk a premature exit on an ordinary dip, which is a case the velocity-scaled
+# trail already handles correctly by widening and narrowing on its own. There is
+# no scenario in which lowering helps, so adapt_runner_target cannot do it, and
+# `runner-target-ratchets-down` is a mutation.
+# ---------------------------------------------------------------------------
+RUNNER_TARGET_RATCHET_STEP = 1.5
+
+# ---------------------------------------------------------------------------
+# Pre-tp1 trail: peak-anchored protection BEFORE the 80% sale.
+#
+# The hole this closes. check_positions only evaluated the runner trail when
+# pos["breakeven_stop"] was set, and that flag is set by _take_profit -- i.e.
+# only AFTER the 80% sale. A position that had not yet reached tp1 therefore had
+# no trail at all. Its only protections were the -50% recovery check and the
+# -70% hard stop, both measured from ENTRY, both blind to how far the token had
+# run in between.
+#
+# That was tolerable while tp1 topped out near 4.5x. It is not tolerable now
+# that a high-presence tp1 can sit at 10.5x, because the naked range grew with
+# it: a token that runs to 9x and collapses never triggers a 10.5x tp1, so the
+# runner trail never engages, and the whole position gives the entire move back
+# until a stop fires at -50% of entry. Raising tp1 without this trail would be a
+# straight increase in expected loss, which is why Change 1 and this are one
+# change and not two.
+#
+# The parameters are deliberately DIFFERENT from the runner trail's, because the
+# job is different. The runner trail optimises an exit on a position that has
+# already banked 80%. This one only has to prevent a catastrophic round-trip on
+# a position that is still whole, and it must not cut development short before
+# tp1 is reached -- so every width is wider, and it does not engage at all until
+# the peak has doubled.
+# ---------------------------------------------------------------------------
+PRE_TP1_TRAIL_ENABLED = True
+# The peak must reach this multiple of the ORIGINAL entry before the trail
+# exists. Below it a fresh or barely-moved position is managed exactly as it is
+# today, by the -50%/-70% stops alone, so this can never fire on noise around
+# entry.
+PRE_TP1_TRAIL_ARM_MULTIPLE = 2.0
+# Wider than every corresponding RUNNER_TRAIL_WIDTH_* value, on purpose. A 40%
+# drawdown from the peak is an ordinary memecoin breath; cutting a still-whole
+# position there would stop it ever reaching a 10.5x tp1, which would replace
+# the round-trip risk with a guaranteed small exit. These widths are chosen to
+# be loose enough to be nearly unreachable during a healthy move and tight
+# enough to prevent a 9x becoming a -50%.
+PRE_TP1_TRAIL_WIDTH_STRONG_PCT = 70.0
+PRE_TP1_TRAIL_WIDTH_CLIMBING_PCT = 60.0
+PRE_TP1_TRAIL_WIDTH_FLAT_PCT = 50.0
+PRE_TP1_TRAIL_WIDTH_FALLING_PCT = 40.0
+# Celebrity widening and the absolute cap have to leave room above the widest
+# band, or the 70% strong width would be clipped and the band structure would
+# collapse at the top.
+PRE_TP1_TRAIL_MAX_WIDTH_PCT = 80.0
+# Named distinctly so a recorded trade can never confuse the two trails. This is
+# a whole-position exit; the runner trail's is a final-20% exit.
+PRE_TP1_TRAIL_REASON_LABEL = "Pre-target trail"
+RUNNER_TRAIL_REASON_LABEL = "Trailing stop"
+
 
 @dataclass(frozen=True)
-class RunnerTrailConfig:
-    """Configurable widths and band edges for the runner trail.
+class PeakTrailWidths:
+    """Velocity bands and the trail width each one earns.
+
+    Shared by both trails so there is exactly one band-to-width mapping in this
+    module. Duplicating ``width_for_velocity`` per trail would let two copies of
+    the same arithmetic drift apart, and a trail whose width is computed one way
+    before tp1 and another way after it is unauditable.
 
     Frozen so a position cannot mutate the policy it is being managed under
     halfway through, which would make a recorded trail width unreproducible.
@@ -120,8 +229,6 @@ class RunnerTrailConfig:
     flat_velocity_pct: float = RUNNER_TRAIL_VELOCITY_FLAT_PCT
     celebrity_widen_pct: float = RUNNER_TRAIL_CELEBRITY_WIDEN_PCT
     max_width_pct: float = RUNNER_TRAIL_MAX_WIDTH_PCT
-    armed_tighten_factor: float = RUNNER_TRAIL_ARMED_TIGHTEN_FACTOR
-    stall_velocity_pct: float = RUNNER_TRAIL_STALL_VELOCITY_PCT
 
     def width_for_velocity(self, velocity_pct: float) -> float:
         """Trail width for a 5-minute velocity, before celebrity/armed adjustment."""
@@ -135,8 +242,56 @@ class RunnerTrailConfig:
 
 
 @dataclass(frozen=True)
+class RunnerTrailConfig(PeakTrailWidths):
+    """Widths, band edges and tightening policy for the runner trail.
+
+    Manages the final 20% after the 80% sale. Field names and defaults are
+    unchanged from before ``PeakTrailWidths`` was extracted, so every existing
+    caller and test keeps working.
+    """
+
+    armed_tighten_factor: float = RUNNER_TRAIL_ARMED_TIGHTEN_FACTOR
+    stall_velocity_pct: float = RUNNER_TRAIL_STALL_VELOCITY_PCT
+
+
+@dataclass(frozen=True)
+class PreTp1TrailConfig(PeakTrailWidths):
+    """Widths and arming rule for the pre-tp1 trail.
+
+    A sibling of :class:`RunnerTrailConfig`, not a reuse of it, because the two
+    trails answer different questions and their numbers must be allowed to
+    diverge. Every width here is wider than the runner equivalent: this trail
+    exists to prevent a catastrophic round-trip on a position that is still 100%
+    on the table, not to optimise an exit on one that has already banked 80%. If
+    it were as tight as the runner trail it would cut positions off before they
+    could reach a high-presence tp1 at all, trading round-trip risk for a
+    guaranteed small exit.
+
+    It carries no ``armed_tighten_factor`` or ``stall_velocity_pct`` on purpose.
+    Tightening on a stall is a *runner* policy: the runner has already banked its
+    80% and is playing with house money, so cutting a stall is cheap. Before tp1
+    a stall is just as likely to be consolidation, and there is no realised
+    profit to protect, so the only rule here is the width band.
+    """
+
+    strong_width_pct: float = PRE_TP1_TRAIL_WIDTH_STRONG_PCT
+    climbing_width_pct: float = PRE_TP1_TRAIL_WIDTH_CLIMBING_PCT
+    flat_width_pct: float = PRE_TP1_TRAIL_WIDTH_FLAT_PCT
+    falling_width_pct: float = PRE_TP1_TRAIL_WIDTH_FALLING_PCT
+    max_width_pct: float = PRE_TP1_TRAIL_MAX_WIDTH_PCT
+    # Peak must reach this multiple of the original entry before the trail
+    # exists at all.
+    arm_multiple: float = PRE_TP1_TRAIL_ARM_MULTIPLE
+
+
+@dataclass(frozen=True)
 class RunnerTrailDecision:
-    """The outcome of one runner-trail evaluation, with its full justification."""
+    """The outcome of one peak-trail evaluation, with its full justification.
+
+    Used by both trails. ``runner_armed`` is meaningful only for the runner
+    trail, where it records that the peak reached the runner target and the trail
+    tightened; the pre-tp1 trail never tightens and always reports False.
+    """
 
     sell: bool
     reason: str
@@ -145,6 +300,10 @@ class RunnerTrailDecision:
     velocity_pct: float
     runner_armed: bool
     breakeven_floored: bool
+    # False when an engagement rule kept the trail from existing on this pass --
+    # only the pre-tp1 trail has one, so the runner trail is always engaged.
+    # Defaulted so every existing construction site is unaffected.
+    engaged: bool = True
 
 
 def current_velocity_pct(dex_data: Optional[Dict[str, Any]]) -> float:
@@ -176,6 +335,249 @@ def current_velocity_pct(dex_data: Optional[Dict[str, Any]]) -> float:
         if value != 0.0:
             return value
     return 0.0
+
+
+def _evaluate_peak_trail(
+    *,
+    peak_price: float,
+    current_price: float,
+    original_entry_price: float,
+    velocity_pct: float,
+    celebrity_verified: bool,
+    config: PeakTrailWidths,
+    label: str,
+    engage_multiple: float = 0.0,
+    tighten_multiple: float = 0.0,
+    armed_tighten_factor: float = 1.0,
+    stall_velocity_pct: Optional[float] = None,
+) -> RunnerTrailDecision:
+    """
+    One peak-anchored trail, shared by both stages of the ladder.
+
+    Both trails do the same three things -- anchor the stop to the high-water
+    mark, size it from velocity, floor it at breakeven -- and they differ only in
+    their width set, their engagement rule, and whether a threshold tightens
+    them. Those differences are parameters here rather than a second copy of the
+    arithmetic, because two copies of a trail calculation can drift apart and a
+    position managed by subtly different maths before and after tp1 is not
+    auditable.
+
+    Args:
+        peak_price: Highest quote observed for this position.
+        current_price: Latest quote, in the same denomination.
+        original_entry_price: First fill, before any DCA re-basing.
+        velocity_pct: 5-minute percentage price change (or its h1 fallback).
+        celebrity_verified: Whether celebrity mint-bound evidence was VERIFIED.
+        config: Widths and band edges to apply.
+        label: Leading words of the exit reason. Distinct per trail so a recorded
+            trade never conflates a whole-position pre-tp1 exit with a final-20%
+            runner exit.
+        engage_multiple: Peak must reach this multiple of the original entry
+            before the trail exists at all. 0.0 means always engaged.
+        tighten_multiple: Peak multiple of entry at which the trail tightens.
+            0.0 disables tightening entirely.
+        armed_tighten_factor: Factor applied to the width once tightened.
+        stall_velocity_pct: Once tightened, this velocity or lower exits
+            immediately. None disables the stall exit.
+
+    Returns:
+        A RunnerTrailDecision carrying the verdict and every number behind it.
+    """
+    peak = max(float(peak_price or 0.0), float(current_price or 0.0))
+    entry = float(original_entry_price or 0.0)
+
+    width = config.width_for_velocity(velocity_pct)
+    if celebrity_verified:
+        width = min(width + config.celebrity_widen_pct, config.max_width_pct)
+    else:
+        width = min(width, config.max_width_pct)
+
+    # Engagement rule. Checked before anything can sell, so a trail that has not
+    # engaged is genuinely inert: the position is managed exactly as it would be
+    # if this trail did not exist. The width is still reported, because "what
+    # would the trail have been" is the interesting number on the pass before it
+    # engages.
+    if engage_multiple > 0 and not (entry > 0 and peak >= entry * engage_multiple):
+        return RunnerTrailDecision(
+            sell=False,
+            reason="",
+            trail_price=0.0,
+            trail_width_pct=width,
+            velocity_pct=velocity_pct,
+            runner_armed=False,
+            breakeven_floored=False,
+            engaged=False,
+        )
+
+    armed = bool(
+        tighten_multiple > 0
+        and entry > 0
+        and peak >= entry * float(tighten_multiple)
+    )
+    if armed:
+        width = width * armed_tighten_factor
+
+    trail_price = peak * (1.0 - width / 100.0)
+    breakeven_floored = False
+    if entry > 0 and peak > entry and trail_price < entry:
+        trail_price = entry
+        breakeven_floored = True
+
+    if armed and stall_velocity_pct is not None and velocity_pct <= stall_velocity_pct:
+        return RunnerTrailDecision(
+            sell=True,
+            reason=(
+                f"{label} (runner target {float(tighten_multiple):.2f}x reached, "
+                f"velocity {velocity_pct:+.1f}% stalled, "
+                f"trail {width:.0f}% from peak)"
+            ),
+            trail_price=trail_price,
+            trail_width_pct=width,
+            velocity_pct=velocity_pct,
+            runner_armed=armed,
+            breakeven_floored=breakeven_floored,
+        )
+
+    if current_price <= trail_price:
+        detail = ", runner armed" if armed else ""
+        floor_detail = ", breakeven floor" if breakeven_floored else ""
+        return RunnerTrailDecision(
+            sell=True,
+            reason=(
+                f"{label} ({width:.0f}% from peak, "
+                f"velocity {velocity_pct:+.1f}%{detail}{floor_detail})"
+            ),
+            trail_price=trail_price,
+            trail_width_pct=width,
+            velocity_pct=velocity_pct,
+            runner_armed=armed,
+            breakeven_floored=breakeven_floored,
+        )
+
+    return RunnerTrailDecision(
+        sell=False,
+        reason="",
+        trail_price=trail_price,
+        trail_width_pct=width,
+        velocity_pct=velocity_pct,
+        runner_armed=armed,
+        breakeven_floored=breakeven_floored,
+    )
+
+
+def evaluate_pre_tp1_trail(
+    *,
+    peak_price: float,
+    current_price: float,
+    original_entry_price: float,
+    velocity_pct: float,
+    celebrity_verified: bool,
+    config: PreTp1TrailConfig,
+) -> RunnerTrailDecision:
+    """
+    Decide whether the WHOLE position exits before tp1 was ever reached.
+
+    This closes the hole the presence-scaled first target opens. ``_take_profit``
+    is what sets ``breakeven_stop``, and the runner trail only ran when that flag
+    was set, so a position on its way to tp1 had no peak-anchored protection at
+    all -- only the -50% recovery check and the -70% hard stop, both measured
+    from entry. A token that ran to 9x and collapsed never triggered a 10.5x tp1,
+    so it gave the entire move back before any stop fired.
+
+    Three properties make this safe to add rather than merely protective:
+
+    * It does not exist until ``peak_price >= original_entry_price *
+      config.arm_multiple``, so it cannot fire on a fresh or barely-moved
+      position and cannot interfere with the -50%/-70% stops that manage one.
+    * Its widths are wider than the runner trail's at every velocity band, so it
+      does not cut a healthy move short before tp1. Its job is to prevent a
+      catastrophic round-trip, not to optimise an exit.
+    * It is floored at breakeven exactly as the runner trail is, so once the peak
+      cleared entry the position cannot exit below entry.
+
+    There is no stall exit and no tightening. Both are runner policies that make
+    sense only once 80% is banked.
+
+    On firing this closes the entire position, because the 80% has not been sold.
+    The reason string is labelled ``Pre-target trail`` so a recorded trade can
+    never be confused with a runner-trail exit.
+
+    Args:
+        peak_price: Highest quote observed for this position.
+        current_price: Latest quote, in the same denomination.
+        original_entry_price: First fill, before any DCA re-basing.
+        velocity_pct: 5-minute percentage price change (or its h1 fallback).
+        celebrity_verified: Whether celebrity mint-bound evidence was VERIFIED.
+        config: Widths, band edges and the arming multiple.
+
+    Returns:
+        A RunnerTrailDecision whose ``engaged`` is False until the arm multiple
+        is reached, and whose ``runner_armed`` is always False.
+    """
+    return _evaluate_peak_trail(
+        peak_price=peak_price,
+        current_price=current_price,
+        original_entry_price=original_entry_price,
+        velocity_pct=velocity_pct,
+        celebrity_verified=celebrity_verified,
+        config=config,
+        label=PRE_TP1_TRAIL_REASON_LABEL,
+        engage_multiple=config.arm_multiple,
+    )
+
+
+def adapt_runner_target(
+    *,
+    stored_target: float,
+    current_multiple: float,
+    velocity_pct: float,
+    config: RunnerTrailConfig,
+) -> float:
+    """
+    Raise a runner target that a still-accelerating token has already cleared.
+
+    ``runner_target`` used to be computed once from buy-time presence and never
+    touched again, so a token still climbing hard was judged against a threshold
+    set hours earlier. A token that blows through its runner target while going
+    vertical is not at its top; retiring it against a stale number is the same
+    "guess where the top is" mistake the runner target was designed to avoid,
+    just made earlier. Ratcheting the target up disarms the tight trail and hands
+    the move back its wide band, so it keeps running until momentum actually
+    fades.
+
+    Both conditions must hold before the target moves:
+
+    * the position has reached or passed the stored target, and
+    * velocity is in the strong band (``>= config.strong_velocity_pct``) -- a
+      merely climbing token is exactly the case the tight trail should manage.
+
+    MONOTONE UPWARD ONLY. The result is never below ``stored_target``. Lowering
+    it would arm the tight trail sooner and risk a premature exit on an ordinary
+    dip, which the velocity-scaled trail already handles correctly by widening
+    and narrowing on its own. There is no case in which lowering helps, so this
+    function cannot do it.
+
+    Pure: no I/O, no mutation. ``check_positions`` persists the result when it
+    moves so it survives a restart.
+
+    Args:
+        stored_target: The runner target currently recorded on the position.
+        current_multiple: current_price / original_entry_price.
+        velocity_pct: 5-minute percentage price change (or its h1 fallback).
+        config: Supplies the strong-velocity band edge.
+
+    Returns:
+        ``stored_target``, or a higher target capped at ``RUNNER_TARGET_MAX``.
+    """
+    stored = float(stored_target)
+    if current_multiple < stored or velocity_pct < config.strong_velocity_pct:
+        return stored
+    ratcheted = min(
+        RUNNER_TARGET_MAX, float(current_multiple) * RUNNER_TARGET_RATCHET_STEP
+    )
+    # max() rather than a bare return: at the cap, or with a pathological input,
+    # this must still never come back below what was stored.
+    return max(stored, ratcheted)
 
 
 def evaluate_runner_trail(
@@ -224,66 +626,20 @@ def evaluate_runner_trail(
     Returns:
         A RunnerTrailDecision carrying the verdict and every number behind it.
     """
-    peak = max(float(peak_price or 0.0), float(current_price or 0.0))
-    entry = float(original_entry_price or 0.0)
-
-    width = config.width_for_velocity(velocity_pct)
-    if celebrity_verified:
-        width = min(width + config.celebrity_widen_pct, config.max_width_pct)
-    else:
-        width = min(width, config.max_width_pct)
-
-    armed = bool(
-        runner_target > 0 and entry > 0 and peak >= entry * float(runner_target)
-    )
-    if armed:
-        width = width * config.armed_tighten_factor
-
-    trail_price = peak * (1.0 - width / 100.0)
-    breakeven_floored = False
-    if entry > 0 and peak > entry and trail_price < entry:
-        trail_price = entry
-        breakeven_floored = True
-
-    if armed and velocity_pct <= config.stall_velocity_pct:
-        return RunnerTrailDecision(
-            sell=True,
-            reason=(
-                f"Trailing stop (runner target {float(runner_target):.2f}x reached, "
-                f"velocity {velocity_pct:+.1f}% stalled, "
-                f"trail {width:.0f}% from peak)"
-            ),
-            trail_price=trail_price,
-            trail_width_pct=width,
-            velocity_pct=velocity_pct,
-            runner_armed=armed,
-            breakeven_floored=breakeven_floored,
-        )
-
-    if current_price <= trail_price:
-        detail = ", runner armed" if armed else ""
-        floor_detail = ", breakeven floor" if breakeven_floored else ""
-        return RunnerTrailDecision(
-            sell=True,
-            reason=(
-                f"Trailing stop ({width:.0f}% from peak, "
-                f"velocity {velocity_pct:+.1f}%{detail}{floor_detail})"
-            ),
-            trail_price=trail_price,
-            trail_width_pct=width,
-            velocity_pct=velocity_pct,
-            runner_armed=armed,
-            breakeven_floored=breakeven_floored,
-        )
-
-    return RunnerTrailDecision(
-        sell=False,
-        reason="",
-        trail_price=trail_price,
-        trail_width_pct=width,
+    return _evaluate_peak_trail(
+        peak_price=peak_price,
+        current_price=current_price,
+        original_entry_price=original_entry_price,
         velocity_pct=velocity_pct,
-        runner_armed=armed,
-        breakeven_floored=breakeven_floored,
+        celebrity_verified=celebrity_verified,
+        config=config,
+        label=RUNNER_TRAIL_REASON_LABEL,
+        # Always engaged: by the time this runs the 80% has been sold, so there
+        # is no "too early to trail" state to guard against.
+        engage_multiple=0.0,
+        tighten_multiple=runner_target,
+        armed_tighten_factor=config.armed_tighten_factor,
+        stall_velocity_pct=config.stall_velocity_pct,
     )
 
 
@@ -291,12 +647,24 @@ class PaperTrader:
     """
     Paper trading engine with virtual balance and position tracking.
 
+    OPERATIONAL RISK -- A SINGLE STUCK POSITION HALTS EVERY FUTURE TRADE.
+
+    ``max_open_positions`` defaults to 1. Nothing in this module closes a
+    position on a timer; every exit needs a price event (tp1, a trail breach,
+    -50%, -70%). A position that never produces one holds its only slot
+    indefinitely, and the most likely way to get there is benign: a runner
+    sitting above breakeven with the trail floored at entry, going nowhere. At 3
+    slots the other two kept trading, so this was survivable. At 1 the bot stops
+    taking trades altogether while still logging alerts, and the only symptom is
+    an INFO line saying max positions reached. See ``__init__`` for the full note.
+
     Attributes:
         starting_balance: Initial virtual balance in USD.
         trade_size: Fixed amount per trade in USD.
         balance: Current available balance.
         positions: List of open positions.
         closed_trades: List of closed trades.
+        max_open_positions: Concurrent position cap for this instance.
     """
 
     def __init__(
@@ -309,6 +677,9 @@ class PaperTrader:
         x_client: Optional["XSearchClient"] = None,
         runner_trail_enabled: bool = RUNNER_TRAIL_ENABLED,
         runner_trail: Optional[RunnerTrailConfig] = None,
+        max_open_positions: int = MAX_OPEN_POSITIONS,
+        pre_tp1_trail_enabled: bool = PRE_TP1_TRAIL_ENABLED,
+        pre_tp1_trail: Optional[PreTp1TrailConfig] = None,
     ):
         """
         Initialize the paper trader.
@@ -327,6 +698,42 @@ class PaperTrader:
                 False restores that old behaviour verbatim, which exists so the
                 two can be compared on real positions rather than argued about.
             runner_trail: Widths and band edges. Defaults to the module values.
+            max_open_positions: Concurrent virtual positions, defaulting to
+                ``MAX_OPEN_POSITIONS`` (1). See the warning below.
+            pre_tp1_trail_enabled: Also trail the position BEFORE tp1 is reached,
+                once its peak has doubled. Defaults ON because without it a
+                position on its way to a high-presence tp1 has no peak-anchored
+                protection at all -- a 9x that collapses before a 10.5x target
+                gives the whole move back to a -50%-of-entry stop. Setting this
+                False restores that unprotected behaviour, which exists only so
+                the two can be compared.
+            pre_tp1_trail: Widths, band edges and arm multiple for the pre-tp1
+                trail. Defaults to the module values, which are wider than the
+                runner trail's at every band.
+
+        WARNING -- ONE SLOT MEANS ONE STUCK POSITION STOPS THE BOT.
+
+            ``max_open_positions`` now defaults to 1. There is NO time-based exit
+            anywhere in this module: no max-hold, no age-based close, nothing
+            that fires on the clock. Every exit path requires a price event --
+            tp1, a trail breach, -50%, or -70%.
+
+            A position that never produces one therefore never closes. The
+            realistic case is not a rug, it is the opposite: a runner drifting
+            sideways somewhere above breakeven, with the trail floored at entry
+            so it cannot fire, and price never reaching the next target. That
+            position holds its slot forever.
+
+            With three slots that was survivable -- the other two kept trading.
+            With one it is a full stop: the scanner keeps finding candidates, the
+            alerts keep going out, and the paper trader silently declines every
+            one of them. The only symptom is an INFO log line saying max
+            positions reached.
+
+            No max-hold timeout is invented here, deliberately. Any number would
+            be a guess, and a wrong one closes winners. The operator decides:
+            raise ``scanner.max_open_positions`` in config.yaml, or watch the
+            open position and intervene manually.
         """
         self.starting_balance = starting_balance
         self.trade_size = trade_size
@@ -336,6 +743,9 @@ class PaperTrader:
         self._x_client = x_client
         self.runner_trail_enabled = runner_trail_enabled
         self.runner_trail = runner_trail or RunnerTrailConfig()
+        self.max_open_positions = max_open_positions
+        self.pre_tp1_trail_enabled = pre_tp1_trail_enabled
+        self.pre_tp1_trail = pre_tp1_trail or PreTp1TrailConfig()
         self.balance = starting_balance
         self.positions: List[Dict[str, Any]] = []
         self.closed_trades: List[Dict[str, Any]] = []
@@ -557,9 +967,15 @@ class PaperTrader:
             logger.info("Paper trader: insufficient balance ($%.2f < $%.2f)", self.balance, self.trade_size)
             return None
 
-        # Check max positions
-        if len(self.positions) >= MAX_OPEN_POSITIONS:
-            logger.info("Paper trader: max positions reached (%d/%d)", len(self.positions), MAX_OPEN_POSITIONS)
+        # Check max positions. At the default of 1 this line is the ONLY symptom
+        # of a position that has stopped exiting -- see the class docstring.
+        if len(self.positions) >= self.max_open_positions:
+            logger.info(
+                "Paper trader: max positions reached (%d/%d); no further trades "
+                "until an open position exits",
+                len(self.positions),
+                self.max_open_positions,
+            )
             return None
 
         mint = token_data.get("mint", "")
@@ -665,7 +1081,7 @@ class PaperTrader:
             f"\U0001f4e3 Narrative presence: {narrative_presence:.0f}/100 "
             "(uncalibrated)\n"
             f"\U0001f4b0 Balance: ${self.balance:.0f} remaining\n"
-            f"\U0001f4ca Open positions: {len(self.positions)}/{MAX_OPEN_POSITIONS}"
+            f"\U0001f4ca Open positions: {len(self.positions)}/{self.max_open_positions}"
         )
         await self._notify(msg)
 
@@ -761,17 +1177,24 @@ class PaperTrader:
                     if pos["breakeven_stop"]:
                         original_entry = pos.get("original_entry_price") or entry_price
                         if self.runner_trail_enabled:
+                            # The runner target adapts before it is used. A token
+                            # that cleared its buy-time target while still going
+                            # vertical would otherwise be judged against a number
+                            # set hours ago, arming the tight trail at the exact
+                            # moment the thesis is working hardest. Monotone
+                            # upward, so this can only ever loosen management.
+                            runner_target = await self._adapt_runner_target(
+                                pos,
+                                current_price=current_price,
+                                original_entry=original_entry,
+                                velocity_pct=velocity_pct,
+                            )
                             verdict = evaluate_runner_trail(
                                 peak_price=pos.get("peak_price") or original_entry,
                                 current_price=current_price,
                                 original_entry_price=original_entry,
                                 velocity_pct=velocity_pct,
-                                runner_target=_coerce_runner_target(
-                                    pos.get("runner_target"),
-                                    _coerce_take_profit_target(
-                                        pos.get("take_profit_target")
-                                    ),
-                                ),
+                                runner_target=runner_target,
                                 celebrity_verified=bool(pos.get("celebrity_verified")),
                                 config=self.runner_trail,
                             )
@@ -790,6 +1213,34 @@ class PaperTrader:
                             closed_this_cycle.append(closed)
                             positions_to_remove.append(i)
                             continue
+                    elif self.pre_tp1_trail_enabled:
+                        # Pre-tp1: the position is still whole and tp1 has not
+                        # fired. Before the presence-scaled ladder this range was
+                        # short and the -50%/-70% stops from entry were the only
+                        # protection; with tp1 reaching 10.5x it is long enough
+                        # that a 9x round-trip fits entirely inside it. This
+                        # trail is inert until the peak doubles, and wider than
+                        # the runner trail at every band, so it protects the
+                        # move without cutting its development short.
+                        original_entry = pos.get("original_entry_price") or entry_price
+                        verdict = evaluate_pre_tp1_trail(
+                            peak_price=pos.get("peak_price") or original_entry,
+                            current_price=current_price,
+                            original_entry_price=original_entry,
+                            velocity_pct=velocity_pct,
+                            celebrity_verified=bool(pos.get("celebrity_verified")),
+                            config=self.pre_tp1_trail,
+                        )
+                        if verdict.engaged:
+                            await self._record_trail_state(pos, verdict)
+                            if verdict.sell:
+                                # The whole position: no 80% has been sold.
+                                closed = await self._close_position(
+                                    pos, current_price, verdict.reason
+                                )
+                                closed_this_cycle.append(closed)
+                                positions_to_remove.append(i)
+                                continue
 
                     # Check hard stop (-70%) for positions that passed recovery check
                     if (
@@ -858,6 +1309,61 @@ class PaperTrader:
                 (current_price, pos.get("id")),
             )
             await self._db.commit()
+
+    async def _adapt_runner_target(
+        self,
+        pos: Dict[str, Any],
+        *,
+        current_price: float,
+        original_entry: float,
+        velocity_pct: float,
+    ) -> float:
+        """
+        Ratchet the position's runner target upward, persisting it when it moves.
+
+        Thin persistence wrapper over :func:`adapt_runner_target`, which holds the
+        whole policy and is pure. Written to the existing ``runner_target``
+        column, not a new one: the adapted value IS the position's runner target
+        from that moment on, and keeping the buy-time number in a separate column
+        would leave two candidates for "the target" with nothing saying which one
+        the trail used. Persisted immediately so a restart does not silently
+        re-arm the tight trail against a threshold the token already cleared.
+
+        Args:
+            pos: Position dict.
+            current_price: Latest quote in the position's basis.
+            original_entry: First fill, which the multiple is measured against.
+            velocity_pct: 5-minute velocity for the strong-band test.
+
+        Returns:
+            The runner target to evaluate the trail against this pass.
+        """
+        stored = _coerce_runner_target(
+            pos.get("runner_target"),
+            _coerce_take_profit_target(pos.get("take_profit_target")),
+        )
+        if original_entry <= 0:
+            return stored
+        adapted = adapt_runner_target(
+            stored_target=stored,
+            current_multiple=current_price / original_entry,
+            velocity_pct=velocity_pct,
+            config=self.runner_trail,
+        )
+        if adapted <= stored:
+            return stored
+        pos["runner_target"] = adapted
+        if self._db:
+            await self._db.execute(
+                "UPDATE paper_positions SET runner_target = ? WHERE id = ?",
+                (adapted, pos.get("id")),
+            )
+            await self._db.commit()
+        logger.info(
+            "Runner target ratcheted for $%s: %.2fx -> %.2fx (velocity %+.1f%%)",
+            pos.get("symbol", "?"), stored, adapted, velocity_pct,
+        )
+        return adapted
 
     async def _record_trail_state(
         self, pos: Dict[str, Any], verdict: RunnerTrailDecision

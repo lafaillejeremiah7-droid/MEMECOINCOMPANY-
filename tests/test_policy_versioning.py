@@ -27,6 +27,14 @@ from dataclasses import asdict
 from pathlib import Path
 
 from memescanner.config import CalibrationConfig, FiltersConfig, ScannerConfig
+from memescanner.paper_trader import (
+    PRE_TP1_TRAIL_ARM_MULTIPLE,
+    PRE_TP1_TRAIL_WIDTH_CLIMBING_PCT,
+    PRE_TP1_TRAIL_WIDTH_FALLING_PCT,
+    PRE_TP1_TRAIL_WIDTH_FLAT_PCT,
+    PRE_TP1_TRAIL_WIDTH_STRONG_PCT,
+    RUNNER_TARGET_RATCHET_STEP,
+)
 from memescanner.unified_scanner import (
     AVG_TRADE_SIZE_BOT_CHURN_MULTIPLE,
     AVG_TRADE_SIZE_SCORE_MAX,
@@ -38,6 +46,7 @@ from memescanner.unified_scanner import (
     PRESENCE_BUZZ_POINTS,
     PRESENCE_CELEBRITY_VERIFIED_POINTS,
     PRESENCE_SCAM_WARNING_CEILING,
+    PRESENCE_TARGET_BONUS_MAX,
     PRESENCE_TURNOVER_POINTS_MAX,
     PRESENCE_TURNOVER_REFERENCE_RATIO,
     PRESENCE_VIRAL_REACH_POINTS,
@@ -146,14 +155,35 @@ def _feature_payload() -> dict:
         # calibration predictors, so a v2 row and a v3 row are not comparable.
         # Included here so the next change to any of them is caught rather than
         # noticed by hand.
+        # PRESENCE_TARGET_BONUS_MAX is in here because it is the constant that
+        # actually moves tp1. The ceiling alone never did: it raised the clamp
+        # while the number stayed put. A tp1 recorded with a presence bonus and
+        # one recorded without it are different quantities computed from the same
+        # evidence, and tp1 is a recorded calibration predictor, so this is
+        # exactly the kind of change the fingerprint exists to catch.
         "take_profit_ladder": [
             TAKE_PROFIT_TARGET_BASE,
             TAKE_PROFIT_TARGET_MIN,
             TAKE_PROFIT_TARGET_MAX,
             TAKE_PROFIT_TARGET_MAX_HIGH_PRESENCE,
+            PRESENCE_TARGET_BONUS_MAX,
             RUNNER_TARGET_MAX,
             RUNNER_TARGET_LOW_PRESENCE_MULTIPLE,
             RUNNER_TARGET_HIGH_PRESENCE_MULTIPLE,
+        ],
+        # Trade-management constants from paper_trader.py. These are not screening
+        # inputs, but they determine what a recorded outcome MEANS: the same token
+        # exits at a different price under a different trail, and the ratchet
+        # changes when the tight trail arms at all. An outcome measured under a
+        # naked pre-tp1 ride and one measured under a 50%-from-peak trail are not
+        # the same observation, so they must not be pooled either.
+        "trade_management": [
+            RUNNER_TARGET_RATCHET_STEP,
+            PRE_TP1_TRAIL_ARM_MULTIPLE,
+            PRE_TP1_TRAIL_WIDTH_STRONG_PCT,
+            PRE_TP1_TRAIL_WIDTH_CLIMBING_PCT,
+            PRE_TP1_TRAIL_WIDTH_FLAT_PCT,
+            PRE_TP1_TRAIL_WIDTH_FALLING_PCT,
         ],
         "narrative_presence": [
             NARRATIVE_PRESENCE_MAX,
@@ -182,11 +212,17 @@ def _feature_fingerprint() -> str:
 # never on their own.
 EXPECTED = {
     "policy": ("unified-safety-v2", "9df4aba09735b9c9"),
-    # screening-rank-v3: the presence-scaled take-profit ladder. See
-    # CalibrationConfig.feature_schema_version for why v2 rows cannot be pooled
-    # with v3 rows, and for the note that this fingerprint did not catch the
-    # change before it was widened to cover the ladder constants.
-    "features": ("screening-rank-v3", "b64b34037f05fffc"),
+    # screening-rank-v4: narrative presence now ADDS to tp1 (PRESENCE_TARGET_BONUS_MAX)
+    # instead of only raising its ceiling, and the pre-tp1 trail plus the runner-target
+    # ratchet changed what a recorded outcome means. See
+    # CalibrationConfig.feature_schema_version for why v3 and v4 rows cannot be pooled.
+    #
+    # Unlike the v2 -> v3 bump, this one was FORCED by this test rather than made by
+    # hand: the payload above had already been widened to cover the ladder constants,
+    # so adding PRESENCE_TARGET_BONUS_MAX moved the hash from b64b34037f05fffc to
+    # 95b8e119eef70f9a and the assertion below failed until the version was bumped.
+    # That is the guard working as designed.
+    "features": ("screening-rank-v4", "95b8e119eef70f9a"),
 }
 
 
@@ -268,12 +304,18 @@ def test_the_take_profit_ladder_is_captured_by_the_feature_fingerprint():
     emptied -- which is how a fingerprint quietly stops fingerprinting.
     """
     payload = _feature_payload()
-    for key in ("take_profit_ladder", "narrative_presence"):
+    for key in ("take_profit_ladder", "narrative_presence", "trade_management"):
         assert key in payload, f"{key} dropped out of the feature fingerprint"
         assert payload[key], f"{key} is empty, so it constrains nothing"
     assert TAKE_PROFIT_TARGET_MAX in payload["take_profit_ladder"]
     assert TAKE_PROFIT_TARGET_MAX_HIGH_PRESENCE in payload["take_profit_ladder"]
+    # The bonus, specifically. It is the term that makes a v4 tp1 a different
+    # quantity from a v3 tp1, so a fingerprint without it would not have caught
+    # the change that forced the v4 bump.
+    assert PRESENCE_TARGET_BONUS_MAX in payload["take_profit_ladder"]
     assert PRESENCE_CELEBRITY_VERIFIED_POINTS in payload["narrative_presence"]
+    assert PRE_TP1_TRAIL_ARM_MULTIPLE in payload["trade_management"]
+    assert RUNNER_TARGET_RATCHET_STEP in payload["trade_management"]
 
 
 def test_the_score_expression_was_actually_found():
