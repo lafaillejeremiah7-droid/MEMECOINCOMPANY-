@@ -91,7 +91,7 @@ calibration:
   retry_delay_seconds: 15
   report_interval_seconds: 86400
   policy_version: "unified-safety-v2"
-  feature_schema_version: "screening-rank-v2"
+  feature_schema_version: "screening-rank-v3"
   definition_version: "price-return-2x-v1"
   # Conservative chronological holdout gates. Until every gate passes, reports
   # say INSUFFICIENT_DATA_FOR_CALIBRATION and emit no probability claims.

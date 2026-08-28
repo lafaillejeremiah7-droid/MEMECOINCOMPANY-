@@ -128,7 +128,28 @@ class CalibrationConfig:
     # mixing them would corrupt the score-band analysis. Cohort rows recorded under
     # v1 are retained, and get_calibration_dataset simply reports on them
     # separately rather than pooling incomparable scores.
-    feature_schema_version: str = "screening-rank-v2"
+    #
+    # Bumped again to screening-rank-v3 for the presence-scaled take-profit
+    # ladder. Two things changed that make a v2 row and a v3 row incomparable:
+    #
+    #   - The recorded feature set gained narrative_presence, its per-signal
+    #     component breakdown, the applied take-profit ceiling, tp1 and the
+    #     runner target. These are frozen into cohort_candidates.initial_features_json,
+    #     which is exactly where calibration reads its predictors, so a v2 row
+    #     is missing the columns a v3 analysis would key on.
+    #   - The take-profit suggestion attached to a candidate changed meaning. A
+    #     tp1 clamped to at most 4.0x and a tp1 clamped to a presence-scaled
+    #     ceiling of up to 12.0x are different quantities, and the second stage
+    #     did not exist under v2 at all.
+    #
+    # Note for anyone auditing this: tests/test_policy_versioning.py did NOT
+    # fail on this change before the bump, because its feature fingerprint
+    # covered only the screening-score expression and the social/avg-trade-size
+    # constants -- not compute_take_profit_target and not the recorded feature
+    # dict. The fingerprint has been widened to cover the ladder constants so
+    # the next change to them is caught automatically, and the bump here was
+    # made deliberately rather than because a test forced it.
+    feature_schema_version: str = "screening-rank-v3"
     definition_version: str = "price-return-2x-v1"
     purge_gap_seconds: int = 86400
     min_capture_coverage: float = 0.90
@@ -303,7 +324,7 @@ class Config:
                     "policy_version", "unified-safety-v2"
                 ),
                 feature_schema_version=calibration_data.get(
-                    "feature_schema_version", "screening-rank-v2"
+                    "feature_schema_version", "screening-rank-v3"
                 ),
                 definition_version=calibration_data.get(
                     "definition_version", "price-return-2x-v1"

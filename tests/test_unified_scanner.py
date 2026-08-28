@@ -1605,9 +1605,21 @@ def test_take_profit_target_penalizes_low_turnover():
     assert compute_take_profit_target(decision) == 1.75
 
 
-def test_take_profit_target_clamped_to_maximum():
-    """Stacked positive signals cannot exceed 4.0x."""
-    from memescanner.unified_scanner import compute_take_profit_target
+def test_take_profit_target_clamped_to_the_presence_scaled_maximum():
+    """Stacked positive signals are clamped to the presence-scaled ceiling.
+
+    This assertion changed with the presence-scaled ceiling, deliberately: the
+    same evidence that pushes the risk-quality arithmetic to 4.5 also carries
+    some narrative presence (25 mentions, 2.5x turnover), which lifts the
+    ceiling above 4.0 and lets the raw 4.5 through. The old 4.0 ceiling is not
+    gone -- it is what a candidate with no presence at all still gets, which
+    test_presence_zero_keeps_the_historical_four_x_ceiling pins directly.
+    """
+    from memescanner.unified_scanner import (
+        compute_narrative_presence,
+        compute_take_profit_target,
+        take_profit_target_ceiling,
+    )
 
     decision = _decision_for_target(
         market_overrides={"liquidity_usd": 25_000, "volume_to_mcap_ratio": 2.5},
@@ -1619,8 +1631,11 @@ def test_take_profit_target_clamped_to_maximum():
         x_data={"result_count": 25},
         score=85.0,
     )
-    # 2.0 + 0.75 + 0.5 + 0.5 + 0.5 + 0.25 = 4.5, clamped
-    assert compute_take_profit_target(decision) == 4.0
+    # 2.0 + 0.75 + 0.5 + 0.5 + 0.5 + 0.25 = 4.5, under a ceiling above 4.5.
+    presence = compute_narrative_presence(decision)
+    assert 0 < presence < 100
+    assert take_profit_target_ceiling(presence) > 4.5
+    assert compute_take_profit_target(decision) == 4.5
 
 
 def test_take_profit_target_clamped_to_minimum():

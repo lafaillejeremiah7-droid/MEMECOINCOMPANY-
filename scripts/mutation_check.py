@@ -298,6 +298,68 @@ MUTATIONS: List[Mutation] = [
         ),
     ),
     Mutation(
+        name="runner-trail-does-not-track-peak",
+        path="memescanner/paper_trader.py",
+        old="    peak = max(float(peak_price or 0.0), float(current_price or 0.0))",
+        new="    peak = max(float(original_entry_price or 0.0), float(current_price or 0.0))",
+        tests="tests/test_presence_ladder.py",
+        defect=(
+            "Measuring the runner's trailing stop from the entry price instead of "
+            "the high-water mark, which is the original defect verbatim. Nothing "
+            "in paper_trader.py tracked a peak, so the only exit left for the "
+            "final 20% was 'price back at entry': a token that hit its target, "
+            "ran to 50x and collapsed closed the runner at BREAKEVEN. Memecoins "
+            "round-trip to near zero as the normal case, so this was the common "
+            "path and not an edge case -- and it is invisible in the output, "
+            "because every such trade still reports a tidy 0% on the remainder."
+        ),
+    ),
+    Mutation(
+        name="presence-ceiling-applied-globally",
+        path="memescanner/unified_scanner.py",
+        old="    presence = max(0.0, min(NARRATIVE_PRESENCE_MAX, float(narrative_presence)))",
+        new="    presence = NARRATIVE_PRESENCE_MAX",
+        tests="tests/test_presence_ladder.py",
+        defect=(
+            "Handing every candidate the 12x take-profit ceiling regardless of "
+            "narrative presence. This looks generous and is the opposite: a "
+            "higher first target means the 80% sale triggers less often, so on "
+            "the ordinary token that never reaches it you hold 100% of the "
+            "position into the round-trip instead of 20%. The ceiling is gated on "
+            "presence precisely so that raising it is paid for by evidence of a "
+            "catalyst, and an anonymous dog coin keeps today's 4.0x."
+        ),
+    ),
+    Mutation(
+        name="paid-boost-inflates-presence",
+        path="memescanner/unified_scanner.py",
+        old='    components["paid_boost"] = 0.0',
+        new='    components["paid_boost"] = 10.0 if decision.candidate.paid_boost else 0.0',
+        tests="tests/test_presence_ladder.py",
+        defect=(
+            "Scoring a paid DEXScreener boost as narrative presence. A boost is "
+            "bought attention, not a story: counting it would let anyone raise "
+            "their own take-profit ceiling and runner target by paying for "
+            "promotion, which is a self-service upgrade of the numbers the "
+            "operator trades on. The boost is recorded and deliberately unscored."
+        ),
+    ),
+    Mutation(
+        name="runner-target-is-a-hard-sell",
+        path="memescanner/paper_trader.py",
+        old="    if armed and velocity_pct <= config.stall_velocity_pct:",
+        new="    if armed:",
+        tests="tests/test_presence_ladder.py",
+        defect=(
+            "Turning the runner target into an unconditional sell. A hard ceiling "
+            "is a guess about where the top is and it fails in both directions: "
+            "name it too low and the token runs past you, name it too high and it "
+            "never triggers. The target exists to *arm a tighter trail* -- stalled "
+            "or negative velocity exits, still climbing keeps riding -- which "
+            "captures the tail without anyone having to predict its size."
+        ),
+    ),
+    Mutation(
         name="caller-archive-not-append-only",
         path="memescanner/database.py",
         old="""INSERT OR IGNORE INTO caller_calls (""",

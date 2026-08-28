@@ -32,7 +32,25 @@ from memescanner.unified_scanner import (
     AVG_TRADE_SIZE_SCORE_MAX,
     AVG_TRADE_SIZE_STRONG_MULTIPLE,
     COMMUNITY_TAKEOVER_POINTS,
+    NARRATIVE_PRESENCE_MAX,
+    PRESENCE_AVG_TRADE_SIZE_POINTS_MAX,
+    PRESENCE_BIG_ACCOUNT_POINTS,
+    PRESENCE_BUZZ_POINTS,
+    PRESENCE_CELEBRITY_VERIFIED_POINTS,
+    PRESENCE_SCAM_WARNING_CEILING,
+    PRESENCE_TURNOVER_POINTS_MAX,
+    PRESENCE_TURNOVER_REFERENCE_RATIO,
+    PRESENCE_VIRAL_REACH_POINTS,
+    PRESENCE_X_MENTION_POINTS_MAX,
+    PRESENCE_X_MENTION_REFERENCE,
+    RUNNER_TARGET_HIGH_PRESENCE_MULTIPLE,
+    RUNNER_TARGET_LOW_PRESENCE_MULTIPLE,
+    RUNNER_TARGET_MAX,
     SOCIAL_PRESENCE_SCORE_MAX,
+    TAKE_PROFIT_TARGET_BASE,
+    TAKE_PROFIT_TARGET_MAX,
+    TAKE_PROFIT_TARGET_MAX_HIGH_PRESENCE,
+    TAKE_PROFIT_TARGET_MIN,
     TELEGRAM_PRESENCE_POINTS,
     WEBSITE_PRESENCE_POINTS,
 )
@@ -100,9 +118,9 @@ def _score_expression_tokens() -> list:
     return " ".join(line for line in lines if line).split()
 
 
-def _feature_fingerprint() -> str:
-    """Hash of everything that determines the screening score's meaning."""
-    payload = {
+def _feature_payload() -> dict:
+    """Everything that determines the screening score's and the ladder's meaning."""
+    return {
         "avg_trade_size": [
             AVG_TRADE_SIZE_SCORE_MAX,
             AVG_TRADE_SIZE_STRONG_MULTIPLE,
@@ -119,9 +137,44 @@ def _feature_fingerprint() -> str:
         # that changed when someone reworded a comment would demand a spurious
         # cohort reset, and a guard that cries wolf gets deleted.
         "score_expression": _score_expression_tokens(),
+        # The take-profit ladder. Added because the presence-scaled ceiling and
+        # the runner target went in *without* tripping this fingerprint: it
+        # covered the screening-score expression and the social / average-trade
+        # size constants, but nothing in compute_take_profit_target and nothing
+        # in the recorded feature dict. That is a real gap, because the ladder
+        # constants determine what the bot suggests and are recorded as
+        # calibration predictors, so a v2 row and a v3 row are not comparable.
+        # Included here so the next change to any of them is caught rather than
+        # noticed by hand.
+        "take_profit_ladder": [
+            TAKE_PROFIT_TARGET_BASE,
+            TAKE_PROFIT_TARGET_MIN,
+            TAKE_PROFIT_TARGET_MAX,
+            TAKE_PROFIT_TARGET_MAX_HIGH_PRESENCE,
+            RUNNER_TARGET_MAX,
+            RUNNER_TARGET_LOW_PRESENCE_MULTIPLE,
+            RUNNER_TARGET_HIGH_PRESENCE_MULTIPLE,
+        ],
+        "narrative_presence": [
+            NARRATIVE_PRESENCE_MAX,
+            PRESENCE_CELEBRITY_VERIFIED_POINTS,
+            PRESENCE_BIG_ACCOUNT_POINTS,
+            PRESENCE_X_MENTION_POINTS_MAX,
+            PRESENCE_X_MENTION_REFERENCE,
+            PRESENCE_BUZZ_POINTS,
+            PRESENCE_VIRAL_REACH_POINTS,
+            PRESENCE_TURNOVER_POINTS_MAX,
+            PRESENCE_TURNOVER_REFERENCE_RATIO,
+            PRESENCE_AVG_TRADE_SIZE_POINTS_MAX,
+            PRESENCE_SCAM_WARNING_CEILING,
+        ],
     }
+
+
+def _feature_fingerprint() -> str:
+    """Hash of everything that determines the screening score's meaning."""
     return hashlib.sha256(
-        json.dumps(payload, sort_keys=True).encode()
+        json.dumps(_feature_payload(), sort_keys=True).encode()
     ).hexdigest()[:16]
 
 
@@ -129,7 +182,11 @@ def _feature_fingerprint() -> str:
 # never on their own.
 EXPECTED = {
     "policy": ("unified-safety-v2", "9df4aba09735b9c9"),
-    "features": ("screening-rank-v2", "c03b5f560ae1d71b"),
+    # screening-rank-v3: the presence-scaled take-profit ladder. See
+    # CalibrationConfig.feature_schema_version for why v2 rows cannot be pooled
+    # with v3 rows, and for the note that this fingerprint did not catch the
+    # change before it was widened to cover the ladder constants.
+    "features": ("screening-rank-v3", "b64b34037f05fffc"),
 }
 
 
@@ -199,6 +256,24 @@ def test_every_gate_reason_is_captured_by_the_fingerprint():
         "SUSPICIOUS_PRICE_SPIKE_LOW_VOLUME",
     ):
         assert expected in reasons
+
+
+def test_the_take_profit_ladder_is_captured_by_the_feature_fingerprint():
+    """Guards the widened guard: deleting a ladder key would silently weaken it.
+
+    The presence-scaled ceiling and the runner target reached this repository
+    without tripping the feature fingerprint, because the fingerprint covered
+    the screening-score expression and nothing in compute_take_profit_target.
+    Both are now included, and this test fails if either key is removed or
+    emptied -- which is how a fingerprint quietly stops fingerprinting.
+    """
+    payload = _feature_payload()
+    for key in ("take_profit_ladder", "narrative_presence"):
+        assert key in payload, f"{key} dropped out of the feature fingerprint"
+        assert payload[key], f"{key} is empty, so it constrains nothing"
+    assert TAKE_PROFIT_TARGET_MAX in payload["take_profit_ladder"]
+    assert TAKE_PROFIT_TARGET_MAX_HIGH_PRESENCE in payload["take_profit_ladder"]
+    assert PRESENCE_CELEBRITY_VERIFIED_POINTS in payload["narrative_presence"]
 
 
 def test_the_score_expression_was_actually_found():

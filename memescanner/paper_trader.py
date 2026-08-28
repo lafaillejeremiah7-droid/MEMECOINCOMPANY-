@@ -1,12 +1,19 @@
 """
 Paper trading module for the Memescanner bot.
 
-Tracks virtual positions with buy/sell logic, stop loss, take profit,
-and trailing stop. Persists positions via aiosqlite.
+Tracks virtual positions with buy/sell logic, stop loss, a two-stage take-profit
+ladder, and a peak-tracking trailing stop whose width scales with velocity.
+Persists positions via aiosqlite.
+
+SIGNAL ONLY. Everything here is a simulation: there is no wallet, no signing, no
+transaction submission, and no live execution path. The operator decides sizing
+and execution manually.
 """
 
+import json
 import logging
 import time
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Awaitable, Callable, Dict, List, Optional
 
@@ -45,6 +52,240 @@ HARD_STOP_PCT = -70.0
 # DCA amount for recovery
 DCA_AMOUNT = 25.0
 
+# ---------------------------------------------------------------------------
+# Runner trail: how the final 20% is managed after the 80% sale.
+#
+# What this replaces, and why. The old behaviour sold 80% at the target, set
+# breakeven_stop, and then had exactly one remaining exit:
+# ``current_price <= original_entry_price``. Nothing tracked the high-water mark
+# anywhere in this module, so the "trailing stop" did not trail. A token that
+# hit the target, ran to 50x and collapsed exited the last 20% at BREAKEVEN --
+# the runner captured nothing at all. That is not an edge case: memecoins
+# round-trip to near zero as the normal outcome, so it was the common path.
+#
+# The fix measures the stop from ``peak_price`` instead of from entry, and
+# scales its width by current velocity: a token moving hard gets room, a token
+# stalling gets cut. Widths are configurable via RunnerTrailConfig and the whole
+# mechanism is switchable, so the old fixed-breakeven behaviour stays reachable
+# for comparison -- but it defaults ON, because it fixes a real defect.
+#
+# Every width below is invented. None of them is calibrated against outcomes.
+# They are persisted per position (trail_width_pct, last_velocity_pct,
+# peak_price) so they can eventually be measured rather than argued about.
+# ---------------------------------------------------------------------------
+RUNNER_TRAIL_ENABLED = True
+# Velocity band edges, in percent, read from the 5-minute price change.
+RUNNER_TRAIL_VELOCITY_STRONG_PCT = 15.0
+RUNNER_TRAIL_VELOCITY_CLIMBING_PCT = 5.0
+RUNNER_TRAIL_VELOCITY_FLAT_PCT = 0.0
+# Trail widths below the peak for each band.
+RUNNER_TRAIL_WIDTH_STRONG_PCT = 60.0
+RUNNER_TRAIL_WIDTH_CLIMBING_PCT = 45.0
+RUNNER_TRAIL_WIDTH_FLAT_PCT = 30.0
+RUNNER_TRAIL_WIDTH_FALLING_PCT = 20.0
+# A mint-bound VERIFIED celebrity post earns bounded extra volatility tolerance:
+# the catalyst is real and durable, so a 40% drawdown is less likely to be the
+# end of the story than it is for an anonymous launch. Bounded, and still
+# subject to RUNNER_TRAIL_MAX_WIDTH_PCT.
+RUNNER_TRAIL_CELEBRITY_WIDEN_PCT = 10.0
+RUNNER_TRAIL_MAX_WIDTH_PCT = 75.0
+# Once the peak reaches the runner target the trail tightens by this factor.
+# The runner target arms a tighter trail; it is never an unconditional sell.
+RUNNER_TRAIL_ARMED_TIGHTEN_FACTOR = 0.5
+# At or above the runner target, this velocity or lower counts as stalled and
+# exits the runner.
+RUNNER_TRAIL_STALL_VELOCITY_PCT = 0.0
+# Multiple of tp1 used for the runner target when the caller supplied none, so a
+# position opened without a plan still gets a second stage rather than the old
+# breakeven-only behaviour.
+DEFAULT_RUNNER_TARGET_MULTIPLE = 1.5
+# Legacy exit reason, kept verbatim for the switched-off path.
+FIXED_BREAKEVEN_STOP_REASON = "Trailing stop (back to entry)"
+
+
+@dataclass(frozen=True)
+class RunnerTrailConfig:
+    """Configurable widths and band edges for the runner trail.
+
+    Frozen so a position cannot mutate the policy it is being managed under
+    halfway through, which would make a recorded trail width unreproducible.
+    """
+
+    strong_width_pct: float = RUNNER_TRAIL_WIDTH_STRONG_PCT
+    climbing_width_pct: float = RUNNER_TRAIL_WIDTH_CLIMBING_PCT
+    flat_width_pct: float = RUNNER_TRAIL_WIDTH_FLAT_PCT
+    falling_width_pct: float = RUNNER_TRAIL_WIDTH_FALLING_PCT
+    strong_velocity_pct: float = RUNNER_TRAIL_VELOCITY_STRONG_PCT
+    climbing_velocity_pct: float = RUNNER_TRAIL_VELOCITY_CLIMBING_PCT
+    flat_velocity_pct: float = RUNNER_TRAIL_VELOCITY_FLAT_PCT
+    celebrity_widen_pct: float = RUNNER_TRAIL_CELEBRITY_WIDEN_PCT
+    max_width_pct: float = RUNNER_TRAIL_MAX_WIDTH_PCT
+    armed_tighten_factor: float = RUNNER_TRAIL_ARMED_TIGHTEN_FACTOR
+    stall_velocity_pct: float = RUNNER_TRAIL_STALL_VELOCITY_PCT
+
+    def width_for_velocity(self, velocity_pct: float) -> float:
+        """Trail width for a 5-minute velocity, before celebrity/armed adjustment."""
+        if velocity_pct >= self.strong_velocity_pct:
+            return self.strong_width_pct
+        if velocity_pct >= self.climbing_velocity_pct:
+            return self.climbing_width_pct
+        if velocity_pct >= self.flat_velocity_pct:
+            return self.flat_width_pct
+        return self.falling_width_pct
+
+
+@dataclass(frozen=True)
+class RunnerTrailDecision:
+    """The outcome of one runner-trail evaluation, with its full justification."""
+
+    sell: bool
+    reason: str
+    trail_price: float
+    trail_width_pct: float
+    velocity_pct: float
+    runner_armed: bool
+    breakeven_floored: bool
+
+
+def current_velocity_pct(dex_data: Optional[Dict[str, Any]]) -> float:
+    """
+    Velocity for trail sizing, from the 5-minute window with a 1h fallback.
+
+    ``m5`` is the primary input: it is the finest granularity DEXScreener
+    publishes and matches the cadence at which positions are checked, so it is
+    the freshest evidence available about whether a move is still running. It is
+    absent or exactly zero on quiet pairs, and in that case an hour-old reading
+    is better than pretending the price is flat, so ``h1`` is used as a fallback.
+
+    Args:
+        dex_data: Fresh DEXScreener-derived dict, or None.
+
+    Returns:
+        Percentage price change. 0.0 when neither window is usable, which lands
+        in the flat band rather than the falling one.
+    """
+    if not dex_data:
+        return 0.0
+    for key in ("price_change_5m", "price_change_1h"):
+        try:
+            value = float(dex_data.get(key) or 0)
+        except (TypeError, ValueError):
+            continue
+        if value != value:  # NaN
+            continue
+        if value != 0.0:
+            return value
+    return 0.0
+
+
+def evaluate_runner_trail(
+    *,
+    peak_price: float,
+    current_price: float,
+    original_entry_price: float,
+    velocity_pct: float,
+    runner_target: float,
+    celebrity_verified: bool,
+    config: RunnerTrailConfig,
+) -> RunnerTrailDecision:
+    """
+    Decide whether the remaining 20% exits, measuring the stop from the peak.
+
+    The trail is anchored to ``peak_price``, never to entry: anchoring to entry
+    is the original defect, where a token that ran 50x and collapsed exited at
+    breakeven. Its width comes from ``velocity_pct`` -- wide while the move is
+    running, tight once it stalls.
+
+    The runner target arms a tighter trail rather than firing a sell. Below it
+    the trail stays at its band width so the move can develop. Once the *peak*
+    has reached it (a latch, so a brief dip does not disarm it):
+
+    * velocity at or below ``stall_velocity_pct`` exits immediately -- the move
+      reached the target and stopped working;
+    * otherwise the width is multiplied by ``armed_tighten_factor``, so a token
+      still climbing hard keeps riding under a closer stop.
+
+    A mint-bound VERIFIED celebrity post widens the trail by a bounded amount.
+
+    The floor is absolute: when the peak was above the original entry, the trail
+    price is never below that entry, so the runner cannot exit below breakeven
+    once profit exists. That reproduces the old fixed-breakeven stop exactly as
+    a lower bound -- today's behaviour is the floor and is never regressed.
+
+    Args:
+        peak_price: Highest quote observed for this position.
+        current_price: Latest quote, in the same denomination.
+        original_entry_price: First fill, before any DCA re-basing.
+        velocity_pct: 5-minute percentage price change (or its h1 fallback).
+        runner_target: Multiple of the original entry that arms the tight trail.
+        celebrity_verified: Whether celebrity mint-bound evidence was VERIFIED.
+        config: Widths and band edges to apply.
+
+    Returns:
+        A RunnerTrailDecision carrying the verdict and every number behind it.
+    """
+    peak = max(float(peak_price or 0.0), float(current_price or 0.0))
+    entry = float(original_entry_price or 0.0)
+
+    width = config.width_for_velocity(velocity_pct)
+    if celebrity_verified:
+        width = min(width + config.celebrity_widen_pct, config.max_width_pct)
+    else:
+        width = min(width, config.max_width_pct)
+
+    armed = bool(
+        runner_target > 0 and entry > 0 and peak >= entry * float(runner_target)
+    )
+    if armed:
+        width = width * config.armed_tighten_factor
+
+    trail_price = peak * (1.0 - width / 100.0)
+    breakeven_floored = False
+    if entry > 0 and peak > entry and trail_price < entry:
+        trail_price = entry
+        breakeven_floored = True
+
+    if armed and velocity_pct <= config.stall_velocity_pct:
+        return RunnerTrailDecision(
+            sell=True,
+            reason=(
+                f"Trailing stop (runner target {float(runner_target):.2f}x reached, "
+                f"velocity {velocity_pct:+.1f}% stalled, "
+                f"trail {width:.0f}% from peak)"
+            ),
+            trail_price=trail_price,
+            trail_width_pct=width,
+            velocity_pct=velocity_pct,
+            runner_armed=armed,
+            breakeven_floored=breakeven_floored,
+        )
+
+    if current_price <= trail_price:
+        detail = ", runner armed" if armed else ""
+        floor_detail = ", breakeven floor" if breakeven_floored else ""
+        return RunnerTrailDecision(
+            sell=True,
+            reason=(
+                f"Trailing stop ({width:.0f}% from peak, "
+                f"velocity {velocity_pct:+.1f}%{detail}{floor_detail})"
+            ),
+            trail_price=trail_price,
+            trail_width_pct=width,
+            velocity_pct=velocity_pct,
+            runner_armed=armed,
+            breakeven_floored=breakeven_floored,
+        )
+
+    return RunnerTrailDecision(
+        sell=False,
+        reason="",
+        trail_price=trail_price,
+        trail_width_pct=width,
+        velocity_pct=velocity_pct,
+        runner_armed=armed,
+        breakeven_floored=breakeven_floored,
+    )
+
 
 class PaperTrader:
     """
@@ -66,6 +307,8 @@ class PaperTrader:
         message_sender: Optional[Callable[[str], Awaitable[bool]]] = None,
         onchain_analyzer: Optional["OnchainAnalyzer"] = None,
         x_client: Optional["XSearchClient"] = None,
+        runner_trail_enabled: bool = RUNNER_TRAIL_ENABLED,
+        runner_trail: Optional[RunnerTrailConfig] = None,
     ):
         """
         Initialize the paper trader.
@@ -77,6 +320,13 @@ class PaperTrader:
             message_sender: Async callable for sending Telegram messages.
             onchain_analyzer: Optional pre-configured OnchainAnalyzer for recovery checks.
             x_client: Optional pre-configured XSearchClient for recovery checks.
+            runner_trail_enabled: Manage the final 20% with the peak-tracking,
+                velocity-scaled trail. Defaults ON because the fixed-breakeven
+                alternative it replaces is a defect, not a policy: it exited the
+                runner at entry after an arbitrarily large move. Setting this
+                False restores that old behaviour verbatim, which exists so the
+                two can be compared on real positions rather than argued about.
+            runner_trail: Widths and band edges. Defaults to the module values.
         """
         self.starting_balance = starting_balance
         self.trade_size = trade_size
@@ -84,6 +334,8 @@ class PaperTrader:
         self._message_sender = message_sender
         self._onchain_analyzer = onchain_analyzer
         self._x_client = x_client
+        self.runner_trail_enabled = runner_trail_enabled
+        self.runner_trail = runner_trail or RunnerTrailConfig()
         self.balance = starting_balance
         self.positions: List[Dict[str, Any]] = []
         self.closed_trades: List[Dict[str, Any]] = []
@@ -127,7 +379,15 @@ class PaperTrader:
                 dca_done INTEGER DEFAULT 0,
                 take_profit_target REAL DEFAULT 2.0,
                 price_basis TEXT DEFAULT 'market_cap',
-                original_entry_price REAL
+                original_entry_price REAL,
+                peak_price REAL,
+                runner_target REAL,
+                narrative_presence REAL,
+                narrative_presence_json TEXT,
+                last_velocity_pct REAL,
+                trail_width_pct REAL,
+                celebrity_verified INTEGER DEFAULT 0,
+                runner_armed INTEGER DEFAULT 0
             )
         """)
 
@@ -155,6 +415,19 @@ class PaperTrader:
             # denominators mid-position.
             ("price_basis", "TEXT DEFAULT 'market_cap'"),
             ("original_entry_price", "REAL"),
+            # Ladder and trail state. paper_positions is owned by this module --
+            # one of exactly two schema owners in the repository -- so this is
+            # the only place these columns may be defined. Recorded rather than
+            # merely computed because every constant behind them is invented and
+            # only measurement can settle them.
+            ("peak_price", "REAL"),
+            ("runner_target", "REAL"),
+            ("narrative_presence", "REAL"),
+            ("narrative_presence_json", "TEXT"),
+            ("last_velocity_pct", "REAL"),
+            ("trail_width_pct", "REAL"),
+            ("celebrity_verified", "INTEGER DEFAULT 0"),
+            ("runner_armed", "INTEGER DEFAULT 0"),
         ):
             if column not in existing_columns:
                 await self._db.execute(
@@ -193,7 +466,9 @@ class PaperTrader:
         async with self._db.execute(
             "SELECT id, mint, symbol, entry_price, entry_mc, amount_usd, tokens_held, "
             "entry_time, half_sold, breakeven_stop, recovery_checked, dca_done, "
-            "take_profit_target, price_basis, original_entry_price "
+            "take_profit_target, price_basis, original_entry_price, peak_price, "
+            "runner_target, narrative_presence, narrative_presence_json, "
+            "last_velocity_pct, trail_width_pct, celebrity_verified, runner_armed "
             "FROM paper_positions WHERE status = 'open'"
         ) as cursor:
             async for row in cursor:
@@ -216,6 +491,20 @@ class PaperTrader:
                     "price_basis": row[13] or PRICE_BASIS_MARKET_CAP,
                     # Rows predating the column fall back to the stored entry.
                     "original_entry_price": row[14] if row[14] else row[3],
+                    # A row written before peak tracking existed has no recorded
+                    # high-water mark. Seeding it from the entry rather than from
+                    # zero is the safe direction: it can only tighten the trail,
+                    # never invent a peak the position never reached.
+                    "peak_price": row[15] if row[15] else row[3],
+                    "runner_target": _coerce_runner_target(
+                        row[16], _coerce_take_profit_target(row[12])
+                    ),
+                    "narrative_presence": float(row[17] or 0.0),
+                    "narrative_presence_components": _decode_components(row[18]),
+                    "last_velocity_pct": float(row[19] or 0.0),
+                    "trail_width_pct": float(row[20] or 0.0),
+                    "celebrity_verified": bool(row[21]),
+                    "runner_armed": bool(row[22]),
                 })
 
         # Load closed trades for today's summary
@@ -278,6 +567,12 @@ class PaperTrader:
         take_profit_target = _coerce_take_profit_target(
             token_data.get("take_profit_target", DEFAULT_TAKE_PROFIT_TARGET)
         )
+        runner_target = _coerce_runner_target(
+            token_data.get("runner_target"), take_profit_target
+        )
+        narrative_presence = _coerce_presence(token_data.get("narrative_presence"))
+        presence_components = token_data.get("narrative_presence_components")
+        celebrity_verified = bool(token_data.get("celebrity_verified"))
 
         # Don't buy same token twice
         for pos in self.positions:
@@ -325,6 +620,17 @@ class PaperTrader:
             # Stop-loss rules stay anchored to the first fill even after a DCA
             # shifts the average cost basis.
             "original_entry_price": entry_price,
+            # The high-water mark starts at the fill, so a position that only
+            # ever falls trails from its entry rather than from nothing.
+            "peak_price": entry_price,
+            "runner_target": runner_target,
+            "narrative_presence": narrative_presence,
+            "narrative_presence_components": dict(presence_components)
+            if isinstance(presence_components, dict) else {},
+            "last_velocity_pct": 0.0,
+            "trail_width_pct": 0.0,
+            "celebrity_verified": celebrity_verified,
+            "runner_armed": False,
         }
 
         # Save to DB
@@ -332,10 +638,15 @@ class PaperTrader:
             cursor = await self._db.execute(
                 "INSERT INTO paper_positions (mint, symbol, entry_price, entry_mc, amount_usd, "
                 "tokens_held, entry_time, status, half_sold, breakeven_stop, recovery_checked, "
-                "dca_done, take_profit_target, price_basis, original_entry_price) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, 'open', 0, 0, 0, 0, ?, ?, ?)",
+                "dca_done, take_profit_target, price_basis, original_entry_price, "
+                "peak_price, runner_target, narrative_presence, narrative_presence_json, "
+                "celebrity_verified, runner_armed) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, 'open', 0, 0, 0, 0, ?, ?, ?, ?, ?, ?, ?, ?, 0)",
                 (mint, symbol, entry_price, market_cap, self.trade_size, tokens_held,
-                 entry_time, take_profit_target, price_basis, entry_price),
+                 entry_time, take_profit_target, price_basis, entry_price,
+                 entry_price, runner_target, narrative_presence,
+                 _encode_components(position["narrative_presence_components"]),
+                 int(celebrity_verified)),
             )
             position["id"] = cursor.lastrowid
             await self._db.commit()
@@ -349,6 +660,10 @@ class PaperTrader:
             f"\U0001f4dd PAPER BUY: ${symbol}\n"
             f"\U0001f4b5 Bought ${self.trade_size:.0f} at MC {mc_str}\n"
             f"\U0001f3af Target: {take_profit_target:.2f}x (sell 80%)\n"
+            f"\U0001f680 Runner target: {runner_target:.2f}x on the final 20% "
+            f"(tightens the trail; not an automatic sell)\n"
+            f"\U0001f4e3 Narrative presence: {narrative_presence:.0f}/100 "
+            "(uncalibrated)\n"
             f"\U0001f4b0 Balance: ${self.balance:.0f} remaining\n"
             f"\U0001f4ca Open positions: {len(self.positions)}/{MAX_OPEN_POSITIONS}"
         )
@@ -391,6 +706,15 @@ class PaperTrader:
                 if current_price is not None:
                     pos["current_price"] = current_price
 
+                    # High-water mark, updated on every pass. Without this the
+                    # trailing stop has nothing to trail from, which is exactly
+                    # how the runner used to exit at breakeven after a 50x.
+                    await self._update_peak(pos, current_price)
+                    # Velocity that will size the trail this pass, recorded so a
+                    # closed trade can be explained afterwards.
+                    velocity_pct = current_velocity_pct(dex_data)
+                    pos["last_velocity_pct"] = velocity_pct
+
                     # Calculate unrealized P&L against the average cost basis,
                     # which a DCA shifts below the first fill.
                     entry_price = pos["entry_price"]
@@ -418,23 +742,54 @@ class PaperTrader:
                     # stored target falls back to the global TAKE_PROFIT_PCT.
                     take_profit_trigger_pct = _take_profit_trigger_pct(pos)
                     if pnl_pct >= take_profit_trigger_pct and not pos["half_sold"]:
-                        closed = await self._take_profit(pos, current_price, pnl_pct)
+                        closed = await self._take_profit(
+                            pos, current_price, pnl_pct, velocity_pct=velocity_pct
+                        )
                         if closed:
                             closed_this_cycle.append(closed)
                         # Position remains open with the remaining 20% riding
                         continue
 
-                    # Check trailing stop: after +100% taken, if price drops to entry.
-                    # Use the original (pre-DCA) entry so the stop protects
-                    # actual breakeven rather than the lowered cost basis.
-                    trailing_stop_price = pos.get("original_entry_price") or entry_price
-                    if pos["breakeven_stop"] and current_price <= trailing_stop_price:
-                        closed = await self._close_position(
-                            pos, current_price, "Trailing stop (back to entry)"
-                        )
-                        closed_this_cycle.append(closed)
-                        positions_to_remove.append(i)
-                        continue
+                    # The runner (final 20%) after the 80% sale has armed the
+                    # trailing stop. Two mutually exclusive policies:
+                    #
+                    #   trail ON  (default): stop measured from peak_price, width
+                    #     scaled by velocity, tightened once the runner target is
+                    #     reached, and floored at breakeven so it can never be
+                    #     looser than the old behaviour.
+                    #   trail OFF (legacy):  the original fixed breakeven stop.
+                    if pos["breakeven_stop"]:
+                        original_entry = pos.get("original_entry_price") or entry_price
+                        if self.runner_trail_enabled:
+                            verdict = evaluate_runner_trail(
+                                peak_price=pos.get("peak_price") or original_entry,
+                                current_price=current_price,
+                                original_entry_price=original_entry,
+                                velocity_pct=velocity_pct,
+                                runner_target=_coerce_runner_target(
+                                    pos.get("runner_target"),
+                                    _coerce_take_profit_target(
+                                        pos.get("take_profit_target")
+                                    ),
+                                ),
+                                celebrity_verified=bool(pos.get("celebrity_verified")),
+                                config=self.runner_trail,
+                            )
+                            await self._record_trail_state(pos, verdict)
+                            if verdict.sell:
+                                closed = await self._close_position(
+                                    pos, current_price, verdict.reason
+                                )
+                                closed_this_cycle.append(closed)
+                                positions_to_remove.append(i)
+                                continue
+                        elif current_price <= original_entry:
+                            closed = await self._close_position(
+                                pos, current_price, FIXED_BREAKEVEN_STOP_REASON
+                            )
+                            closed_this_cycle.append(closed)
+                            positions_to_remove.append(i)
+                            continue
 
                     # Check hard stop (-70%) for positions that passed recovery check
                     if (
@@ -477,6 +832,62 @@ class PaperTrader:
             self.positions.pop(i)
 
         return closed_this_cycle
+
+    async def _update_peak(self, pos: Dict[str, Any], current_price: float) -> None:
+        """
+        Raise the position's high-water mark, persisting it when it moves.
+
+        The peak is monotone by construction: it is only ever raised, never
+        lowered, so a trail measured from it can only tighten as a move fades.
+        Persisted immediately because the peak is the anchor for every
+        subsequent runner decision -- losing it across a restart would silently
+        re-anchor the trail to the entry price, which is the defect this fixes.
+
+        Args:
+            pos: Position dict.
+            current_price: Latest quote in the position's basis.
+        """
+        previous = pos.get("peak_price") or pos.get("original_entry_price") or 0.0
+        if current_price <= previous:
+            pos["peak_price"] = previous
+            return
+        pos["peak_price"] = current_price
+        if self._db:
+            await self._db.execute(
+                "UPDATE paper_positions SET peak_price = ? WHERE id = ?",
+                (current_price, pos.get("id")),
+            )
+            await self._db.commit()
+
+    async def _record_trail_state(
+        self, pos: Dict[str, Any], verdict: RunnerTrailDecision
+    ) -> None:
+        """
+        Persist the velocity and trail width a runner decision was made under.
+
+        Recorded whether or not the position sold, because the interesting
+        question for calibration is not only "where did it exit" but "how wide
+        was the trail on every pass that did not exit".
+
+        Args:
+            pos: Position dict.
+            verdict: The evaluation just performed.
+        """
+        pos["trail_width_pct"] = verdict.trail_width_pct
+        pos["last_velocity_pct"] = verdict.velocity_pct
+        pos["runner_armed"] = verdict.runner_armed
+        if self._db:
+            await self._db.execute(
+                "UPDATE paper_positions SET last_velocity_pct = ?, "
+                "trail_width_pct = ?, runner_armed = ? WHERE id = ?",
+                (
+                    verdict.velocity_pct,
+                    verdict.trail_width_pct,
+                    int(verdict.runner_armed),
+                    pos.get("id"),
+                ),
+            )
+            await self._db.commit()
 
     async def _handle_recovery_check(
         self,
@@ -619,21 +1030,34 @@ class PaperTrader:
         logger.info("Paper DCA: $%s +$%.0f, total: $%.0f, balance: $%.2f",
                     symbol, DCA_AMOUNT, pos["amount_usd"], self.balance)
 
-    async def _take_profit(self, pos: Dict[str, Any], current_price: float, pnl_pct: float) -> Optional[Dict[str, Any]]:
+    async def _take_profit(
+        self,
+        pos: Dict[str, Any],
+        current_price: float,
+        pnl_pct: float,
+        *,
+        velocity_pct: float = 0.0,
+    ) -> Optional[Dict[str, Any]]:
         """
-        Execute take profit: sell 80% at the position target, move stop to breakeven.
+        Execute take profit: sell 80% at the position target, arm the runner trail.
 
-        The remaining 20% keeps riding behind a breakeven trailing stop.
+        The remaining 20% keeps riding behind the peak-tracking trailing stop
+        (or, when the trail is switched off, behind the legacy breakeven stop).
 
         Args:
             pos: Position dict.
-            current_price: Current market cap.
+            current_price: Current quote in the position's basis.
             pnl_pct: Current P&L percentage.
+            velocity_pct: 5-minute velocity at the moment of the sale, recorded
+                in the exit reason so the trade explains itself later.
 
         Returns:
             Closed trade record for the portion that was sold, or None.
         """
         entry_price = pos["entry_price"]
+        target = _coerce_take_profit_target(pos.get("take_profit_target"))
+        runner_target = _coerce_runner_target(pos.get("runner_target"), target)
+        reason = _take_profit_reason(target, velocity_pct, runner_target)
         sold_amount = pos["amount_usd"] * TAKE_PROFIT_SELL_FRACTION
         remaining_amount = pos["amount_usd"] - sold_amount
         sold_pnl_usd = sold_amount * (pnl_pct / 100)
@@ -662,16 +1086,28 @@ class PaperTrader:
                 "INSERT INTO paper_positions (mint, symbol, entry_price, entry_mc, "
                 "amount_usd, tokens_held, entry_time, status, exit_price, exit_time, "
                 "pnl_usd, pnl_pct, exit_reason, half_sold, breakeven_stop, "
-                "take_profit_target, price_basis, original_entry_price) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, 'partial_closed', ?, ?, ?, ?, ?, 1, 1, ?, ?, ?)",
+                "take_profit_target, price_basis, original_entry_price, "
+                "peak_price, runner_target, narrative_presence, "
+                "narrative_presence_json, last_velocity_pct, celebrity_verified) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, 'partial_closed', ?, ?, ?, ?, ?, 1, 1, "
+                "?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     pos["mint"], pos["symbol"], entry_price, pos.get("entry_mc", 0),
                     sold_amount, sold_tokens,  # tokens for the sold 80% portion
                     pos["entry_time"], current_price, time.time(),
-                    sold_pnl_usd, pnl_pct, TAKE_PROFIT_REASON,
+                    sold_pnl_usd, pnl_pct, reason,
                     pos.get("take_profit_target", DEFAULT_TAKE_PROFIT_TARGET),
                     pos.get("price_basis", PRICE_BASIS_MARKET_CAP),
                     pos.get("original_entry_price", entry_price),
+                    # The first stage of the ladder is recorded with the same
+                    # ladder columns as the runner, so a partial close is
+                    # self-describing without joining back to the open row.
+                    pos.get("peak_price", current_price),
+                    runner_target,
+                    pos.get("narrative_presence", 0.0),
+                    _encode_components(pos.get("narrative_presence_components")),
+                    velocity_pct,
+                    int(bool(pos.get("celebrity_verified"))),
                 ),
             )
             await self._db.commit()
@@ -691,7 +1127,7 @@ class PaperTrader:
             "pnl_pct": pnl_pct,
             "entry_time": pos["entry_time"],
             "exit_time": time.time(),
-            "reason": TAKE_PROFIT_REASON,
+            "reason": reason,
             "hold_time": hold_seconds,
         }
         self.closed_trades.append(closed_trade)
@@ -702,7 +1138,7 @@ class PaperTrader:
             f"\U0001f4ca PAPER SELL (80%): ${pos['symbol']}\n"
             f"\U0001f4c8 P&L: {pnl_sign}${sold_pnl_usd:.2f} (+{pnl_pct:.0f}%) on 80% sold\n"
             f"\u23f1 Held: {hold_str}\n"
-            f"\U0001f3af Reason: {TAKE_PROFIT_REASON} — remaining 20% rides with trailing stop\n"
+            f"\U0001f3af Reason: {reason} — remaining 20% rides with trailing stop\n"
             f"\U0001f4b0 Balance: ${self.balance:.0f}"
         )
         await self._notify(msg)
@@ -1014,6 +1450,82 @@ def _take_profit_trigger_pct(pos: Dict[str, Any]) -> float:
     if target <= 1.0:
         return TAKE_PROFIT_PCT
     return (target - 1.0) * 100
+
+
+def _take_profit_reason(
+    target: float, velocity_pct: float, runner_target: float
+) -> str:
+    """
+    Exit reason for the 80% sale, naming the rule and the state it fired in.
+
+    A reason string that says only "take profit" cannot be audited after the
+    fact: it does not say which target, at what velocity, or what happens to the
+    remainder. All three are in here so a closed trade explains itself.
+    """
+    return (
+        f"{TAKE_PROFIT_REASON[:-1]} {target:.2f}x reached at velocity "
+        f"{velocity_pct:+.1f}%, 80% sold, runner target {runner_target:.2f}x "
+        "arms the trail)"
+    )
+
+
+def _coerce_runner_target(value: Any, take_profit_target: float) -> float:
+    """
+    Normalize a stored runner target, keeping it strictly above the first stage.
+
+    A runner target at or below tp1 would make the second stage fire the instant
+    the first did, collapsing the ladder into a single exit. Anything missing,
+    non-numeric, or not above tp1 therefore falls back to
+    ``DEFAULT_RUNNER_TARGET_MULTIPLE`` x tp1 rather than being trusted.
+
+    Args:
+        value: Raw value from the database or caller input.
+        take_profit_target: The first-stage multiple this must sit above.
+
+    Returns:
+        A runner multiple strictly greater than ``take_profit_target``.
+    """
+    tp1 = max(0.0, float(take_profit_target))
+    fallback = tp1 * DEFAULT_RUNNER_TARGET_MULTIPLE
+    try:
+        target = float(value)
+    except (TypeError, ValueError):
+        return fallback
+    if target != target or target <= tp1:  # NaN or not above the first stage
+        return fallback
+    return target
+
+
+def _coerce_presence(value: Any) -> float:
+    """Normalize a narrative-presence score to 0..100, defaulting to 0."""
+    try:
+        presence = float(value)
+    except (TypeError, ValueError):
+        return 0.0
+    if presence != presence:  # NaN
+        return 0.0
+    return max(0.0, min(100.0, presence))
+
+
+def _encode_components(components: Any) -> str:
+    """Serialize a presence breakdown for storage, tolerating anything."""
+    if not isinstance(components, dict) or not components:
+        return "{}"
+    try:
+        return json.dumps(components, sort_keys=True)
+    except (TypeError, ValueError):
+        return "{}"
+
+
+def _decode_components(raw: Any) -> Dict[str, Any]:
+    """Read a stored presence breakdown, degrading to empty rather than raising."""
+    if not raw:
+        return {}
+    try:
+        decoded = json.loads(raw)
+    except (TypeError, ValueError):
+        return {}
+    return decoded if isinstance(decoded, dict) else {}
 
 
 def _coerce_take_profit_target(value: Any) -> float:
