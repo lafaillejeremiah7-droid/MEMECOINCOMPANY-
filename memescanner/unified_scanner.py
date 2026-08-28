@@ -27,8 +27,16 @@ from memescanner.x_search import XSearchClient
 logger = logging.getLogger(__name__)
 
 AlertSender = Callable[[str], Awaitable[bool]]
-# (candidate, market, take_profit_target) -> awaitable
-PaperBuyer = Callable[[NormalizedCandidate, Dict[str, Any], float], Awaitable[Any]]
+# (candidate, market, take_profit_target, trade_plan) -> awaitable
+#
+# trade_plan carries the second stage of the ladder (runner target, narrative
+# presence and its breakdown, celebrity status). It is a separate argument rather
+# than more positional floats so adding a future ladder input does not change
+# this signature again, and so the paper trader records the same numbers the
+# alert showed the operator.
+PaperBuyer = Callable[
+    [NormalizedCandidate, Dict[str, Any], float, Dict[str, Any]], Awaitable[Any]
+]
 
 # Bounds for the dynamic per-token take-profit multiple. These size an exit
 # heuristically from observed evidence; they are not return predictions.
@@ -84,6 +92,74 @@ SOCIAL_PRESENCE_SCORE_MAX = 10.0
 TELEGRAM_PRESENCE_POINTS = 5.0
 WEBSITE_PRESENCE_POINTS = 1.0
 COMMUNITY_TAKEOVER_POINTS = 4.0
+
+# ---------------------------------------------------------------------------
+# Narrative presence: a SEPARATE axis from the risk-quality arithmetic in
+# compute_take_profit_target.
+#
+# Risk quality answers "how likely is this to be exitable at the quoted price".
+# Narrative presence answers "how large is the story attached to this mint".
+# They are not the same question, and averaging them would let a deep pool
+# substitute for a catalyst (or the reverse). Keeping them orthogonal is what
+# lets the ceiling move on attention while every risk penalty keeps its full
+# effect on the target itself.
+#
+# Every number below is invented. There is no outcome data in this repository
+# that supports 60 points for a celebrity post over 40, or 12.0x over 8.0x.
+# They are recorded into the observation ledger (see narrative_presence_features)
+# precisely so the existing calibration machinery can eventually replace them
+# with measured ones.
+# ---------------------------------------------------------------------------
+NARRATIVE_PRESENCE_MAX = 100.0
+
+# A mint-bound celebrity post is deliberately worth more than every other
+# presence signal combined (60 > 8 + 12 + 3 + 7 + 10 + 8 + 7 = 55), so a
+# VERIFIED celebrity token always outranks any token without one. That is
+# defensible only because celebrity_mint_evidence is hard to satisfy: it
+# requires a canonical handle in CELEBRITY_HANDLES, a genuine
+# x.com/<handle>/status/<id> URL, an exact case-sensitive mint match inside the
+# post text, and no scam warning. Merely tweeting a celebrity's name earns zero.
+PRESENCE_CELEBRITY_VERIFIED_POINTS = 60.0
+PRESENCE_BIG_ACCOUNT_POINTS = 8.0
+PRESENCE_X_MENTION_POINTS_MAX = 12.0
+# Saturating scale, not a threshold: the mention term reaches half its ceiling
+# here and approaches it asymptotically, so no mention count is a cliff.
+PRESENCE_X_MENTION_REFERENCE = 25.0
+PRESENCE_BUZZ_POINTS = 3.0
+PRESENCE_VIRAL_REACH_POINTS = 7.0
+PRESENCE_TURNOVER_POINTS_MAX = 8.0
+PRESENCE_TURNOVER_REFERENCE_RATIO = 2.0
+PRESENCE_AVG_TRADE_SIZE_POINTS_MAX = 7.0
+
+# A scam warning forces presence low regardless of every other signal,
+# including a VERIFIED celebrity post. Attention around a token that OSINT is
+# calling a scam is not a reason to hold for a larger multiple.
+PRESENCE_SCAM_WARNING_CEILING = 5.0
+
+# Presence-scaled ceiling for the first (80%) take-profit target.
+#
+# Presence 0 keeps today's 4.0x exactly; presence 100 reaches 12.0x, linearly
+# interpolated in between. TAKE_PROFIT_TARGET_MIN is untouched.
+#
+# SAFETY: raising this ceiling is NOT free. A higher first target means the 80%
+# sale triggers less often, so on a token that never reaches it you are holding
+# 100% of the position into the round-trip instead of 20%. Memecoins round-trip
+# to near zero as the normal case. That is why the ceiling is gated on presence
+# instead of being raised globally, and it is why the peak-tracking trail in
+# paper_trader.py is mandatory rather than optional: without a trail that
+# measures from the high-water mark, a higher first target strictly increases
+# expected loss.
+TAKE_PROFIT_TARGET_MAX_HIGH_PRESENCE = 12.0
+
+# Second (runner) target for the final 20%. Expressed as a multiple of tp1 and
+# capped absolutely, because a runner target is a *trail-tightening threshold*,
+# not a sell order -- see compute_runner_target.
+RUNNER_TARGET_MAX = 50.0
+RUNNER_TARGET_LOW_PRESENCE_MULTIPLE = 1.5
+RUNNER_TARGET_HIGH_PRESENCE_MULTIPLE = 6.0
+# The runner target must be strictly above tp1 even for a degenerate tp1, so
+# the second stage can never collapse onto the first.
+RUNNER_TARGET_MIN_STEP = 0.25
 
 # Creator-stake buckets, recorded for attribution and never scored. Holdings above
 # the configured ceiling are rejected before scoring, so they never appear here.
@@ -225,6 +301,33 @@ def _avg_trade_size_score_points(
     return AVG_TRADE_SIZE_SCORE_MAX * average / (average + reference)
 
 
+def _saturating_points(value: float, reference: float, maximum: float) -> float:
+    """
+    Monotone, bounded, never-negative points for an unbounded input.
+
+    ``maximum * value / (value + reference)`` rises with ``value``, reaches half
+    of ``maximum`` at ``reference``, and approaches but never reaches
+    ``maximum``. Used instead of step thresholds so no single count or ratio is
+    a cliff, and so an extreme value cannot dominate an additive score.
+
+    Args:
+        value: Observed quantity. Negative and non-finite values score zero.
+        reference: Scale at which half the points are awarded. Must be positive.
+        maximum: Ceiling for this term.
+
+    Returns:
+        Points in [0, maximum).
+    """
+    if reference <= 0 or maximum <= 0:
+        return 0.0
+    if not isinstance(value, (int, float)) or isinstance(value, bool):
+        return 0.0
+    number = float(value)
+    if number != number or number <= 0:  # NaN or non-positive
+        return 0.0
+    return maximum * number / (number + reference)
+
+
 def _evidence_has_viral_indicators(evidence: List[Dict[str, Any]]) -> bool:
     """Return True if any evidence item content suggests viral reach."""
     for item in evidence:
@@ -247,6 +350,12 @@ class CandidateDecision:
     evaluated_at: Optional[str] = None
     evaluated_age_minutes: Optional[float] = None
     take_profit_target: float = 2.0
+    # Second stage of the ladder, plus the presence score that sized both stages.
+    # Defaults keep an un-evaluated decision self-consistent: presence 0 means
+    # the old 4.0x ceiling, and a runner target of 0.0 means "not computed".
+    narrative_presence: float = 0.0
+    narrative_presence_components: Dict[str, float] = field(default_factory=dict)
+    runner_target: float = 0.0
 
 
 def celebrity_mint_evidence(x_data: Dict[str, Any], mint: str) -> Dict[str, Any]:
@@ -286,6 +395,279 @@ def celebrity_mint_evidence(x_data: Dict[str, Any], mint: str) -> Dict[str, Any]
     }
 
 
+def compute_narrative_presence_breakdown(
+    decision: CandidateDecision,
+    *,
+    reference_avg_trade_size_usd: float = DEFAULT_REFERENCE_AVG_TRADE_SIZE_USD,
+) -> Dict[str, Any]:
+    """
+    Narrative presence with its full component breakdown, so it is auditable.
+
+    THIS IS NOT A PRICE PREDICTION. It is an uncalibrated heuristic *ordering*
+    of how much attention a mint has attracted, assembled from signals this
+    pipeline already computes. No outcome data in this repository supports the
+    specific weights: nothing here has been measured against realised returns,
+    and the only honest claim is that a token with a mint-bound celebrity post
+    and heavy mentions scores above a token with neither. Treat a presence of 80
+    as "louder than 20", never as "four times the expected return".
+
+    Inputs, all already computed elsewhere and none newly fetched:
+
+    * celebrity mint-bound evidence (``evidence["celebrity"]["status"]``), which
+      dominates by design and is worth more than every other term combined;
+    * X mention count, big-account mention, buzz, and viral-reach indicators;
+    * advertised social presence, via ``social_presence_score_points`` -- the
+      same helper the screening rank uses, not a second copy of its weights;
+    * turnover (``volume_to_mcap_ratio``);
+    * committed capital (``average_trade_size_usd`` against its reference).
+
+    ``candidate.paid_boost`` is recorded and deliberately scores zero. A paid
+    boost is bought attention, not narrative: scoring it would let anyone raise
+    their own take-profit ceiling by paying DEXScreener, which is exactly the
+    kind of self-service that a signal an operator trades on must not have.
+
+    Every contribution is additive, individually capped, and never negative, so
+    the total is monotone in each input. A ``scam_warning`` overrides everything
+    and clamps the result to ``PRESENCE_SCAM_WARNING_CEILING``.
+
+    Args:
+        decision: An evaluated candidate decision. Missing market or evidence
+            blocks score zero rather than raising.
+        reference_avg_trade_size_usd: Scale for the committed-capital term.
+
+    Returns:
+        Dict with ``narrative_presence`` (0..100), ``components`` (per-signal
+        points), ``raw_total`` before clamping, ``scam_warning``, ``paid_boost``
+        and ``paid_boost_scored`` (always False).
+    """
+    market = decision.market or {}
+    x_data = decision.evidence.get("x") or {}
+    celebrity = decision.evidence.get("celebrity") or {}
+
+    components: Dict[str, float] = {}
+    components["celebrity_mint_bound"] = (
+        PRESENCE_CELEBRITY_VERIFIED_POINTS
+        if celebrity.get("status") == "VERIFIED"
+        else 0.0
+    )
+    try:
+        mentions = float(x_data.get("result_count") or 0)
+    except (TypeError, ValueError):
+        mentions = 0.0
+    components["x_mentions"] = _saturating_points(
+        mentions, PRESENCE_X_MENTION_REFERENCE, PRESENCE_X_MENTION_POINTS_MAX
+    )
+    components["big_account_mention"] = (
+        PRESENCE_BIG_ACCOUNT_POINTS if x_data.get("big_account_mention") else 0.0
+    )
+    components["buzz"] = PRESENCE_BUZZ_POINTS if x_data.get("has_buzz") else 0.0
+    # Derived exactly as the mention gate's viral bypass is, from the same
+    # evidence contents, so the two can never disagree about what "viral" means.
+    components["viral_reach"] = (
+        PRESENCE_VIRAL_REACH_POINTS
+        if _evidence_has_viral_indicators(x_data.get("evidence") or [])
+        else 0.0
+    )
+    components["social_presence"] = social_presence_score_points(decision.candidate)
+    try:
+        turnover = float(market.get("volume_to_mcap_ratio") or 0)
+    except (TypeError, ValueError):
+        turnover = 0.0
+    components["turnover"] = _saturating_points(
+        turnover, PRESENCE_TURNOVER_REFERENCE_RATIO, PRESENCE_TURNOVER_POINTS_MAX
+    )
+    average_trade_size = average_trade_size_usd(market)
+    components["committed_capital"] = (
+        _saturating_points(
+            average_trade_size,
+            float(reference_avg_trade_size_usd or 0),
+            PRESENCE_AVG_TRADE_SIZE_POINTS_MAX,
+        )
+        if average_trade_size is not None
+        else 0.0
+    )
+    # Recorded, never scored. See the docstring.
+    components["paid_boost"] = 0.0
+
+    raw_total = sum(components.values())
+    # Named `presence`, not `score`, on purpose. tests/test_policy_versioning.py
+    # locates the screening-rank expression by searching for the literal text
+    # "score" followed by a min() call, so a second such assignment anywhere in
+    # this module would redirect the feature fingerprint onto the wrong
+    # expression -- silently weakening that guard instead of tripping it.
+    presence = min(NARRATIVE_PRESENCE_MAX, max(0.0, raw_total))
+    scam_warning = bool(x_data.get("scam_warning"))
+    if scam_warning:
+        presence = min(presence, PRESENCE_SCAM_WARNING_CEILING)
+
+    return {
+        "narrative_presence": round(presence, 2),
+        "components": {name: round(points, 2) for name, points in components.items()},
+        "raw_total": round(raw_total, 2),
+        "scam_warning": scam_warning,
+        "paid_boost": bool(decision.candidate.paid_boost),
+        "paid_boost_scored": False,
+    }
+
+
+def compute_narrative_presence(
+    decision: CandidateDecision,
+    *,
+    reference_avg_trade_size_usd: float = DEFAULT_REFERENCE_AVG_TRADE_SIZE_USD,
+) -> float:
+    """
+    Narrative presence on a 0..100 scale.
+
+    Thin wrapper over :func:`compute_narrative_presence_breakdown` for callers
+    that only need the number. Anything that records a decision should use the
+    breakdown instead, so the score can be explained after the fact rather than
+    appearing as a bare figure nobody can reconstruct.
+
+    See :func:`compute_narrative_presence_breakdown` for the full contract: this
+    is an uncalibrated ordering of attention, not a price prediction.
+
+    Args:
+        decision: An evaluated candidate decision.
+        reference_avg_trade_size_usd: Scale for the committed-capital term.
+
+    Returns:
+        Presence in [0.0, 100.0].
+    """
+    breakdown = compute_narrative_presence_breakdown(
+        decision, reference_avg_trade_size_usd=reference_avg_trade_size_usd
+    )
+    return float(breakdown["narrative_presence"])
+
+
+def take_profit_target_ceiling(narrative_presence: float) -> float:
+    """
+    The maximum first-stage take-profit multiple allowed at this presence.
+
+    Linear from ``TAKE_PROFIT_TARGET_MAX`` (4.0) at presence 0 to
+    ``TAKE_PROFIT_TARGET_MAX_HIGH_PRESENCE`` (12.0) at presence 100. Presence 0
+    therefore reproduces today's behaviour exactly.
+
+    Args:
+        narrative_presence: Presence score; values outside 0..100 are clamped.
+
+    Returns:
+        Ceiling multiple in [4.0, 12.0].
+    """
+    presence = max(0.0, min(NARRATIVE_PRESENCE_MAX, float(narrative_presence)))
+    span = TAKE_PROFIT_TARGET_MAX_HIGH_PRESENCE - TAKE_PROFIT_TARGET_MAX
+    return TAKE_PROFIT_TARGET_MAX + span * (presence / NARRATIVE_PRESENCE_MAX)
+
+
+def compute_runner_target(
+    decision: CandidateDecision,
+    tp1: float,
+    *,
+    reference_avg_trade_size_usd: float = DEFAULT_REFERENCE_AVG_TRADE_SIZE_USD,
+) -> float:
+    """
+    Second-stage target for the final 20%, scaled by narrative presence.
+
+    THIS TARGET ARMS A TIGHTER TRAIL. IT IS NOT AN UNCONDITIONAL SELL.
+    Below it the trail stays wide so the move can develop; at or above it the
+    trail tightens, and a stalled or negative velocity exits. If the token is
+    still climbing hard, the position keeps riding under the tightened trail.
+    ``paper_trader.evaluate_runner_trail`` implements those semantics.
+
+    Why a threshold rather than a ceiling: a hard number is a guess about where
+    the top is, and it fails in both directions. Name 200M and the token runs to
+    500M -- you cut yourself off at the point the thesis was working. Name 200M
+    and it dies at 8M -- the target never triggers, so the runner round-trips
+    all the way back to the breakeven stop and the tail you were paid to hold
+    for produces nothing. Making the second target tighten a trail instead of
+    firing a sell captures the tail without requiring anyone to predict its
+    size, which is the only honest position to take given that nothing here has
+    been calibrated against outcomes.
+
+    Low presence earns a modest step beyond ``tp1``; high presence (VERIFIED
+    celebrity, strong socials, heavy mentions) earns substantially more. The
+    result is capped at ``RUNNER_TARGET_MAX`` and is always strictly greater
+    than ``tp1``.
+
+    Args:
+        decision: An evaluated candidate decision.
+        tp1: The first-stage (80%) target multiple this runner sits above.
+        reference_avg_trade_size_usd: Scale for the committed-capital term.
+
+    Returns:
+        Runner target multiple, strictly greater than ``tp1``, rounded to 2dp.
+    """
+    presence = compute_narrative_presence(
+        decision, reference_avg_trade_size_usd=reference_avg_trade_size_usd
+    )
+    fraction = max(0.0, min(NARRATIVE_PRESENCE_MAX, presence)) / NARRATIVE_PRESENCE_MAX
+    span = RUNNER_TARGET_HIGH_PRESENCE_MULTIPLE - RUNNER_TARGET_LOW_PRESENCE_MULTIPLE
+    multiple = RUNNER_TARGET_LOW_PRESENCE_MULTIPLE + span * fraction
+    first_stage = max(0.0, float(tp1))
+    # The absolute cap is applied before the strict-ordering guarantee, so a
+    # degenerate tp1 above the cap still yields a runner target above it rather
+    # than one that silently equals it.
+    capped = min(RUNNER_TARGET_MAX, first_stage * multiple)
+    return round(max(capped, first_stage + RUNNER_TARGET_MIN_STEP), 2)
+
+
+def narrative_presence_features(
+    decision: CandidateDecision,
+    *,
+    reference_avg_trade_size_usd: float = DEFAULT_REFERENCE_AVG_TRADE_SIZE_USD,
+) -> Dict[str, Any]:
+    """
+    The whole ladder, flattened for the observation ledger.
+
+    Recorded for every decision rather than only alerted ones, because a weight
+    that only ever appears on winners cannot be tested for separation. These
+    fields are what get frozen into the cohort's ``initial_features_json``,
+    which is where ``scripts/filter_attribution.py`` and the calibration
+    reporter read their predictors -- so the invented constants above become
+    measurable instead of merely asserted.
+    """
+    breakdown = compute_narrative_presence_breakdown(
+        decision, reference_avg_trade_size_usd=reference_avg_trade_size_usd
+    )
+    presence = float(breakdown["narrative_presence"])
+    return {
+        "narrative_presence": presence,
+        "narrative_presence_components": breakdown["components"],
+        "narrative_presence_raw_total": breakdown["raw_total"],
+        "narrative_presence_scam_clamped": breakdown["scam_warning"],
+        "paid_boost_scored_as_presence": breakdown["paid_boost_scored"],
+        "take_profit_ceiling": round(take_profit_target_ceiling(presence), 2),
+        "take_profit_target_tp1": decision.take_profit_target,
+        "runner_target": decision.runner_target,
+    }
+
+
+def trade_plan(decision: CandidateDecision) -> Dict[str, Any]:
+    """
+    The ladder as the virtual paper trader needs it.
+
+    SIGNAL ONLY. Nothing in this dict is an instruction to execute anything: it
+    describes what the alert suggested, so the paper simulation and the operator
+    are looking at the same two targets and the same trail assumptions. There is
+    no wallet, no signing, and no transaction submission anywhere in this path.
+
+    Args:
+        decision: The decision that was alerted.
+
+    Returns:
+        Dict with ``take_profit_target``, ``runner_target``,
+        ``narrative_presence``, ``narrative_presence_components`` and
+        ``celebrity_verified``.
+    """
+    celebrity = decision.evidence.get("celebrity") or {}
+    return {
+        "take_profit_target": decision.take_profit_target,
+        "runner_target": decision.runner_target,
+        "narrative_presence": decision.narrative_presence,
+        "narrative_presence_components": dict(decision.narrative_presence_components),
+        "celebrity_verified": celebrity.get("status") == "VERIFIED",
+    }
+
+
 def compute_take_profit_target(
     decision: CandidateDecision,
     *,
@@ -299,13 +681,20 @@ def compute_take_profit_target(
     trade size earn a higher target, while thin pools, concentration,
     coordination flags, and a bot-churn-sized average trade pull it down.
 
+    The risk-quality arithmetic below is unchanged. Only the upper clamp moved:
+    it is now ``take_profit_target_ceiling(narrative_presence)``, so a token with
+    no narrative keeps the historical 4.0x ceiling and one with a mint-bound
+    celebrity post can reach 12.0x. Every risk penalty still applies at full
+    strength first -- presence raises the ceiling, it never offsets a penalty.
+
     Args:
         decision: An evaluated candidate decision with market and evidence data.
         reference_avg_trade_size_usd: Average trade size scale in USD. Defaults
             to the module reference so existing callers keep working unchanged.
 
     Returns:
-        Take-profit multiple clamped to [1.5, 4.0] and rounded to 2 decimals.
+        Take-profit multiple clamped to [1.5, ceiling] and rounded to 2 decimals,
+        where ceiling is 4.0 at presence 0 rising to 12.0 at presence 100.
     """
     market = decision.market or {}
     onchain = decision.evidence.get("onchain") or {}
@@ -366,9 +755,17 @@ def compute_take_profit_target(
     if decision.screening_score >= 80:
         target += 0.25
 
-    clamped = max(
-        TAKE_PROFIT_TARGET_MIN, min(TAKE_PROFIT_TARGET_MAX, target)
+    # Presence-scaled ceiling. Gated on presence rather than raised globally:
+    # a higher first target means the 80% sale triggers less often, so on a
+    # token that never reaches it the position holds 100% into the round-trip
+    # instead of 20%. The ladder is only safe in combination with the
+    # peak-tracking trail in paper_trader.py.
+    ceiling = take_profit_target_ceiling(
+        compute_narrative_presence(
+            decision, reference_avg_trade_size_usd=reference_avg_trade_size_usd
+        )
     )
+    clamped = max(TAKE_PROFIT_TARGET_MIN, min(ceiling, target))
     return round(clamped, 2)
 
 
@@ -599,8 +996,19 @@ class CommonEvaluator:
             evaluated_at=datetime.now(timezone.utc).isoformat(),
             evaluated_age_minutes=age,
         )
+        presence = compute_narrative_presence_breakdown(
+            qualified,
+            reference_avg_trade_size_usd=self.reference_avg_trade_size_usd,
+        )
+        qualified.narrative_presence = float(presence["narrative_presence"])
+        qualified.narrative_presence_components = dict(presence["components"])
         qualified.take_profit_target = compute_take_profit_target(
             qualified,
+            reference_avg_trade_size_usd=self.reference_avg_trade_size_usd,
+        )
+        qualified.runner_target = compute_runner_target(
+            qualified,
+            qualified.take_profit_target,
             reference_avg_trade_size_usd=self.reference_avg_trade_size_usd,
         )
         return qualified
@@ -738,9 +1146,15 @@ def format_signal(decision: CandidateDecision) -> str:
     ] + (holder_flags_lines if holder_flags_lines else []) + [
         f"Suggested take-profit target: {decision.take_profit_target:.2f}x "
         "(dynamic, not a prediction)",
+        f"Narrative presence: {decision.narrative_presence:.0f}/100 "
+        f"(uncalibrated attention ordering; raises the target ceiling to "
+        f"{take_profit_target_ceiling(decision.narrative_presence):.2f}x)",
+        f"Suggested runner target for the final 20%: {decision.runner_target:.2f}x "
+        "(tightens the trailing stop; not an automatic sell)",
         f"Bubblemaps: {bubblemaps_link}",
         f"Sources: {sources}",
-        f"Paid boost metadata: {'present (not scored)' if candidate.paid_boost else 'none'}",
+        f"Paid boost metadata: {'present (not scored)' if candidate.paid_boost else 'none'}"
+        " — bought attention is never counted as narrative presence",
         f"X OSINT: {x_status} (partial evidence only)",
         f"Celebrity mint-bound evidence: {celebrity} (neutral; not potential)",
         "Signal only. No wallet, signing, transaction submission, or live execution.",
@@ -760,7 +1174,7 @@ class UnifiedSolanaScanner:
         paper_buyer: Optional[PaperBuyer] = None,
         cohort_horizons: Optional[Dict[int, int]] = None,
         policy_version: str = "unified-safety-v2",
-        feature_schema_version: str = "screening-rank-v2",
+        feature_schema_version: str = "screening-rank-v3",
         max_onchain_checks: int = MAX_ONCHAIN_CHECKS_PER_CYCLE,
         max_market_checks: int = 40,
     ) -> None:
@@ -911,6 +1325,7 @@ class UnifiedSolanaScanner:
                             winner.candidate,
                             winner.market or {},
                             winner.take_profit_target,
+                            trade_plan(winner),
                         )
                     except Exception as exc:
                         logger.warning(
@@ -984,7 +1399,7 @@ class UnifiedSolanaScanner:
         cycle_id: Optional[int] = None,
         candidate_id: Optional[int] = None,
         policy_version: str = "unified-safety-v2",
-        feature_schema_version: str = "screening-rank-v2",
+        feature_schema_version: str = "screening-rank-v3",
     ) -> Dict[str, Any]:
         candidate = decision.candidate
         market = dict(decision.market or {})
@@ -1000,6 +1415,10 @@ class UnifiedSolanaScanner:
         evidence["features"] = {
             **social_presence_features(candidate),
             **creator_stake_features(decision.evidence.get("onchain")),
+            # The two-stage ladder's inputs and outputs. Every constant behind
+            # these numbers is invented, so recording them is the only thing that
+            # can eventually replace them with measured weights.
+            **narrative_presence_features(decision),
         }
         return {
             "chain_id": candidate.chain_id,

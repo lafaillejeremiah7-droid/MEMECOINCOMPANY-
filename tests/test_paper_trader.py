@@ -307,7 +307,12 @@ class TestPaperTraderCheckPositions:
         closed = await pt.check_positions()
 
         assert len(closed) == 1
-        assert closed[0]["reason"] == "Take profit (target)"
+        # The reason now names the rule, the target, the velocity it fired at and
+        # what happens to the remainder, so a closed trade is self-explaining.
+        assert closed[0]["reason"] == (
+            "Take profit (target 2.00x reached at velocity +0.0%, 80% sold, "
+            "runner target 3.00x arms the trail)"
+        )
         assert closed[0]["pnl_pct"] == pytest.approx(100.0, abs=0.1)
         # Sold 80%: $40 of the position with 100% gain = $40 profit, returned $80
         assert closed[0]["pnl_usd"] == pytest.approx(40.0, abs=0.1)
@@ -325,7 +330,13 @@ class TestPaperTraderCheckPositions:
 
     @pytest.mark.asyncio
     async def test_trailing_stop_after_tp(self, patch_db_path, mock_telegram, mock_fetch_dex):
-        """Test trailing stop triggers after take profit when price returns to entry."""
+        """Test trailing stop triggers after take profit when price returns to entry.
+
+        The exit still happens at the same place, but the reason now states the
+        rule that fired: a 30% trail below the recorded peak at a flat velocity,
+        rather than the old bare "back to entry". The peak was 200k, so the trail
+        sat at 140k and a fall to 100k is well through it.
+        """
         pt = PaperTrader(starting_balance=1000.0, trade_size=50.0)
         await pt.initialize()
 
@@ -338,15 +349,43 @@ class TestPaperTraderCheckPositions:
         await pt.check_positions()
 
         assert pt.positions[0]["breakeven_stop"] is True
+        assert pt.positions[0]["peak_price"] == 200000
 
         # Second check: price drops back to entry - triggers trailing stop
         mock_fetch_dex.return_value = {"market_cap": 100000}
         closed = await pt.check_positions()
 
         assert len(closed) == 1
-        assert closed[0]["reason"] == "Trailing stop (back to entry)"
+        assert closed[0]["reason"] == (
+            "Trailing stop (30% from peak, velocity +0.0%)"
+        )
         assert len(pt.positions) == 0
 
+        await pt.close()
+
+    @pytest.mark.asyncio
+    async def test_legacy_fixed_breakeven_stop_is_still_reachable(
+        self, patch_db_path, mock_telegram, mock_fetch_dex
+    ):
+        """The pre-trail behaviour survives verbatim behind the switch."""
+        pt = PaperTrader(
+            starting_balance=1000.0, trade_size=50.0, runner_trail_enabled=False
+        )
+        await pt.initialize()
+
+        await pt.buy({"mint": "abc123", "symbol": "TEST"}, {"market_cap": 100000})
+        mock_fetch_dex.return_value = {"market_cap": 200000}
+        await pt.check_positions()
+
+        # 150k is a 25% drawdown from the 200k peak: the trail would not have
+        # exited here either, and the fixed stop certainly does not.
+        mock_fetch_dex.return_value = {"market_cap": 150000}
+        assert await pt.check_positions() == []
+
+        mock_fetch_dex.return_value = {"market_cap": 100000}
+        closed = await pt.check_positions()
+        assert len(closed) == 1
+        assert closed[0]["reason"] == "Trailing stop (back to entry)"
         await pt.close()
 
     @pytest.mark.asyncio
@@ -1041,7 +1080,8 @@ class TestPaperTraderPartialTakeProfit:
         message = mock_telegram.call_args[0][0]
         assert "PAPER SELL (80%): $TEST" in message
         assert "on 80% sold" in message
-        assert "Take profit (target) \u2014 remaining 20% rides with trailing stop" in message
+        assert "Take profit (target 2.00x reached at velocity +0.0%" in message
+        assert "\u2014 remaining 20% rides with trailing stop" in message
         # Old wording must be gone
         assert "50%" not in message
         assert "on half sold" not in message

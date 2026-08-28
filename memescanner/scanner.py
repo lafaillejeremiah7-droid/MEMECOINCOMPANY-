@@ -63,6 +63,16 @@ async def fetch_dex_data(mint: str) -> Optional[Dict[str, Any]]:
             sells_24h = txns.get("h24", {}).get("sells", 0)
             buy_sell_ratio = buys_24h / max(sells_24h, 1)
 
+            # DEXScreener returns every window for priceChange, txns and volume
+            # (m5/h1/h6/h24), verified live against a real Solana pair. Only h1
+            # and h24 were read, so the m5 window -- the finest-grained velocity
+            # signal available, and the same 5-minute cadence as the position
+            # check interval -- was fetched over the wire and discarded. The
+            # velocity-scaled runner trail in paper_trader.py needs exactly it.
+            # `or {}` rather than a dict default: the key can be present and
+            # null, in which case .get would return None and then raise.
+            txns_5m = txns.get("m5") or {}
+
             market_cap = best_pair.get("marketCap") or best_pair.get("fdv") or 0
             volume_24h = volume.get("h24", 0) or 0
             liquidity_usd = liquidity.get("usd", 0) or 0
@@ -87,8 +97,13 @@ async def fetch_dex_data(mint: str) -> Optional[Dict[str, Any]]:
                 "sells_24h": sells_24h,
                 "buy_sell_ratio": buy_sell_ratio,
                 "volume_to_mcap_ratio": volume_to_mcap,
+                "price_change_5m": price_change.get("m5", 0) or 0,
                 "price_change_1h": price_change.get("h1", 0) or 0,
+                "price_change_6h": price_change.get("h6", 0) or 0,
                 "price_change_24h": price_change.get("h24", 0) or 0,
+                "buys_5m": txns_5m.get("buys", 0) or 0,
+                "sells_5m": txns_5m.get("sells", 0) or 0,
+                "volume_5m": volume.get("m5", 0) or 0,
             }
 
         except Exception as e:

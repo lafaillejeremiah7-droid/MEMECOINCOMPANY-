@@ -96,13 +96,27 @@ async def _paper_buyer(
     candidate: Any,
     market: dict[str, Any],
     take_profit_target: float = DEFAULT_TAKE_PROFIT_TARGET,
+    plan: Optional[dict[str, Any]] = None,
 ) -> Any:
-    """Open a virtual-only position after an alerted common-pipeline decision."""
+    """Open a virtual-only position after an alerted common-pipeline decision.
+
+    ``plan`` carries the second stage of the ladder (runner target, narrative
+    presence and its component breakdown, celebrity status) so the simulated
+    position is managed against, and records, exactly the numbers the operator
+    was shown. Absent, the trader falls back to its own defaults.
+    """
+    ladder = plan or {}
     return await trader.buy(
         {
             "mint": candidate.mint,
             "symbol": candidate.symbol or "UNKNOWN",
             "take_profit_target": take_profit_target,
+            "runner_target": ladder.get("runner_target"),
+            "narrative_presence": ladder.get("narrative_presence"),
+            "narrative_presence_components": ladder.get(
+                "narrative_presence_components"
+            ),
+            "celebrity_verified": ladder.get("celebrity_verified", False),
         },
         # Forward the real price so the position is tracked against a
         # supply-independent quote rather than market cap.
@@ -205,12 +219,13 @@ async def main_loop(config: Optional[Config] = None) -> None:
                 ),
             )
             await paper_trader.initialize()
-            async def paper_callback(candidate, market, take_profit_target):
+            async def paper_callback(candidate, market, take_profit_target, plan=None):
                 return await _paper_buyer(
                     paper_trader,
                     candidate,
                     market,
                     take_profit_target,
+                    plan,
                 )
 
         outcome_worker = None
