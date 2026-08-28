@@ -34,6 +34,16 @@ class ScannerConfig:
     max_candidate_age_minutes: int = 120
     max_market_checks_per_cycle: int = 40
     enable_paper_trading: bool = False
+    # How many virtual positions the paper trader may hold at once. Defaults to
+    # 1 because the operator wants one coin at a time.
+    #
+    # OPERATIONAL RISK, stated here as well as in PaperTrader because this field
+    # is where an operator changes it: with a single slot, one position that
+    # never exits blocks every future trade. There is no time-based exit
+    # anywhere in memescanner/paper_trader.py, so a runner sitting quietly above
+    # breakeven halts the bot indefinitely. At 3 that was survivable -- the
+    # other two slots kept working. At 1 it is a full stop.
+    max_open_positions: int = 1
 
 
 @dataclass
@@ -149,7 +159,33 @@ class CalibrationConfig:
     # dict. The fingerprint has been widened to cover the ladder constants so
     # the next change to them is caught automatically, and the bump here was
     # made deliberately rather than because a test forced it.
-    feature_schema_version: str = "screening-rank-v3"
+    #
+    # Bumped again to screening-rank-v4 because narrative presence now ADDS to
+    # tp1 rather than only raising its ceiling. A v3 row and a v4 row cannot be
+    # pooled:
+    #
+    #   - tp1 is a materially different quantity. Under v3 presence lifted only
+    #     the clamp, so tp1 was risk-quality arithmetic bounded above; a
+    #     presence-100 token measured 4.50x. Under v4 a presence-scaled bonus of
+    #     up to 6.0 is added to the number itself, so the same token measures
+    #     10.5x. Two rows can carry identical presence, identical market data and
+    #     identical risk flags and still record tp1 values that differ by more
+    #     than a factor of two.
+    #   - tp1 is a RECORDED CALIBRATION PREDICTOR, not just an alert field. It is
+    #     frozen into cohort_candidates.initial_features_json via
+    #     narrative_presence_features, which is exactly where the calibration
+    #     reporter and scripts/filter_attribution.py read their inputs. Pooling
+    #     v3 and v4 would put two different functions of the same evidence into
+    #     one column and report the mixture as a single relationship.
+    #   - The recorded feature set itself grew a take_profit_presence_bonus
+    #     field, so a v3 row is missing a column a v4 analysis keys on -- the
+    #     same reason v2 could not be pooled with v3.
+    #
+    # This bump was FORCED by tests/test_policy_versioning.py, which is the guard
+    # working as designed: the widened fingerprint covers the ladder constants,
+    # so adding PRESENCE_TARGET_BONUS_MAX tripped it automatically instead of
+    # relying on somebody noticing.
+    feature_schema_version: str = "screening-rank-v4"
     definition_version: str = "price-return-2x-v1"
     purge_gap_seconds: int = 86400
     min_capture_coverage: float = 0.90
@@ -264,6 +300,7 @@ class Config:
                 max_candidate_age_minutes=scanner_data.get("max_candidate_age_minutes", 120),
                 max_market_checks_per_cycle=scanner_data.get("max_market_checks_per_cycle", 40),
                 enable_paper_trading=scanner_data.get("enable_paper_trading", False),
+                max_open_positions=scanner_data.get("max_open_positions", 1),
             ),
             sources=SourcesConfig(
                 dexscreener_profiles=sources_data.get("dexscreener_profiles", True),

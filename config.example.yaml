@@ -12,6 +12,14 @@ scanner:
   max_market_checks_per_cycle: 40
   # Virtual accounting only; no wallet/signing/submission exists. Default off.
   enable_paper_trading: false  # MEMESCANNER_ENABLE_PAPER_TRADING
+  # Concurrent virtual positions. 1 means one coin at a time.
+  #
+  # WARNING: there is no time-based exit anywhere in the paper trader. With a
+  # single slot, one position that never exits -- a runner drifting sideways
+  # above breakeven, for instance -- blocks every future trade indefinitely.
+  # At 3 slots that was survivable; at 1 it stops the bot entirely. Raise this
+  # if you would rather keep scanning than hold one coin exclusively.
+  max_open_positions: 1
 
 # All enabled adapters discover Solana candidates independently. Pump.fun is
 # additive; DEX discovery is launchpad-neutral, not a promise of every token.

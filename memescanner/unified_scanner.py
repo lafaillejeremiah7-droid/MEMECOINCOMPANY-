@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Awaitable, Callable, Dict, List, Optional
@@ -150,6 +151,40 @@ PRESENCE_SCAM_WARNING_CEILING = 5.0
 # measures from the high-water mark, a higher first target strictly increases
 # expected loss.
 TAKE_PROFIT_TARGET_MAX_HIGH_PRESENCE = 12.0
+
+# Presence-scaled bonus added to the first take-profit target ITSELF, before the
+# clamp.
+#
+# Why this exists. The ceiling above was not enough on its own. Presence lifted
+# the *cap* but never the number, so the risk-quality arithmetic -- which has no
+# notion of narrative magnitude and tops out around 4.5x -- remained the binding
+# constraint. A mint-bound post from a sitting president measured 4.50x while its
+# ceiling sat unused at 12.0x, which is the same as not having raised the ceiling
+# at all. A ceiling nobody reaches is decoration.
+#
+# The bonus is linear in presence: presence 0 adds exactly 0.0, so a token with
+# no story reproduces today's number to the digit, and presence 100 adds 6.0.
+# It is added BEFORE the clamp on purpose, so:
+#
+#   - every risk penalty still applies at full strength, and
+#   - the presence-scaled ceiling remains the binding constraint at the top, and
+#   - TAKE_PROFIT_TARGET_MIN remains the binding constraint at the bottom, so a
+#     high-presence token whose risk quality is bad still lands on the 1.5x
+#     floor. The bonus must never rescue a dangerous token; applying it after
+#     the clamp would do exactly that, which is why it is a mutation in
+#     scripts/mutation_check.py.
+#
+# SAFETY: this raises the range over which a position rides toward its first
+# sale, which is the range where the position is still 100% on the table. That
+# is only defensible because paper_trader.py now trails the PRE-tp1 position
+# too (PRE_TP1_TRAIL_*): a token that runs to 9x and collapses without ever
+# reaching a 10.5x tp1 used to have no peak-anchored protection whatsoever, only
+# a -50% stop measured from entry. Raising tp1 without that trail would be a
+# straight increase in expected loss.
+#
+# Invented, like every other number in this block, and recorded via
+# narrative_presence_features so it can eventually be measured.
+PRESENCE_TARGET_BONUS_MAX = 6.0
 
 # Second (runner) target for the final 20%. Expressed as a multiple of tp1 and
 # capped absolutely, because a runner target is a *trail-tightening threshold*,
@@ -558,6 +593,30 @@ def take_profit_target_ceiling(narrative_presence: float) -> float:
     return TAKE_PROFIT_TARGET_MAX + span * (presence / NARRATIVE_PRESENCE_MAX)
 
 
+def take_profit_target_bonus(narrative_presence: float) -> float:
+    """
+    The presence-scaled amount ADDED to the first-stage target before clamping.
+
+    Linear from 0.0 at presence 0 to ``PRESENCE_TARGET_BONUS_MAX`` (6.0) at
+    presence 100. Presence 0 therefore adds exactly nothing, which is what makes
+    this change free for tokens without a narrative.
+
+    This is deliberately separate from :func:`take_profit_target_ceiling`. The
+    ceiling alone lifted only the cap, so the risk-quality arithmetic stayed the
+    binding constraint and a presence-100 token measured at 4.50x kept 4.50x
+    while its 12.0x ceiling went unused. The bonus moves the number; the ceiling
+    still bounds it.
+
+    Args:
+        narrative_presence: Presence score; values outside 0..100 are clamped.
+
+    Returns:
+        Bonus multiple in [0.0, 6.0].
+    """
+    presence = max(0.0, min(NARRATIVE_PRESENCE_MAX, float(narrative_presence)))
+    return PRESENCE_TARGET_BONUS_MAX * (presence / NARRATIVE_PRESENCE_MAX)
+
+
 def compute_runner_target(
     decision: CandidateDecision,
     tp1: float,
@@ -636,6 +695,10 @@ def narrative_presence_features(
         "narrative_presence_scam_clamped": breakdown["scam_warning"],
         "paid_boost_scored_as_presence": breakdown["paid_boost_scored"],
         "take_profit_ceiling": round(take_profit_target_ceiling(presence), 2),
+        # Recorded alongside the ceiling because the bonus, not the ceiling, is
+        # what actually moved tp1. Without it a v4 row would show a tp1 that
+        # cannot be reconstructed from the risk-quality inputs alone.
+        "take_profit_presence_bonus": round(take_profit_target_bonus(presence), 2),
         "take_profit_target_tp1": decision.take_profit_target,
         "runner_target": decision.runner_target,
     }
@@ -681,11 +744,23 @@ def compute_take_profit_target(
     trade size earn a higher target, while thin pools, concentration,
     coordination flags, and a bot-churn-sized average trade pull it down.
 
-    The risk-quality arithmetic below is unchanged. Only the upper clamp moved:
-    it is now ``take_profit_target_ceiling(narrative_presence)``, so a token with
-    no narrative keeps the historical 4.0x ceiling and one with a mint-bound
-    celebrity post can reach 12.0x. Every risk penalty still applies at full
-    strength first -- presence raises the ceiling, it never offsets a penalty.
+    The risk-quality arithmetic below is unchanged. Narrative presence enters in
+    two places, both after every penalty has been applied at full strength:
+
+    * ``take_profit_target_bonus(presence)`` is ADDED to the target, linear from
+      0.0 at presence 0 to 6.0 at presence 100;
+    * ``take_profit_target_ceiling(presence)`` is the upper clamp, 4.0 at
+      presence 0 rising to 12.0 at presence 100.
+
+    The bonus exists because the ceiling alone did nothing. It raised the cap but
+    never the number, so risk-quality arithmetic that tops out around 4.5x stayed
+    the binding constraint and a presence-100 token sat at 4.50x under an unused
+    12.0x ceiling.
+
+    Presence still never offsets a penalty. The bonus is applied before the
+    clamp, so ``TAKE_PROFIT_TARGET_MIN`` remains the binding constraint at the
+    bottom: a loud token with bad risk quality still lands on the 1.5x floor.
+    Presence 0 reproduces the pre-bonus number exactly.
 
     Args:
         decision: An evaluated candidate decision with market and evidence data.
@@ -755,17 +830,44 @@ def compute_take_profit_target(
     if decision.screening_score >= 80:
         target += 0.25
 
+    # Narrative presence enters here, and only here. Computed once and used for
+    # both the bonus and the ceiling, so the two can never be derived from
+    # different presence values.
+    presence = compute_narrative_presence(
+        decision, reference_avg_trade_size_usd=reference_avg_trade_size_usd
+    )
+
+    # Presence-scaled bonus, added to the target BEFORE the clamp.
+    #
+    # Every penalty above has already been applied at full strength, so this
+    # cannot offset one: it shifts an already-penalised number, and the floor
+    # below still catches it. A high-presence token with a thin pool, heavy
+    # concentration and coordination flags still lands on
+    # TAKE_PROFIT_TARGET_MIN. Adding the bonus after the clamp would let it
+    # escape both the floor's meaning and the ceiling, which is precisely the
+    # `presence-bonus-rescues-a-risky-token` mutation.
+    target += take_profit_target_bonus(presence)
+
     # Presence-scaled ceiling. Gated on presence rather than raised globally:
     # a higher first target means the 80% sale triggers less often, so on a
     # token that never reaches it the position holds 100% into the round-trip
     # instead of 20%. The ladder is only safe in combination with the
-    # peak-tracking trail in paper_trader.py.
-    ceiling = take_profit_target_ceiling(
-        compute_narrative_presence(
-            decision, reference_avg_trade_size_usd=reference_avg_trade_size_usd
-        )
-    )
-    clamped = max(TAKE_PROFIT_TARGET_MIN, min(ceiling, target))
+    # peak-tracking trails in paper_trader.py -- both the runner trail after the
+    # 80% sale and the pre-tp1 trail before it.
+    ceiling = take_profit_target_ceiling(presence)
+    # The ceiling is truncated to the published 2dp, not rounded, so that
+    # rounding cannot lift the result back above the cap it was just clamped to.
+    # At presence 51 the ceiling is 8.08x and a bonus-carrying target lands on
+    # it; round(8.0800000000000001, 2) is fine, but at presence 65.7 the ceiling
+    # is 9.256x and round(9.256, 2) is 9.26 -- a published tp1 one hundredth
+    # ABOVE its own ceiling. That was unreachable while the ceiling was
+    # decorative; the bonus makes landing exactly on it the common case, and a
+    # recorded tp1 that violates its recorded ceiling would be a contradiction
+    # in the calibration data. Truncation keeps "the ceiling is the binding
+    # constraint at the top" literally true. Exact ceilings (4.0 at presence 0,
+    # 12.0 at presence 100) are unaffected.
+    ceiling_published = math.floor(ceiling * 100.0) / 100.0
+    clamped = max(TAKE_PROFIT_TARGET_MIN, min(ceiling_published, round(target, 2)))
     return round(clamped, 2)
 
 

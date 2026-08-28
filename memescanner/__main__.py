@@ -3,8 +3,13 @@
 ``python -m memescanner`` discovers platform-neutral Solana DEX candidates,
 normalizes/deduplicates them, and sends every source through one evidence-gated
 pipeline. It contains no wallet, signing, transaction submission, or live-trade
-path. Virtual PaperTrader behavior is disabled by default and capped at three
-positions by ``paper_trader.MAX_OPEN_POSITIONS``.
+path. Virtual PaperTrader behavior is disabled by default and capped at
+``scanner.max_open_positions`` concurrent positions, which defaults to 1.
+
+Note the operational consequence of that default: nothing in paper_trader.py
+closes a position on a timer, so a single position that stops producing price
+events holds the only slot indefinitely and the paper trader declines every
+later candidate while this scanner keeps alerting normally.
 """
 
 from __future__ import annotations
@@ -33,7 +38,6 @@ from memescanner.onchain import OnchainAnalyzer
 from memescanner.outcomes import OutcomeWorker
 from memescanner.paper_trader import (
     DEFAULT_TAKE_PROFIT_TARGET,
-    MAX_OPEN_POSITIONS,
     PaperTrader,
 )
 from memescanner.unified_scanner import CommonEvaluator, UnifiedSolanaScanner
@@ -217,6 +221,7 @@ async def main_loop(config: Optional[Config] = None) -> None:
                     config.evidence.tavily_api_key,
                     config.evidence.xai_api_key,
                 ),
+                max_open_positions=config.scanner.max_open_positions,
             )
             await paper_trader.initialize()
             async def paper_callback(candidate, market, take_profit_target, plan=None):
@@ -263,7 +268,7 @@ async def main_loop(config: Optional[Config] = None) -> None:
             len(scanner.discovery.sources),
             "enabled" if paper_trader else "disabled",
             "enabled" if outcome_worker else "disabled",
-            MAX_OPEN_POSITIONS,
+            config.scanner.max_open_positions,
         )
         if outcome_worker is not None and calibration_reporter is not None:
             background_tasks.extend([

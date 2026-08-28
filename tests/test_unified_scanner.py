@@ -1466,6 +1466,59 @@ def _decision_for_target(market_overrides=None, onchain=None, x_data=None, score
     )
 
 
+def _expected_target(decision, risk_quality: float, reference: float = None) -> float:
+    """The published tp1 for a fixture whose risk-quality arithmetic sums to `risk_quality`.
+
+    Narrative presence now ADDS to the target instead of only raising its
+    ceiling, so the totals these tests assert are no longer the risk-quality sum
+    on its own. The fixtures below all carry some presence -- they have socials,
+    turnover and mentions, which is what makes them realistic -- so there is no
+    way to isolate the risk arithmetic by choosing inputs.
+
+    Rather than replace each literal with a new magic total, the risk-quality
+    number each test is actually pinning stays written out at the call site and
+    the presence term is added here. A test named "adds 0.75" still fails if the
+    liquidity bonus stops being 0.75.
+
+    This helper deliberately does NOT constrain the bonus itself -- it calls the
+    same production function -- so it could not catch a broken bonus. That is the
+    job of the dedicated tests in tests/test_presence_ladder.py, which pin the
+    bonus at presence 0 and presence 100 independently, and of the
+    `presence-bonus-ignores-presence` mutation. Layering: these tests own the
+    risk arithmetic, those own the presence term.
+
+    Args:
+        decision: The fixture under test.
+        risk_quality: What the risk-quality terms sum to before presence.
+        reference: Average-trade-size reference, when the test overrides it.
+            Presence depends on it too, so it must be threaded through.
+
+    Returns:
+        The clamped, rounded target to expect.
+    """
+    import math
+
+    from memescanner.unified_scanner import (
+        DEFAULT_REFERENCE_AVG_TRADE_SIZE_USD,
+        TAKE_PROFIT_TARGET_MIN,
+        compute_narrative_presence,
+        take_profit_target_bonus,
+        take_profit_target_ceiling,
+    )
+
+    scale = (
+        DEFAULT_REFERENCE_AVG_TRADE_SIZE_USD if reference is None else reference
+    )
+    presence = compute_narrative_presence(
+        decision, reference_avg_trade_size_usd=scale
+    )
+    raw = risk_quality + take_profit_target_bonus(presence)
+    # Truncated to 2dp for the same reason production truncates it: rounding a
+    # target that landed on its ceiling must not lift it back above the ceiling.
+    ceiling = math.floor(take_profit_target_ceiling(presence) * 100.0) / 100.0
+    return round(max(TAKE_PROFIT_TARGET_MIN, min(ceiling, round(raw, 2))), 2)
+
+
 def test_take_profit_target_defaults_to_base():
     """Neutral evidence yields the 2.0x base target."""
     from memescanner.unified_scanner import compute_take_profit_target
@@ -1474,7 +1527,7 @@ def test_take_profit_target_defaults_to_base():
     decision = _decision_for_target(
         market_overrides={"liquidity_usd": 11_000, "volume_to_mcap_ratio": 1.0}
     )
-    assert compute_take_profit_target(decision) == 2.0
+    assert compute_take_profit_target(decision) == _expected_target(decision, 2.0)
 
 
 def test_take_profit_target_rewards_deep_liquidity():
@@ -1484,7 +1537,7 @@ def test_take_profit_target_rewards_deep_liquidity():
     decision = _decision_for_target(
         market_overrides={"liquidity_usd": 20_000, "volume_to_mcap_ratio": 1.0}
     )
-    assert compute_take_profit_target(decision) == 2.75
+    assert compute_take_profit_target(decision) == _expected_target(decision, 2.75)
 
 
 def test_take_profit_target_rewards_moderate_liquidity():
@@ -1494,7 +1547,7 @@ def test_take_profit_target_rewards_moderate_liquidity():
     decision = _decision_for_target(
         market_overrides={"liquidity_usd": 13_000, "volume_to_mcap_ratio": 1.0}
     )
-    assert compute_take_profit_target(decision) == 2.25
+    assert compute_take_profit_target(decision) == _expected_target(decision, 2.25)
 
 
 def test_take_profit_target_penalizes_thin_liquidity():
@@ -1504,7 +1557,7 @@ def test_take_profit_target_penalizes_thin_liquidity():
     decision = _decision_for_target(
         market_overrides={"liquidity_usd": 9_000, "volume_to_mcap_ratio": 1.0}
     )
-    assert compute_take_profit_target(decision) == 1.5
+    assert compute_take_profit_target(decision) == _expected_target(decision, 1.5)
 
 
 def test_take_profit_target_rewards_wide_holder_distribution():
@@ -1519,7 +1572,7 @@ def test_take_profit_target_rewards_wide_holder_distribution():
             "holder_suspicion": {"risk": "LOW"},
         },
     )
-    assert compute_take_profit_target(decision) == 2.5
+    assert compute_take_profit_target(decision) == _expected_target(decision, 2.5)
 
 
 def test_take_profit_target_penalizes_concentration():
@@ -1534,7 +1587,7 @@ def test_take_profit_target_penalizes_concentration():
             "holder_suspicion": {"risk": "LOW"},
         },
     )
-    assert compute_take_profit_target(decision) == 1.5
+    assert compute_take_profit_target(decision) == _expected_target(decision, 1.5)
 
 
 def test_take_profit_target_skips_unknown_concentration():
@@ -1549,7 +1602,7 @@ def test_take_profit_target_skips_unknown_concentration():
             "holder_suspicion": {"risk": "LOW"},
         },
     )
-    assert compute_take_profit_target(decision) == 2.0
+    assert compute_take_profit_target(decision) == _expected_target(decision, 2.0)
 
 
 def test_take_profit_target_penalizes_medium_coordination_and_suspicion():
@@ -1565,7 +1618,7 @@ def test_take_profit_target_penalizes_medium_coordination_and_suspicion():
         },
     )
     # 2.0 + 0.75 - 0.5 - 0.5 = 1.75
-    assert compute_take_profit_target(decision) == 1.75
+    assert compute_take_profit_target(decision) == _expected_target(decision, 1.75)
 
 
 def test_take_profit_target_rewards_x_mentions():
@@ -1580,8 +1633,8 @@ def test_take_profit_target_rewards_x_mentions():
         market_overrides={"liquidity_usd": 11_000, "volume_to_mcap_ratio": 1.0},
         x_data={"result_count": 12},
     )
-    assert compute_take_profit_target(high) == 2.5
-    assert compute_take_profit_target(mid) == 2.25
+    assert compute_take_profit_target(high) == _expected_target(high, 2.5)
+    assert compute_take_profit_target(mid) == _expected_target(mid, 2.25)
 
 
 def test_take_profit_target_rewards_turnover_and_score():
@@ -1592,7 +1645,7 @@ def test_take_profit_target_rewards_turnover_and_score():
         market_overrides={"liquidity_usd": 11_000, "volume_to_mcap_ratio": 2.0},
         score=85.0,
     )
-    assert compute_take_profit_target(decision) == 2.75
+    assert compute_take_profit_target(decision) == _expected_target(decision, 2.75)
 
 
 def test_take_profit_target_penalizes_low_turnover():
@@ -1602,18 +1655,26 @@ def test_take_profit_target_penalizes_low_turnover():
     decision = _decision_for_target(
         market_overrides={"liquidity_usd": 11_000, "volume_to_mcap_ratio": 0.2}
     )
-    assert compute_take_profit_target(decision) == 1.75
+    assert compute_take_profit_target(decision) == _expected_target(decision, 1.75)
 
 
 def test_take_profit_target_clamped_to_the_presence_scaled_maximum():
-    """Stacked positive signals are clamped to the presence-scaled ceiling.
+    """Stacked positive signals sit under the presence-scaled ceiling, above the raw sum.
 
-    This assertion changed with the presence-scaled ceiling, deliberately: the
-    same evidence that pushes the risk-quality arithmetic to 4.5 also carries
-    some narrative presence (25 mentions, 2.5x turnover), which lifts the
-    ceiling above 4.0 and lets the raw 4.5 through. The old 4.0 ceiling is not
-    gone -- it is what a candidate with no presence at all still gets, which
-    test_presence_zero_keeps_the_historical_four_x_ceiling pins directly.
+    This assertion changed once with the presence-scaled ceiling and again with
+    the presence bonus, both deliberately. The same evidence that pushes the
+    risk-quality arithmetic to 4.5 also carries narrative presence (25 mentions,
+    2.5x turnover), so:
+
+    * the ceiling is lifted above 4.0, which is what let the raw 4.5 through, and
+    * the bonus is added to the 4.5 itself, so the published target is now
+      strictly above it.
+
+    The second part is the whole point of the bonus. Under the ceiling-only
+    version this fixture sat at exactly 4.5 with its ceiling unused, which is
+    indistinguishable from not having raised the ceiling at all. The old 4.0
+    ceiling is not gone -- it is what a candidate with no presence still gets,
+    which test_presence_zero_keeps_the_historical_four_x_ceiling pins directly.
     """
     from memescanner.unified_scanner import (
         compute_narrative_presence,
@@ -1631,11 +1692,19 @@ def test_take_profit_target_clamped_to_the_presence_scaled_maximum():
         x_data={"result_count": 25},
         score=85.0,
     )
-    # 2.0 + 0.75 + 0.5 + 0.5 + 0.5 + 0.25 = 4.5, under a ceiling above 4.5.
+    # 2.0 + 0.75 + 0.5 + 0.5 + 0.5 + 0.25 = 4.5 of risk quality, plus the
+    # presence bonus, under a ceiling above both.
     presence = compute_narrative_presence(decision)
     assert 0 < presence < 100
-    assert take_profit_target_ceiling(presence) > 4.5
-    assert compute_take_profit_target(decision) == 4.5
+    ceiling = take_profit_target_ceiling(presence)
+    assert ceiling > 4.5
+    actual = compute_take_profit_target(decision)
+    assert actual == _expected_target(decision, 4.5)
+    # The bonus moved the number, not merely the cap: this is the defect the
+    # ceiling-only version left in place.
+    assert actual > 4.5
+    # And the ceiling is still the binding constraint at the top.
+    assert actual <= ceiling
 
 
 def test_take_profit_target_clamped_to_minimum():
@@ -1671,8 +1740,20 @@ async def test_qualified_decision_carries_take_profit_target():
         StubPairClient(valid_pair()), StubOnchain(), StubX()
     ).evaluate(candidate(), onchain_budget_available=True)
     assert result.decision == "QUALIFIED"
-    assert 1.5 <= result.take_profit_target <= 4.0
-    from memescanner.unified_scanner import compute_take_profit_target
+    from memescanner.unified_scanner import (
+        TAKE_PROFIT_TARGET_MIN,
+        compute_narrative_presence,
+        compute_take_profit_target,
+        take_profit_target_ceiling,
+    )
+
+    # The upper bound was a hard 4.0. It is now the presence-scaled ceiling,
+    # because the presence bonus can legitimately carry a candidate with a
+    # narrative above 4.0 -- that is the change. The bound is still a real
+    # constraint: it is computed from this candidate's own presence, not widened
+    # to a constant that would accept anything.
+    ceiling = take_profit_target_ceiling(compute_narrative_presence(result))
+    assert TAKE_PROFIT_TARGET_MIN <= result.take_profit_target <= ceiling
     assert result.take_profit_target == compute_take_profit_target(result)
 
 
@@ -1724,7 +1805,18 @@ async def test_run_cycle_passes_take_profit_target_to_paper_buyer(tmp_path):
     args = paper.await_args[0]
     assert args[0] is result["alerted"].candidate
     assert args[2] == result["alerted"].take_profit_target
-    assert 1.5 <= args[2] <= 4.0
+    # Bounded by this candidate's own presence-scaled ceiling rather than the old
+    # hard 4.0, which the presence bonus can now legitimately exceed.
+    from memescanner.unified_scanner import (
+        TAKE_PROFIT_TARGET_MIN,
+        compute_narrative_presence,
+        take_profit_target_ceiling,
+    )
+
+    ceiling = take_profit_target_ceiling(
+        compute_narrative_presence(result["alerted"])
+    )
+    assert TAKE_PROFIT_TARGET_MIN <= args[2] <= ceiling
 
 
 @pytest.mark.asyncio
@@ -1928,7 +2020,7 @@ def test_take_profit_target_rewards_large_average_trades():
         }
     )
     # 150k / 1000 trades = $150 average = 3x the 50.0 reference.
-    assert compute_take_profit_target(decision) == 2.5
+    assert compute_take_profit_target(decision) == _expected_target(decision, 2.5)
 
 
 def test_take_profit_target_rewards_average_trades_at_reference():
@@ -1945,7 +2037,7 @@ def test_take_profit_target_rewards_average_trades_at_reference():
         }
     )
     # 50k / 1000 trades = $50 average = exactly the reference.
-    assert compute_take_profit_target(decision) == 2.25
+    assert compute_take_profit_target(decision) == _expected_target(decision, 2.25)
 
 
 def test_take_profit_target_is_neutral_in_the_middle_band():
@@ -1962,7 +2054,7 @@ def test_take_profit_target_is_neutral_in_the_middle_band():
         }
     )
     # 30k / 1000 trades = $30 average: under the reference, above bot churn.
-    assert compute_take_profit_target(decision) == 2.0
+    assert compute_take_profit_target(decision) == _expected_target(decision, 2.0)
 
 
 def test_take_profit_target_penalizes_bot_churn_trade_size():
@@ -1979,7 +2071,7 @@ def test_take_profit_target_penalizes_bot_churn_trade_size():
         }
     )
     # 15k / 1000 trades = $15 average, below the $20 bot-churn floor.
-    assert compute_take_profit_target(decision) == 1.5
+    assert compute_take_profit_target(decision) == _expected_target(decision, 1.5)
 
 
 def test_take_profit_target_ignores_unknown_average_trade_size():
@@ -2004,9 +2096,17 @@ def test_take_profit_target_ignores_unknown_average_trade_size():
             "sells_24h": 0,
         }
     )
-    # The neutral known case and the unknown case both land on the base target.
-    assert compute_take_profit_target(unknown) == compute_take_profit_target(known)
-    assert compute_take_profit_target(unknown) == 2.0
+    # Both land on the same risk-quality sum: 2.0, i.e. the average-trade-size
+    # term adjusted neither of them.
+    #
+    # Their published targets are no longer identical, and that is correct rather
+    # than a regression. Average trade size is also a NARRATIVE PRESENCE
+    # component, so the known $30 case earns a little presence the unknown case
+    # cannot, and presence now adds to the target. The claim this test makes --
+    # that an unknown average trade size applies no risk-quality adjustment --
+    # is pinned by comparing each against its own risk-quality sum of 2.0.
+    assert compute_take_profit_target(known) == _expected_target(known, 2.0)
+    assert compute_take_profit_target(unknown) == _expected_target(unknown, 2.0)
 
 
 def test_take_profit_target_honours_custom_reference():
@@ -2023,10 +2123,10 @@ def test_take_profit_target_honours_custom_reference():
         }
     )
     # $50 average: a reward at the default reference, bot churn at $200.
-    assert compute_take_profit_target(decision) == 2.25
+    assert compute_take_profit_target(decision) == _expected_target(decision, 2.25)
     assert compute_take_profit_target(
         decision, reference_avg_trade_size_usd=200.0
-    ) == 1.5
+    ) == _expected_target(decision, 1.5, reference=200.0)
 
 
 def test_format_signal_shows_known_average_trade_size():

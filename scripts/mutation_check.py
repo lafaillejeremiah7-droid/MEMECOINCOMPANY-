@@ -346,8 +346,14 @@ MUTATIONS: List[Mutation] = [
     ),
     Mutation(
         name="runner-target-is-a-hard-sell",
+        # Pattern updated when evaluate_runner_trail was refactored onto the
+        # shared _evaluate_peak_trail core: the stall condition moved from
+        # `config.stall_velocity_pct` to a parameter (the pre-tp1 trail passes
+        # None, because it has no stall exit). The defect being guarded is
+        # unchanged, and the mutation is still applied to the one place the stall
+        # test lives, so the runner target still becomes a hard sell under it.
         path="memescanner/paper_trader.py",
-        old="    if armed and velocity_pct <= config.stall_velocity_pct:",
+        old="    if armed and stall_velocity_pct is not None and velocity_pct <= stall_velocity_pct:",
         new="    if armed:",
         tests="tests/test_presence_ladder.py",
         defect=(
@@ -357,6 +363,84 @@ MUTATIONS: List[Mutation] = [
             "never triggers. The target exists to *arm a tighter trail* -- stalled "
             "or negative velocity exits, still climbing keeps riding -- which "
             "captures the tail without anyone having to predict its size."
+        ),
+    ),
+    Mutation(
+        name="presence-bonus-ignores-presence",
+        path="memescanner/unified_scanner.py",
+        old="    presence = max(0.0, min(NARRATIVE_PRESENCE_MAX, float(narrative_presence)))\n"
+            "    return PRESENCE_TARGET_BONUS_MAX * (presence / NARRATIVE_PRESENCE_MAX)",
+        new="    return PRESENCE_TARGET_BONUS_MAX",
+        tests="tests/test_presence_ladder.py",
+        defect=(
+            "Handing every candidate the full take-profit bonus regardless of "
+            "narrative presence. It is indistinguishable from the correct version "
+            "at presence 100, which is where anyone testing it by hand would "
+            "look, and it silently pushes an anonymous dog coin's first target "
+            "from 2.0x to 8.0x. That is not generosity: a higher first target "
+            "means the 80% sale triggers less often, so on the ordinary token "
+            "that never reaches it you hold 100% into the round-trip instead of "
+            "20%. The bonus is scaled by presence precisely so that raising the "
+            "target is paid for by evidence of a catalyst, and presence 0 must "
+            "add exactly 0.0."
+        ),
+    ),
+    Mutation(
+        name="presence-bonus-rescues-a-risky-token",
+        path="memescanner/unified_scanner.py",
+        old="    ceiling_published = math.floor(ceiling * 100.0) / 100.0\n"
+            "    clamped = max(TAKE_PROFIT_TARGET_MIN, min(ceiling_published, round(target, 2)))\n"
+            "    return round(clamped, 2)",
+        new="    clamped = max(TAKE_PROFIT_TARGET_MIN, min(ceiling, target))\n"
+            "    return round(clamped + take_profit_target_bonus(presence), 2)",
+        tests="tests/test_presence_ladder.py",
+        defect=(
+            "Applying the presence bonus AFTER the clamp, so attention can lift a "
+            "token past both ends of its own bounds. A mint with a thin pool, "
+            "heavy concentration, coordination flags and an OSINT scam warning "
+            "gets floored to 1.5x by the risk arithmetic and then handed its "
+            "bonus on top, publishing a target above the floor for a token the "
+            "evidence says is dangerous -- and a loud clean token is published "
+            "above the ceiling that was supposed to bound it. Order of operations "
+            "is the whole safety property here: the bonus shifts an "
+            "already-penalised number and the clamp is what stops it becoming a "
+            "rescue."
+        ),
+    ),
+    Mutation(
+        name="pre-tp1-trail-never-arms",
+        path="memescanner/paper_trader.py",
+        old="PRE_TP1_TRAIL_ARM_MULTIPLE = 2.0",
+        new="PRE_TP1_TRAIL_ARM_MULTIPLE = 1_000_000.0",
+        tests="tests/test_presence_ladder.py",
+        defect=(
+            "An arm multiple no token reaches, which restores the naked pre-tp1 "
+            "ride verbatim. The runner trail only runs once breakeven_stop is "
+            "set, and _take_profit is what sets it, so with this trail disabled a "
+            "position on its way to tp1 has NO peak-anchored protection at all -- "
+            "only -50% and -70% measured from ENTRY. A token that runs to 9x and "
+            "collapses never triggers a 10.5x tp1, so it gives the entire move "
+            "back and closes at -50%. This is the exposure the presence bonus "
+            "widens, so the two changes are only safe together. The failure is "
+            "invisible: the position simply stays open, and the eventual loss "
+            "looks like an ordinary stop-out."
+        ),
+    ),
+    Mutation(
+        name="runner-target-ratchets-down",
+        path="memescanner/paper_trader.py",
+        old="    return max(stored, ratcheted)",
+        new="    return ratcheted",
+        tests="tests/test_presence_ladder.py",
+        defect=(
+            "Letting the runner target move DOWN. A lower target arms the tight "
+            "trail sooner, so a position that dipped is cut at half width on a "
+            "drawdown the velocity-scaled trail already handles correctly by "
+            "narrowing on its own -- tightening twice and exiting a move that was "
+            "merely breathing. The ratchet exists to hand a still-vertical token "
+            "its wide band back; a target that can fall does the exact opposite "
+            "and there is no scenario in which it helps, which is why the "
+            "function is monotone upward by construction."
         ),
     ),
     Mutation(
