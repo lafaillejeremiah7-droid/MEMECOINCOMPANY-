@@ -21,6 +21,7 @@ from typing import Any, List, Optional
 import httpx
 
 from memescanner.calibration import CalibrationReporter
+from memescanner.company import PaperCompany
 from memescanner.config import Config
 from memescanner.database import Database
 from memescanner.discovery import (
@@ -219,6 +220,7 @@ async def main_loop(config: Optional[Config] = None) -> None:
     await database.initialize()
     http = ResilientHttpClient()
     paper_trader: Optional[PaperTrader] = None
+    company: Optional[PaperCompany] = None
     outcome_database: Optional[Database] = None
     calibration_database: Optional[Database] = None
     background_tasks: List[asyncio.Task[Any]] = []
@@ -266,13 +268,14 @@ async def main_loop(config: Optional[Config] = None) -> None:
                 max_open_positions=config.scanner.max_open_positions,
             )
             await paper_trader.initialize()
+            company = PaperCompany(paper_trader, config.database.path + ".company.db")
+            await company.supervise_once()
             async def paper_callback(candidate, market, take_profit_target, plan=None):
-                return await _paper_buyer(
-                    paper_trader,
-                    candidate,
-                    market,
-                    take_profit_target,
-                    plan,
+                assert company is not None
+                details = plan or {}
+                return await company.consider(
+                    candidate.symbol or "UNKNOWN", candidate.mint, market,
+                    details.get("evidence") or {}, details.get("screening_score") or 0,
                 )
 
         outcome_worker = None
@@ -324,9 +327,9 @@ async def main_loop(config: Optional[Config] = None) -> None:
                 ),
             ])
         loop = asyncio.get_running_loop()
-        if paper_trader is not None:
+        if company is not None:
             background_tasks.append(asyncio.create_task(
-                _paper_supervisor(paper_trader), name="paper-exit-supervisor",
+                company.supervise(), name="paper-company-execution-manager",
             ))
         next_portfolio_update = loop.time() + 3600.0
         paper_summary_date = datetime.now(timezone.utc).date()
@@ -365,6 +368,8 @@ async def main_loop(config: Optional[Config] = None) -> None:
         if outcome_database is not None:
             await outcome_database.close()
         await http.close()
+        if company is not None:
+            company.close()
         if paper_trader is not None:
             await paper_trader.close()
         await database.close()

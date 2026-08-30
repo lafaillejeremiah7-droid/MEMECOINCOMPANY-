@@ -18,9 +18,31 @@ position/balance changes commit together. Incompatible historical balances are
 rejected, never reset. Explicit larger custom ledgers are historical simulation
 only and are not used by the default runtime.
 
-The six scores currently summarize deterministic evidence checks, not six
-deployed independent research bots. See the [company blueprint](docs/early_discovery_company.md).
-Unverified LP safety still blocks trading. Real execution remains unavailable:
+The default paper runtime now uses eight bounded deterministic roles: Scout,
+Investigator, Risk Defender, Market Analyst, Trade Strategist, Referee,
+Execution & Position Manager, and Operations Boss. The first four checks run
+concurrently on isolated copies of the same evidence, followed by strategy,
+independent Referee review and Boss authorization. These are software workers,
+not eight LLMs or eight independent data feeds. A 100/0 employee score means a
+check passed/failed, not a probability of profit.
+
+Worker reports and execution attempts are persisted in `<database>.company.db`.
+Two-second worker timeouts, a five-second market-receipt freshness limit and a
+ten-second exit-supervision freshness limit block stale handoffs. Receipt time
+does not prove that a provider's underlying quote is fresh. Slow evidence
+collection can therefore result in no trade; no receipt timestamp is refreshed
+to hide that delay. There is no additional paid-feed subscription.
+
+The Boss checks treasury reconciliation and persists worker/execution failure
+halts. Restarts do not clear halts or retry an unresolved attempt. Halts block
+entries, not exit supervision. Attempts are keyed by mint, matching the current
+scanner's one-alert-per-mint behavior. Recovery requires operator investigation;
+no automatic or AI-controlled reset is provided. The audit database is required
+alongside the paper ledger, and both must be preserved. Run one company process
+per ledger; multiple-process operation is not supported.
+
+See the [company blueprint](docs/early_discovery_company.md). Unverified LP safety
+still blocks trading. Real execution remains unavailable:
 100 completed forward paper trades, validation, human approval and a separately
 audited deterministic wallet service are required; there is no automatic live switch.
 

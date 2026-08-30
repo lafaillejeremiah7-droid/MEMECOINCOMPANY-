@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import math
+import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Awaitable, Callable, Dict, List, Optional
@@ -928,6 +929,10 @@ class CommonEvaluator:
             )
         if market is None:
             return CandidateDecision(candidate, "DEFERRED", ["SOLANA_PAIR_NOT_FOUND"])
+
+        # Receipt time, not the venue's event time. Company handoffs expire it;
+        # this must not be refreshed after slow social analysis or alert delivery.
+        market = dict(market, company_observed_at=time.time())
 
         candidate.social_links.update(market.get("social_links") or set())
         candidate.name = candidate.name or market.get("name")

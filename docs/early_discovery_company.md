@@ -4,10 +4,13 @@ Research and implementation specification — 2026-08-30.
 
 Revision: the user subsequently accepted 1.31:1 minimum net reward/risk.
 The prototype now uses that floor, independent two-second exit supervision,
-and a zero-minute default discovery-age floor. Six independent workers remain
-planned work; the current six scores are deterministic evidence summaries.
+and a zero-minute default discovery-age floor. The follow-up eight-role runtime
+implements isolated deterministic worker checks, a separate Execution Manager,
+and a persistent halt-only Operations Boss. They share existing collectors;
+independent streaming sources and executable fills remain future work.
 
-Status: proposed six-worker architecture, not a deployed trading company. This
+Status: eight-role paper implementation; this research design also describes
+future data-source improvements. It is not a deployed live trading company. This
 document does not enable execution, subscribe to paid feeds, or certify the
 existing prototype as production-safe. Exactly $11 is the total budget; no
 additional infrastructure budget is assumed.
@@ -64,10 +67,15 @@ before use in a backtest. No complete early-window replay was performed here.
 | Trade Strategist | Price both legs; calculate target payoff, stop loss, costs, minimum net profit and holding limit. | Complete trade ticket with independently reproducible arithmetic. | Propose only. |
 | Referee | Recompute hard gates, check conflicting evidence and freshness, then reserve treasury atomically. | BUY, WATCH or REJECT with evidence IDs and reasons. | Sole paper authorization; no signing keys. |
 
+Employee 7, Execution & Position Manager, handles paper entries and independent
+exit supervision. Employee 8, Operations Boss, checks handoff freshness, exit
+supervision health and accounting reconciliation. It persists halts on failures
+and unresolved execution attempts; it cannot overrule another worker's veto.
+
 Workers may run concurrently after discovery, but dependent decisions wait for
 their inputs. They are separate bounded services with structured outputs, not
 six copies of one chat prompt. A shared immutable ledger and event queue are
-supporting infrastructure, not a seventh employee.
+supporting infrastructure, not additional employees.
 
 Every worker report contains worker/version, chain/mint, evidence IDs,
 source_event_time, received_at, evaluated_at, expires_at, score components,
@@ -245,9 +253,10 @@ that contradicts the Referee's ticket.
 
 ## Repository implementation gaps observed
 
-The local prototype has a single planning function generating six scores, not
-six independently evidenced workers. The previous ten-minute discovery floor
-and five-minute main-loop position checks have been replaced. Streaming launch
+The runtime now invokes separate bounded worker checks and records all eight
+role reports. It still shares upstream evidence and uses modeled paper fills.
+The previous ten-minute discovery floor and five-minute main-loop position
+checks have been replaced. Streaming launch
 coverage, executable quotes and forward validation still require implementation
 before claiming reliable early discovery or live micro-trade protection.
 
