@@ -11,23 +11,16 @@ SIGNAL ONLY. Everything here is a simulation: there is no wallet, no signing, no
 transaction submission, and no live execution path. The operator decides sizing
 and execution manually.
 
-OPERATIONAL RISK -- ONE STUCK POSITION HALTS THE BOT.
-
-    ``MAX_OPEN_POSITIONS`` is now 1. There is no time-based exit anywhere in this
-    module: no max-hold, no age close, nothing on a clock. Every exit needs a
-    price event, so a position that never produces one never closes and holds the
-    only slot forever. The likely path there is unspectacular -- a runner
-    drifting above breakeven with the trail floored at entry -- and the only
-    symptom is an INFO log line from ``buy``.
-
-    With three slots the other two kept trading. With one, the scanner keeps
-    alerting while the paper trader declines every candidate. No timeout is
-    invented here on purpose: any value would be a guess and a wrong one closes
-    winners. Raise ``scanner.max_open_positions`` if that trade is not acceptable.
+The default $11 runtime uses full micro exits, a time stop and one position.
+Historical large-ledger simulation retains legacy runner behavior without DCA.
+Missing exit quotes retain a position rather than fabricating a fill. The
+default runtime supervises exits independently from discovery.
 """
 
+import asyncio
 import json
 import logging
+import math
 import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -63,6 +56,13 @@ logger = logging.getLogger(__name__)
 MAX_OPEN_POSITIONS = 1
 DB_PATH = "memescanner.db"
 
+MICRO_STARTING_BALANCE = 11.0
+MICRO_DEFAULT_TRADE_SIZE = 1.0
+MICRO_MAX_TRADE_SIZE = 2.0
+MICRO_MIN_RESERVE = 5.0
+MICRO_DAILY_LOSS_LIMIT = 1.0
+MICRO_CONSECUTIVE_LOSS_LIMIT = 3
+
 # Fallback take profit at +100% (2x) when a position has no valid dynamic
 # target stored. Kept for backward compatibility with existing importers.
 TAKE_PROFIT_PCT = 100.0
@@ -76,11 +76,11 @@ TAKE_PROFIT_REASON = "Take profit (target)"
 # dex_data key to read, which guarantees every comparison is like-for-like.
 PRICE_BASIS_PRICE_USD = "price_usd"
 PRICE_BASIS_MARKET_CAP = "market_cap"
-STOP_LOSS_PCT = -50.0
+STOP_LOSS_PCT = -50.0  # Legacy-row compatibility; micro rows carry a 5-8% stop.
 # Tightened hard stop after recovery check HOLD decision
 HARD_STOP_PCT = -70.0
 # DCA amount for recovery
-DCA_AMOUNT = 25.0
+DCA_AMOUNT = 0.0  # DCA is prohibited; retained only as a compatibility symbol.
 
 # ---------------------------------------------------------------------------
 # Runner trail: how the final 20% is managed after the 80% sale.
@@ -669,8 +669,8 @@ class PaperTrader:
 
     def __init__(
         self,
-        starting_balance: float = 1000.0,
-        trade_size: float = 50.0,
+        starting_balance: float = MICRO_STARTING_BALANCE,
+        trade_size: float = MICRO_DEFAULT_TRADE_SIZE,
         db_path: Optional[str] = None,
         message_sender: Optional[Callable[[str], Awaitable[bool]]] = None,
         onchain_analyzer: Optional["OnchainAnalyzer"] = None,
@@ -685,8 +685,8 @@ class PaperTrader:
         Initialize the paper trader.
 
         Args:
-            starting_balance: Starting virtual balance (default $1,000).
-            trade_size: Fixed trade size (default $50).
+            starting_balance: Starting virtual balance (default $11).
+            trade_size: Default trade size (default $1, micro cap $2).
             db_path: Path to the sqlite database file.
             message_sender: Async callable for sending Telegram messages.
             onchain_analyzer: Optional pre-configured OnchainAnalyzer for recovery checks.
@@ -711,29 +711,9 @@ class PaperTrader:
                 trail. Defaults to the module values, which are wider than the
                 runner trail's at every band.
 
-        WARNING -- ONE SLOT MEANS ONE STUCK POSITION STOPS THE BOT.
-
-            ``max_open_positions`` now defaults to 1. There is NO time-based exit
-            anywhere in this module: no max-hold, no age-based close, nothing
-            that fires on the clock. Every exit path requires a price event --
-            tp1, a trail breach, -50%, or -70%.
-
-            A position that never produces one therefore never closes. The
-            realistic case is not a rug, it is the opposite: a runner drifting
-            sideways somewhere above breakeven, with the trail floored at entry
-            so it cannot fire, and price never reaching the next target. That
-            position holds its slot forever.
-
-            With three slots that was survivable -- the other two kept trading.
-            With one it is a full stop: the scanner keeps finding candidates, the
-            alerts keep going out, and the paper trader silently declines every
-            one of them. The only symptom is an INFO log line saying max
-            positions reached.
-
-            No max-hold timeout is invented here, deliberately. Any number would
-            be a guess, and a wrong one closes winners. The operator decides:
-            raise ``scanner.max_open_positions`` in config.yaml, or watch the
-            open position and intervene manually.
+        Micro positions cannot enter the legacy runner/recovery paths. A time
+        stop requests a full exit on the next available quote; it cannot
+        guarantee a fill in an illiquid or unavailable market.
         """
         self.starting_balance = starting_balance
         self.trade_size = trade_size
@@ -751,12 +731,65 @@ class PaperTrader:
         self.closed_trades: List[Dict[str, Any]] = []
         self._db: Optional[aiosqlite.Connection] = None
         self._initialized = False
+        self._state_lock = asyncio.Lock()
+        # Explicit large custom paper ledgers remain readable for historical
+        # replay. The production runtime uses the defaults and therefore always
+        # has this safety mode enabled.
+        self.micro_policy_enabled = (
+            starting_balance <= MICRO_STARTING_BALANCE
+            and trade_size <= MICRO_MAX_TRADE_SIZE
+        )
+
+        if starting_balance > MICRO_STARTING_BALANCE:
+            logger.warning(
+                "Paper balance %.2f exceeds the $11 micro-company policy; "
+                "the default runtime always passes $11", starting_balance,
+            )
+        if trade_size > MICRO_MAX_TRADE_SIZE:
+            logger.warning(
+                "Trade size %.2f exceeds the hard $2 entry cap and will be rejected",
+                trade_size,
+            )
 
     async def _notify(self, message: str) -> bool:
         """Use the configured sender, with the legacy sender only for compatibility."""
-        if self._message_sender is not None:
-            return await self._message_sender(message)
-        return await send_telegram_message(message)
+        try:
+            if self._message_sender is not None:
+                return await self._message_sender(message)
+            return await send_telegram_message(message)
+        except Exception:
+            logger.exception("Paper notification failed; accounting remains committed")
+            return False
+
+    async def notify_trade_plan(self, message: str) -> bool:
+        """Publish the six-employee Referee record before any paper entry."""
+        return await self._notify(message)
+
+    def capital_state(self):
+        """Return the treasury facts consumed by the independent Referee gate."""
+        from memescanner.micro_company import CapitalState
+
+        now = datetime.now(timezone.utc)
+        today_pnl = 0.0
+        completed_today = []
+        for trade in self.closed_trades:
+            exited = datetime.fromtimestamp(float(trade.get("exit_time") or 0), timezone.utc)
+            if exited.date() == now.date():
+                today_pnl += float(trade.get("pnl_usd") or 0)
+            completed_today.append(trade)
+        consecutive_losses = 0
+        for trade in sorted(completed_today, key=lambda item: item.get("exit_time") or 0, reverse=True):
+            if float(trade.get("pnl_usd") or 0) < 0:
+                consecutive_losses += 1
+            else:
+                break
+        return CapitalState(
+            available_balance_usd=self.balance,
+            open_positions=len(self.positions),
+            daily_realized_pnl_usd=today_pnl,
+            consecutive_losses=consecutive_losses,
+            completed_paper_signals=len(self.closed_trades),
+        )
 
     async def initialize(self) -> None:
         """Initialize database and load existing positions."""
@@ -798,6 +831,10 @@ class PaperTrader:
                 trail_width_pct REAL,
                 celebrity_verified INTEGER DEFAULT 0,
                 runner_armed INTEGER DEFAULT 0
+                ,stop_loss_pct REAL DEFAULT 8.0
+                ,max_hold_seconds INTEGER DEFAULT 900
+                ,estimated_round_trip_costs_usd REAL DEFAULT 0.0
+                ,micro_mode INTEGER DEFAULT 0
             )
         """)
 
@@ -838,6 +875,10 @@ class PaperTrader:
             ("trail_width_pct", "REAL"),
             ("celebrity_verified", "INTEGER DEFAULT 0"),
             ("runner_armed", "INTEGER DEFAULT 0"),
+            ("stop_loss_pct", "REAL DEFAULT 8.0"),
+            ("max_hold_seconds", "INTEGER DEFAULT 900"),
+            ("estimated_round_trip_costs_usd", "REAL DEFAULT 0.0"),
+            ("micro_mode", "INTEGER DEFAULT 0"),
         ):
             if column not in existing_columns:
                 await self._db.execute(
@@ -852,6 +893,12 @@ class PaperTrader:
         ) as cursor:
             row = await cursor.fetchone()
             if row:
+                if self.micro_policy_enabled and (
+                    not all(math.isfinite(float(value)) for value in row)
+                    or row[1] > MICRO_STARTING_BALANCE
+                    or row[2] > MICRO_MAX_TRADE_SIZE
+                ):
+                    raise ValueError("Incompatible historical paper ledger; use a separate micro database")
                 self.balance = row[0]
                 self.starting_balance = row[1]
                 self.trade_size = row[2]
@@ -879,6 +926,7 @@ class PaperTrader:
             "take_profit_target, price_basis, original_entry_price, peak_price, "
             "runner_target, narrative_presence, narrative_presence_json, "
             "last_velocity_pct, trail_width_pct, celebrity_verified, runner_armed "
+            ", stop_loss_pct, max_hold_seconds, estimated_round_trip_costs_usd, micro_mode "
             "FROM paper_positions WHERE status = 'open'"
         ) as cursor:
             async for row in cursor:
@@ -915,6 +963,10 @@ class PaperTrader:
                     "trail_width_pct": float(row[20] or 0.0),
                     "celebrity_verified": bool(row[21]),
                     "runner_armed": bool(row[22]),
+                    "stop_loss_pct": float(row[23] or 8.0),
+                    "max_hold_seconds": int(row[24] or 900),
+                    "estimated_round_trip_costs_usd": float(row[25] or 0.0),
+                    "micro_mode": bool(row[26]),
                 })
 
         # Load closed trades for today's summary
@@ -949,6 +1001,16 @@ class PaperTrader:
         await self._db.commit()
 
     async def buy(self, token_data: Dict[str, Any], dex_data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """Serialize authorization and persistence with position supervision."""
+        async with self._state_lock:
+            try:
+                return await self._buy_locked(token_data, dex_data)
+            except BaseException:
+                if self._db:
+                    await self._db.rollback()
+                raise
+
+    async def _buy_locked(self, token_data: Dict[str, Any], dex_data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """
         Open a paper position for a token.
 
@@ -962,14 +1024,32 @@ class PaperTrader:
         if not self._initialized:
             await self.initialize()
 
-        # Check if balance allows
-        if self.balance < self.trade_size:
-            logger.info("Paper trader: insufficient balance ($%.2f < $%.2f)", self.balance, self.trade_size)
+        micro_entry = self.micro_policy_enabled or bool(token_data.get("micro_mode"))
+        position_size = float(token_data.get("entry_amount_usd", self.trade_size) or 0)
+        costs = float(token_data.get("estimated_round_trip_costs_usd", 0.0))
+        if not all(math.isfinite(value) for value in (position_size, costs, self.balance)) or costs < 0:
+            return None
+        if position_size <= 0 or (micro_entry and position_size > MICRO_MAX_TRADE_SIZE):
+            logger.info("Paper trader: rejected invalid or over-cap position size $%.2f", position_size)
+            return None
+        if self.balance < position_size:
+            logger.info("Paper trader: insufficient balance ($%.2f < $%.2f)", self.balance, position_size)
+            return None
+        # Preserve at least $5 and enforce daily/consecutive-loss circuit breakers.
+        state = self.capital_state()
+        if micro_entry and self.balance - position_size - costs < MICRO_MIN_RESERVE:
+            logger.info("Paper trader: rejected entry because $5 reserve would be breached")
+            return None
+        if micro_entry and state.daily_realized_pnl_usd <= -MICRO_DAILY_LOSS_LIMIT:
+            logger.info("Paper trader: daily $1 loss circuit breaker active")
+            return None
+        if micro_entry and state.consecutive_losses >= MICRO_CONSECUTIVE_LOSS_LIMIT:
+            logger.info("Paper trader: three-loss circuit breaker active")
             return None
 
         # Check max positions. At the default of 1 this line is the ONLY symptom
         # of a position that has stopped exiting -- see the class docstring.
-        if len(self.positions) >= self.max_open_positions:
+        if len(self.positions) >= (1 if micro_entry else self.max_open_positions):
             logger.info(
                 "Paper trader: max positions reached (%d/%d); no further trades "
                 "until an open position exits",
@@ -983,6 +1063,18 @@ class PaperTrader:
         take_profit_target = _coerce_take_profit_target(
             token_data.get("take_profit_target", DEFAULT_TAKE_PROFIT_TARGET)
         )
+        stop_pct = float(token_data.get("stop_loss_pct", 8.0))
+        if micro_entry:
+            gross_target = position_size * (take_profit_target - 1)
+            net_loss = position_size * stop_pct / 100 + costs
+            if (
+                not math.isfinite(stop_pct) or not 5 <= stop_pct <= 8
+                or not 1.08 <= take_profit_target <= 1.15
+                or costs <= 0 or costs > gross_target * 0.25
+                or net_loss <= 0 or (gross_target - costs) / net_loss < 1.31
+            ):
+                logger.info("Paper entry rejected by independent net-economics check")
+                return None
         runner_target = _coerce_runner_target(
             token_data.get("runner_target"), take_profit_target
         )
@@ -1005,15 +1097,15 @@ class PaperTrader:
         # cap therefore fabricates P&L and can trip stops on a supply event.
         entry_price, price_basis = _resolve_quote(dex_data)
 
-        if entry_price <= 0:
+        if not math.isfinite(entry_price) or entry_price <= 0 or (micro_entry and price_basis != "price_usd"):
             logger.warning("Paper trader: invalid entry price for %s", symbol)
             return None
 
         # Calculate tokens held (conceptual - based on trade_size / market_cap ratio)
-        tokens_held = self.trade_size / entry_price if entry_price > 0 else 0
+        tokens_held = position_size / entry_price if entry_price > 0 else 0
 
         # Deduct from balance
-        self.balance -= self.trade_size
+        new_balance = self.balance - position_size
 
         # Create position
         entry_time = time.time()
@@ -1022,7 +1114,7 @@ class PaperTrader:
             "symbol": symbol,
             "entry_price": entry_price,
             "entry_mc": market_cap,
-            "amount_usd": self.trade_size,
+            "amount_usd": position_size,
             "tokens_held": tokens_held,
             "entry_time": entry_time,
             "current_price": entry_price,
@@ -1047,6 +1139,10 @@ class PaperTrader:
             "trail_width_pct": 0.0,
             "celebrity_verified": celebrity_verified,
             "runner_armed": False,
+            "stop_loss_pct": max(5.0, min(8.0, float(token_data.get("stop_loss_pct", 8.0)))),
+            "max_hold_seconds": max(1, min(900, int(token_data.get("max_hold_seconds", 900)))),
+            "estimated_round_trip_costs_usd": costs,
+            "micro_mode": micro_entry,
         }
 
         # Save to DB
@@ -1056,28 +1152,40 @@ class PaperTrader:
                 "tokens_held, entry_time, status, half_sold, breakeven_stop, recovery_checked, "
                 "dca_done, take_profit_target, price_basis, original_entry_price, "
                 "peak_price, runner_target, narrative_presence, narrative_presence_json, "
-                "celebrity_verified, runner_armed) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, 'open', 0, 0, 0, 0, ?, ?, ?, ?, ?, ?, ?, ?, 0)",
-                (mint, symbol, entry_price, market_cap, self.trade_size, tokens_held,
+                "celebrity_verified, runner_armed, stop_loss_pct, max_hold_seconds, "
+                "estimated_round_trip_costs_usd, micro_mode) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, 'open', 0, 0, 0, 0, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?)",
+                (mint, symbol, entry_price, market_cap, position_size, tokens_held,
                  entry_time, take_profit_target, price_basis, entry_price,
                  entry_price, runner_target, narrative_presence,
                  _encode_components(position["narrative_presence_components"]),
-                 int(celebrity_verified)),
+                 int(celebrity_verified), position["stop_loss_pct"],
+                 position["max_hold_seconds"], position["estimated_round_trip_costs_usd"],
+                 int(position["micro_mode"])),
             )
             position["id"] = cursor.lastrowid
+            await self._db.execute("UPDATE paper_balance SET balance = ? WHERE id = 1", (new_balance,))
             await self._db.commit()
-            await self._save_balance()
 
+        self.balance = new_balance
         self.positions.append(position)
 
         # Send Telegram notification
         mc_str = f"${market_cap:,.0f}" if market_cap >= 1000 else f"${market_cap:.0f}"
+        target_line = (
+            f"\U0001f3af Target: {(take_profit_target - 1) * 100:.1f}% gross (full exit)\n"
+            if micro_entry else
+            f"\U0001f3af Target: {take_profit_target:.2f}x (sell 80%)\n"
+        )
+        runner_line = "" if micro_entry else (
+            f"\U0001f680 Runner target: {runner_target:.2f}x on the final 20% "
+            "(tightens the trail; not an automatic sell)\n"
+        )
         msg = (
             f"\U0001f4dd PAPER BUY: ${symbol}\n"
-            f"\U0001f4b5 Bought ${self.trade_size:.0f} at MC {mc_str}\n"
-            f"\U0001f3af Target: {take_profit_target:.2f}x (sell 80%)\n"
-            f"\U0001f680 Runner target: {runner_target:.2f}x on the final 20% "
-            f"(tightens the trail; not an automatic sell)\n"
+            f"\U0001f4b5 Bought ${position_size:.2f} at MC {mc_str}\n"
+            f"{target_line}"
+            f"{runner_line}"
             f"\U0001f4e3 Narrative presence: {narrative_presence:.0f}/100 "
             "(uncalibrated)\n"
             f"\U0001f4b0 Balance: ${self.balance:.0f} remaining\n"
@@ -1089,12 +1197,16 @@ class PaperTrader:
         return position
 
     async def check_positions(self) -> List[Dict[str, Any]]:
+        """Do not race a buy, a second supervisor, or a duplicate exit."""
+        async with self._state_lock:
+            return await self._check_positions_locked()
+
+    async def _check_positions_locked(self) -> List[Dict[str, Any]]:
         """
         Update current prices for all open positions and check TP/SL triggers.
 
-        When a position hits -50%, uses RecoveryChecker to decide whether to
-        HOLD (tighten to -70%), DCA ($25 more), or SELL. Only checks recovery
-        once per position.
+        Micro positions use a full exit at 8-15% gross, a 5-8% stop, and a
+        strict time stop. Legacy rows are still readable, but DCA is prohibited.
 
         Returns:
             List of closed positions from this check cycle.
@@ -1119,6 +1231,10 @@ class PaperTrader:
             try:
                 dex_data = await fetch_dex_data(mint)
                 current_price = _current_quote(pos, dex_data)
+                if current_price is not None and (not math.isfinite(current_price) or current_price <= 0):
+                    current_price = None
+                if current_price is None and pos.get("micro_mode"):
+                    logger.warning("Paper exit quote unavailable for %s; slot remains occupied", mint)
                 if current_price is not None:
                     pos["current_price"] = current_price
 
@@ -1137,10 +1253,31 @@ class PaperTrader:
                     if entry_price > 0:
                         pnl_pct = ((current_price - entry_price) / entry_price) * 100
                         pnl_usd = pos["amount_usd"] * (pnl_pct / 100)
-                        pos["unrealized_pnl"] = pnl_usd
+                        pos["unrealized_pnl"] = pnl_usd - float(pos.get("estimated_round_trip_costs_usd") or 0)
                     else:
                         pnl_pct = 0.0
                         pnl_usd = 0.0
+
+                    if pos.get("micro_mode"):
+                        held_seconds = time.time() - float(pos["entry_time"])
+                        stop_pct = float(pos.get("stop_loss_pct") or 8.0)
+                        target_pct = _take_profit_trigger_pct(pos)
+                        close_reason = None
+                        if (dex_data or {}).get("setup_invalidated") is True:
+                            close_reason = "Micro setup invalidated"
+                        elif pnl_pct <= -stop_pct:
+                            close_reason = f"Micro hard stop (-{stop_pct:.1f}%)"
+                        elif pnl_pct >= target_pct:
+                            close_reason = f"Micro full take profit (+{target_pct:.1f}% gross)"
+                        elif held_seconds >= int(pos.get("max_hold_seconds") or 900):
+                            close_reason = "Micro time stop (momentum window expired)"
+                        if close_reason is not None:
+                            micro_closed = await self._close_position(pos, current_price, close_reason)
+                            closed_this_cycle.append(micro_closed)
+                            positions_to_remove.append(i)
+                        # Micro positions never enter the legacy recovery/DCA or
+                        # moonshot runner paths, whether closed on this pass or not.
+                        continue
 
                     # Stop-loss rules stay anchored to the first fill so a DCA
                     # cannot quietly loosen or tighten the documented -50%/-70%
@@ -1275,7 +1412,6 @@ class PaperTrader:
                 logger.warning("Failed to check position %s: %s", pos.get("symbol", "?"), str(e))
 
             # Rate limit between DEXScreener calls
-            import asyncio
             await asyncio.sleep(0.3)
 
         # Remove closed positions from list (reverse order to maintain indices)
@@ -1461,8 +1597,10 @@ class PaperTrader:
             return "CLOSED"
 
         elif decision == "DCA":
-            await self._execute_dca(pos, current_price)
-            return "HELD"
+            # The recovery model is observation-only. Its DCA label can never
+            # add capital; averaging down is prohibited by treasury policy.
+            await self._close_position(pos, current_price, "Recovery requested DCA; policy forces exit")
+            return "CLOSED"
 
         else:  # HOLD - tighten stop to -70%
             logger.info(
@@ -1472,69 +1610,8 @@ class PaperTrader:
             return "HELD"
 
     async def _execute_dca(self, pos: Dict[str, Any], current_price: float) -> None:
-        """
-        Execute a DCA (Dollar Cost Average) buy of $25 more for a position.
-
-        Updates amount_usd (+$25), recalculates tokens_held.
-        The -70% hard stop is calculated from ORIGINAL entry price.
-        Max 1 DCA per position.
-
-        Args:
-            pos: Position dict.
-            current_price: Current market cap (price proxy).
-        """
-        symbol = pos["symbol"]
-
-        # Max 1 DCA per position
-        if pos.get("dca_done"):
-            logger.info("DCA already done for $%s, treating as HOLD", symbol)
-            return
-
-        # Check balance
-        if self.balance < DCA_AMOUNT:
-            logger.info("Insufficient balance for DCA on $%s ($%.2f < $%.2f)",
-                        symbol, self.balance, DCA_AMOUNT)
-            return
-
-        # Deduct from balance
-        self.balance -= DCA_AMOUNT
-
-        # Add tokens at current price
-        additional_tokens = DCA_AMOUNT / current_price if current_price > 0 else 0
-        pos["amount_usd"] += DCA_AMOUNT
-        pos["tokens_held"] += additional_tokens
-        pos["dca_done"] = True
-
-        # Re-base entry_price to the weighted-average cost per token. Without
-        # this the added dollars are priced as if they were bought at the
-        # original entry, so a position that averages down and recovers reports
-        # a loss it did not take. The original entry is preserved separately for
-        # the -70% hard stop.
-        if pos["tokens_held"] > 0:
-            pos["entry_price"] = pos["amount_usd"] / pos["tokens_held"]
-
-        # Update DB
-        if self._db:
-            await self._db.execute(
-                "UPDATE paper_positions SET amount_usd = ?, tokens_held = ?, "
-                "entry_price = ?, dca_done = 1 WHERE id = ?",
-                (pos["amount_usd"], pos["tokens_held"], pos["entry_price"], pos.get("id")),
-            )
-            await self._db.commit()
-            await self._save_balance()
-
-        # Send Telegram notification
-        msg = (
-            f"\U0001f504 PAPER DCA: ${symbol}\n"
-            f"\U0001f4b5 Added ${DCA_AMOUNT:.0f} at current price\n"
-            f"\U0001f4b0 Total position: ${pos['amount_usd']:.0f}\n"
-            f"\U0001f6d1 Hard stop: -70% from original entry\n"
-            f"\U0001f4b0 Balance: ${self.balance:.0f} remaining"
-        )
-        await self._notify(msg)
-
-        logger.info("Paper DCA: $%s +$%.0f, total: $%.0f, balance: $%.2f",
-                    symbol, DCA_AMOUNT, pos["amount_usd"], self.balance)
+        """Reject every attempt to average down; there is no DCA execution path."""
+        raise RuntimeError("DCA/averaging down is prohibited by treasury policy")
 
     async def _take_profit(
         self,
@@ -1675,12 +1752,16 @@ class PaperTrader:
         else:
             pnl_pct = 0.0
 
-        pnl_usd = amount_usd * (pnl_pct / 100)
+        gross_pnl_usd = amount_usd * (pnl_pct / 100)
+        costs_usd = float(pos.get("estimated_round_trip_costs_usd") or 0.0)
+        pnl_usd = gross_pnl_usd - costs_usd
+        # pnl_pct is the net account result, not the headline quote movement.
+        pnl_pct = (pnl_usd / amount_usd * 100) if amount_usd > 0 else 0.0
         exit_time = time.time()
         hold_seconds = exit_time - pos["entry_time"]
 
         # Return funds to balance (principal + P&L)
-        self.balance += amount_usd + pnl_usd
+        new_balance = self.balance + amount_usd + pnl_usd
 
         # Update DB
         if self._db:
@@ -1689,8 +1770,10 @@ class PaperTrader:
                 "exit_time = ?, pnl_usd = ?, pnl_pct = ?, exit_reason = ? WHERE id = ?",
                 (current_price, exit_time, pnl_usd, pnl_pct, reason, pos.get("id")),
             )
+            await self._db.execute("UPDATE paper_balance SET balance = ? WHERE id = 1", (new_balance,))
             await self._db.commit()
-            await self._save_balance()
+
+        self.balance = new_balance
 
         hold_str = _format_hold_time(hold_seconds)
 

@@ -30,19 +30,16 @@ class ScannerConfig:
     check_interval_seconds: int = 15
     min_score: int = 60
     max_token_age_hours: int = 6
-    min_candidate_age_minutes: int = 10
+    min_candidate_age_minutes: int = 0
     max_candidate_age_minutes: int = 120
     max_market_checks_per_cycle: int = 40
     enable_paper_trading: bool = False
     # How many virtual positions the paper trader may hold at once. Defaults to
     # 1 because the operator wants one coin at a time.
     #
-    # OPERATIONAL RISK, stated here as well as in PaperTrader because this field
-    # is where an operator changes it: with a single slot, one position that
-    # never exits blocks every future trade. There is no time-based exit
-    # anywhere in memescanner/paper_trader.py, so a runner sitting quietly above
-    # breakeven halts the bot indefinitely. At 3 that was survivable -- the
-    # other two slots kept working. At 1 it is a full stop.
+    # Micro mode enforces one slot regardless of this legacy replay setting.
+    # Time stops require an available exit quote; unavailable quotes retain the
+    # slot, preventing fresh exposure while the position cannot be valued.
     max_open_positions: int = 1
 
 
@@ -131,7 +128,7 @@ class CalibrationConfig:
     # be passed via the celebrity bypass. Isolating them is the entire purpose of
     # the field. tests/test_policy_versioning.py now fails if the gates change
     # without a bump.
-    policy_version: str = "unified-safety-v2"
+    policy_version: str = "unified-safety-v4-signals"
     # Bumped from screening-rank-v1 when social presence and community takeover
     # became scoring inputs. The version is what keeps calibration honest: a
     # screening score of 55 under v1 and under v2 are not the same quantity, so
@@ -296,7 +293,7 @@ class Config:
                 ),
                 min_score=scanner_data.get("min_score", 60),
                 max_token_age_hours=scanner_data.get("max_token_age_hours", 6),
-                min_candidate_age_minutes=scanner_data.get("min_candidate_age_minutes", 10),
+                min_candidate_age_minutes=scanner_data.get("min_candidate_age_minutes", 0),
                 max_candidate_age_minutes=scanner_data.get("max_candidate_age_minutes", 120),
                 max_market_checks_per_cycle=scanner_data.get("max_market_checks_per_cycle", 40),
                 enable_paper_trading=scanner_data.get("enable_paper_trading", False),
@@ -358,7 +355,7 @@ class Config:
                     "report_interval_seconds", 86400
                 ),
                 policy_version=calibration_data.get(
-                    "policy_version", "unified-safety-v2"
+                    "policy_version", "unified-safety-v4-signals"
                 ),
                 feature_schema_version=calibration_data.get(
                     "feature_schema_version", "screening-rank-v3"

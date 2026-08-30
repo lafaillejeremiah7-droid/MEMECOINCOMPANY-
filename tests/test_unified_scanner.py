@@ -754,7 +754,7 @@ async def test_telegram_transport_failure_propagates_as_uncertain_delivery():
             raise httpx.ReadTimeout("delivery outcome unknown")
 
     with patch("memescanner.__main__.httpx.AsyncClient", return_value=FailingClient()):
-        with pytest.raises(httpx.ReadTimeout):
+        with pytest.raises(RuntimeError, match="delivery is uncertain"):
             await TelegramSender("dummy-token", "dummy-chat").send("signal")
 
 
@@ -1821,14 +1821,34 @@ async def test_run_cycle_passes_take_profit_target_to_paper_buyer(tmp_path):
 
 @pytest.mark.asyncio
 async def test_main_paper_buyer_forwards_target_to_trader():
-    """__main__._paper_buyer puts the target into token_data for buy()."""
+    """The callback replaces the old moonshot target with the micro target."""
     from memescanner.__main__ import _paper_buyer
 
     trader = AsyncMock()
-    await _paper_buyer(trader, candidate(), {"market_cap": 100_000}, 2.75)
+    from memescanner.micro_company import CapitalState
+    trader.capital_state.return_value = CapitalState()
+    market = {
+        "market_cap": 100_000, "price_usd": 0.001, "liquidity_usd": 50_000,
+        "volume_24h": 100_000, "buys_24h": 800, "sells_24h": 500,
+        "price_change_5m": 2,
+    }
+    safe_plan = {
+        "screening_score": 90,
+        "evidence": {
+            "onchain": {
+                "mint_authority_revoked": True, "freeze_authority_revoked": True,
+                "lp_locked": True, "top10_concentration_pct": 20,
+                "holder_suspicion": {"risk": "LOW"},
+                "dangerous_capabilities": [], "transfer_fee_bps": 0,
+            },
+            "x": {"scam_warning": False},
+        },
+    }
+    await _paper_buyer(trader, candidate(), market, 2.75, safe_plan)
 
     token_data, dex_data = trader.buy.await_args[0]
-    assert token_data["take_profit_target"] == 2.75
+    assert 1.08 <= token_data["take_profit_target"] <= 1.15
+    assert token_data["entry_amount_usd"] <= 2.0
     assert token_data["mint"] == "Mint111"
     assert dex_data["market_cap"] == 100_000
 
@@ -1839,9 +1859,26 @@ async def test_main_paper_buyer_forwards_real_price():
     from memescanner.__main__ import _paper_buyer
 
     trader = AsyncMock()
-    await _paper_buyer(
-        trader, candidate(), {"market_cap": 100_000, "price_usd": 0.001}, 2.0
-    )
+    from memescanner.micro_company import CapitalState
+    trader.capital_state.return_value = CapitalState()
+    market = {
+        "market_cap": 100_000, "price_usd": 0.001, "liquidity_usd": 50_000,
+        "volume_24h": 100_000, "buys_24h": 800, "sells_24h": 500,
+        "price_change_5m": 2,
+    }
+    safe_plan = {
+        "screening_score": 90,
+        "evidence": {
+            "onchain": {
+                "mint_authority_revoked": True, "freeze_authority_revoked": True,
+                "lp_locked": True, "top10_concentration_pct": 20,
+                "holder_suspicion": {"risk": "LOW"},
+                "dangerous_capabilities": [], "transfer_fee_bps": 0,
+            },
+            "x": {"scam_warning": False},
+        },
+    }
+    await _paper_buyer(trader, candidate(), market, 2.0, safe_plan)
 
     _, dex_data = trader.buy.await_args[0]
     assert dex_data["price_usd"] == 0.001

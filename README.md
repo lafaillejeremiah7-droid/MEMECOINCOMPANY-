@@ -1,6 +1,62 @@
-# Memescanner — Solana Signal Scanner
+# Memescanner — Telegram Signal Company
 
-Memescanner is a **signal-only** Solana token discovery and safety-screening service. The default `python -m memescanner` runtime never loads wallet keys, signs transactions, submits transactions, or executes live trades. Optional PaperTrader behavior is virtual accounting only, is disabled by default, and is capped at three open positions.
+Memescanner researches Solana memecoins and sends Telegram alerts. You decide whether
+to trade manually. Production never starts a paper trader, loads wallet keys, signs
+transactions, or places trades—even if an old paper-trading setting is enabled.
+
+## What the eight employees do
+
+| Employee | Job |
+|---|---|
+| Scout | Find active Solana tokens in the $100k–$200k market-cap window |
+| Investigator | Require available contract and social evidence |
+| Risk Defender | Veto dangerous authorities, ownership, taxes, or suspicious wallets |
+| Market Analyst | Recheck liquidity, trading flow, momentum and missed entries |
+| Trade Strategist | Calculate a small position, stop, target, holding time and modeled net payoff |
+| Referee | Independently recompute net economics and honor worker vetoes |
+| Alert Delivery | Send the ticket; persist accepted, rejected or uncertain delivery without blind retries |
+| Operations Boss | Expire old evidence and stale tickets; expose startup/delivery failures |
+
+These are bounded software roles sharing collectors, not eight LLMs or independent
+data feeds. Scores indicate checks, not odds of profit. Production tickets replace
+the old multi-x/runner targets with 8–15% gross targets and 5–8% planned stops.
+
+## Signal rules and limits
+
+The reference budget is $11, with $1 default/$2 maximum sizing, a $5 reserve,
+one position, no DCA/leverage, and a stop after $1 daily loss or three losses.
+**Signals cannot enforce your real balance, positions or losses. You must check those
+manual limits yourself.** This service has no wallet access.
+
+Net reward/risk must be at least 1.31:1 before rounding. Modeled costs must consume
+no more than 25% of projected gross profit. Costs are screening assumptions, not
+executable swap quotes: actual network fees, rent, transfer taxes, slippage and
+price impact can exceed them. Payoffs are conditional on hitting the target,
+not guaranteed returns or calibrated expectancy. Stops do not guarantee a fill.
+
+Every alert includes the contract, entry amount/price, stop, target, 15-minute
+maximum planned hold, cost estimate, gross/net payoff, liquidity, critical risks,
+employee reports and BUY/WATCH/REJECT decision. Quotes are public market snapshots,
+not transaction offers. Evidence expires after 120 seconds; market data is fetched
+again before review, must pass the five-second handoff check, and the ticket expires
+30 seconds after receipt. Recheck the market and never chase a missed entry.
+
+**Current limitation: the on-chain collector does not verify pool locks. It now
+records unknown, not false evidence of removable liquidity. Unknown LP safety or
+holder-history evidence can only produce WATCH (do not buy yet), never BUY.**
+Explicit hazards are rejected and kept in the audit history rather than pushed.
+Until a verified liquidity-safety provider is implemented, production will not
+issue BUY signals. No safety gate is bypassed to manufacture recommendations.
+
+SQLite preserves observations, company tickets and delivery claims. One alert per
+mint includes WATCH; this version does not resend a WATCH as BUY later. An uncertain
+Telegram delivery retains its claim for operator review, preventing blind duplicates.
+Historical paper simulation remains in the codebase but is not started by production.
+At least 100 completed forward paper signals and human approval remain prerequisites
+for any future real execution; no automatic live switch exists.
+
+See the [research/company blueprint](docs/early_discovery_company.md) for background;
+this signal-only scope supersedes its execution roadmap.
 
 ## Default architecture
 
@@ -16,7 +72,7 @@ The default runtime uses one normalized pipeline:
 
 ## Evidence semantics
 
-- "New" requires a known token/pair timestamp and an age of 10-120 minutes. Unknown age is rejected as `AGE_UNKNOWN_NOT_NEW`.
+- "New" requires a known token/pair timestamp and an age of 0-120 minutes by default. Unknown age is rejected as `AGE_UNKNOWN_NOT_NEW`. Existing custom configs may retain an older minimum age.
 - An X link is required. A completed public search with no result is recorded as `X_DATA_NOT_FOUND_OR_NOT_INDEXED`; that is partial OSINT, not proof that a token has no attention. A missing credential or search outage is separately marked unavailable and defers the candidate.
 - A minimum of 5 X search results (mapping to roughly 10-20 real tweets) is required. This gate is bypassed when a big/celebrity account posted about the token or when evidence content indicates viral reach (high view/impression counts).
 - Market cap must be at least $50,000. This filters dead and micro tokens (research shows Solana high-return tokens have a median market cap around $214K).
@@ -45,7 +101,7 @@ python -m memescanner
 - `MEMESCANNER_HELIUS_RPC_URL` (preferred complete RPC endpoint)
 - `MEMESCANNER_HELIUS_API_KEY` (used only when no complete RPC URL is set)
 - `MEMESCANNER_TRANSFER_HOOK_ALLOWLIST` (comma-separated exact Token-2022 hook program IDs; empty rejects hooks)
-- `MEMESCANNER_ENABLE_PAPER_TRADING=true` enables virtual PaperTrader accounting, five-minute position checks, hourly portfolio updates, and daily P&L summaries
+- `MEMESCANNER_ENABLE_PAPER_TRADING` is a legacy simulation setting; production ignores it and always sends signals only.
 - `MEMESCANNER_COLLECT_OUTCOMES=false` disables prospective public-market capture; collection is enabled by default and never changes signals or position sizing
 
 Missing Telegram credentials disable delivery clearly. A completed Tavily search with no indexed result remains partial OSINT, while a missing Tavily credential or outage defers candidates. Missing Helius/Solana RPC evidence also defers candidates and prevents alerts rather than silently treating them as safe. RPC errors never log credential-bearing request URLs.
@@ -73,19 +129,24 @@ Go to your repository **Settings > Secrets and variables > Actions** and add the
 | `MEMESCANNER_TELEGRAM_BOT_TOKEN` | Telegram bot token from @BotFather |
 | `MEMESCANNER_TELEGRAM_CHAT_ID` | Telegram chat ID where alerts are delivered |
 
-`MEMESCANNER_ENABLE_PAPER_TRADING` defaults to `"true"` if not set. Add it as a secret and set to `"false"` to disable virtual paper trading.
+The workflow forces signal-only mode. Missing required configuration fails before scanning; secrets are never displayed. Telegram delivery is tested at startup.
 
 ### 2. Start the workflow
 
 1. Go to the **Actions** tab in your repository.
 2. Select **"Run Scanner"** from the workflow list on the left.
-3. Click **"Run workflow"** and choose the branch.
+3. Click **"Run workflow"** and choose **main**. Code pushes to main also start a session.
 
-The scanner will start and run continuously until the 6-hour timeout (350 minutes) is reached or you cancel it manually.
+Each deployment runs a **30-minute session**, not a 24/7 service. GitHub Actions may queue or fail; check the Run Scanner job and the startup Telegram message. Continuous hosting is not configured.
 
 ### 3. Restarting
 
-GitHub Actions jobs have a maximum runtime of approximately 6 hours. Once the job ends, you need to manually trigger the workflow again from the Actions tab. There is no automatic restart.
+Once the 30-minute session ends, manually start another session from Actions.
+There is no automatic restart or scheduled 24/7 coverage. The workflow backs up
+SQLite (including its WAL) to the `signal-state` artifact, then restores that
+history for the next session. Artifacts expire after 90 days. Missing checkpoints
+from an earlier started session halt restart rather than silently forgetting
+delivery claims; recover the history before retrying. Use one process per database.
 
 ## Persistence and prospective calibration
 

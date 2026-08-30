@@ -2,7 +2,6 @@
 Tests for the paper trading module.
 """
 
-import os
 import time
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -21,13 +20,9 @@ TEST_DB_PATH = "test_paper_trader.db"
 
 
 @pytest.fixture(autouse=True)
-def clean_db():
-    """Remove test database before and after each test."""
-    if os.path.exists(TEST_DB_PATH):
-        os.remove(TEST_DB_PATH)
-    yield
-    if os.path.exists(TEST_DB_PATH):
-        os.remove(TEST_DB_PATH)
+def clean_db(tmp_path, monkeypatch):
+    """Isolate migrations and WAL files, including concurrent test sessions."""
+    monkeypatch.setitem(globals(), "TEST_DB_PATH", str(tmp_path / "paper.db"))
 
 
 @pytest.fixture
@@ -58,9 +53,9 @@ class TestPaperTraderInit:
     def test_default_init(self):
         """Test default initialization values."""
         pt = PaperTrader()
-        assert pt.starting_balance == 1000.0
-        assert pt.trade_size == 50.0
-        assert pt.balance == 1000.0
+        assert pt.starting_balance == 11.0
+        assert pt.trade_size == 1.0
+        assert pt.balance == 11.0
         assert pt.positions == []
         assert pt.closed_trades == []
 
@@ -755,8 +750,8 @@ class TestPaperTraderRecoveryChecker:
         await pt.close()
 
     @pytest.mark.asyncio
-    async def test_recovery_dca_adds_to_position(self, patch_db_path, mock_telegram, mock_fetch_dex):
-        """Test that DCA decision adds $25 to position."""
+    async def test_recovery_dca_is_forced_to_exit(self, patch_db_path, mock_telegram, mock_fetch_dex):
+        """A recovery heuristic can never override the no-DCA treasury rule."""
         pt = PaperTrader(starting_balance=1000.0, trade_size=50.0)
         await pt.initialize()
 
@@ -783,14 +778,10 @@ class TestPaperTraderRecoveryChecker:
         ):
             closed = await pt.check_positions()
 
-        # Position should remain open with DCA
-        assert len(closed) == 0
-        assert len(pt.positions) == 1
-        assert pt.positions[0]["amount_usd"] == pytest.approx(75.0, abs=0.1)  # $50 + $25
-        assert pt.positions[0]["dca_done"] is True
-        assert pt.positions[0]["recovery_checked"] is True
-        # Balance: 950 - 25 (DCA) = 925
-        assert pt.balance == pytest.approx(925.0, abs=0.1)
+        assert len(closed) == 1
+        assert len(pt.positions) == 0
+        assert "policy forces exit" in closed[0]["reason"]
+        assert pt.balance == pytest.approx(975.0, abs=0.1)
 
         await pt.close()
 
@@ -876,8 +867,8 @@ class TestPaperTraderRecoveryChecker:
         await pt.close()
 
     @pytest.mark.asyncio
-    async def test_max_one_dca_per_position(self, patch_db_path, mock_telegram, mock_fetch_dex):
-        """Test that DCA can only happen once per position."""
+    async def test_dca_never_happens(self, patch_db_path, mock_telegram, mock_fetch_dex):
+        """Even one DCA is prohibited."""
         pt = PaperTrader(starting_balance=1000.0, trade_size=50.0)
         await pt.initialize()
 
@@ -902,18 +893,13 @@ class TestPaperTraderRecoveryChecker:
         ):
             await pt.check_positions()
 
-        assert pt.positions[0]["dca_done"] is True
-        assert pt.positions[0]["amount_usd"] == pytest.approx(75.0, abs=0.1)
-        # Balance: 950 - 25 = 925
-        assert pt.balance == pytest.approx(925.0, abs=0.1)
-
-        # Position is now recovery_checked = True and dca_done = True
-        # Won't be checked again (recovery_checked flag)
+        assert pt.positions == []
+        assert pt.closed_trades[-1]["reason"].endswith("policy forces exit")
         await pt.close()
 
     @pytest.mark.asyncio
-    async def test_dca_insufficient_balance(self, patch_db_path, mock_telegram, mock_fetch_dex):
-        """Test DCA skipped when balance insufficient."""
+    async def test_dca_is_rejected_regardless_of_balance(self, patch_db_path, mock_telegram, mock_fetch_dex):
+        """No balance condition makes averaging down permissible."""
         pt = PaperTrader(starting_balance=60.0, trade_size=50.0)
         await pt.initialize()
 
@@ -939,11 +925,9 @@ class TestPaperTraderRecoveryChecker:
         ):
             closed = await pt.check_positions()
 
-        # Position stays open but DCA not executed
-        assert len(closed) == 0
-        assert len(pt.positions) == 1
-        assert pt.positions[0]["amount_usd"] == 50.0  # Unchanged
-        assert pt.balance == 10.0  # Unchanged
+        assert len(closed) == 1
+        assert pt.positions == []
+        assert pt.balance == pytest.approx(35.0, abs=0.1)
 
         await pt.close()
 
@@ -1021,8 +1005,8 @@ class TestPaperTraderRecoveryChecker:
         await pt.close()
 
     @pytest.mark.asyncio
-    async def test_position_persists_recovery_flags(self, patch_db_path, mock_telegram, mock_fetch_dex):
-        """Test that recovery_checked and dca_done flags persist across restarts."""
+    async def test_forced_exit_persists_instead_of_dca_flags(self, patch_db_path, mock_telegram, mock_fetch_dex):
+        """A DCA recommendation persists as a closed trade, never an averaged position."""
         pt1 = PaperTrader(starting_balance=1000.0, trade_size=50.0)
         await pt1.initialize()
 
@@ -1047,17 +1031,14 @@ class TestPaperTraderRecoveryChecker:
         ):
             await pt1.check_positions()
 
-        assert pt1.positions[0]["recovery_checked"] is True
-        assert pt1.positions[0]["dca_done"] is True
+        assert pt1.positions == []
         await pt1.close()
 
         # Reload
         pt2 = PaperTrader(starting_balance=1000.0, trade_size=50.0)
         await pt2.initialize()
-        assert len(pt2.positions) == 1
-        assert pt2.positions[0]["recovery_checked"] is True
-        assert pt2.positions[0]["dca_done"] is True
-        assert pt2.positions[0]["amount_usd"] == pytest.approx(75.0, abs=0.1)
+        assert pt2.positions == []
+        assert any("policy forces exit" in trade["reason"] for trade in pt2.closed_trades)
         await pt2.close()
 
 
@@ -1567,7 +1548,7 @@ class TestPaperTraderPriceTracking:
 
 
 class TestPaperTraderDcaCostBasis:
-    """Test that averaging down produces correct P&L."""
+    """Regression tests proving the removed averaging-down path stays removed."""
 
     DCA_RECOVERY = {
         "recovery_probability": 0.50,
@@ -1581,10 +1562,10 @@ class TestPaperTraderDcaCostBasis:
     }
 
     @pytest.mark.asyncio
-    async def test_dca_rebases_entry_to_weighted_average(
+    async def test_dca_recommendation_closes_without_rebasing(
         self, patch_db_path, mock_telegram, mock_fetch_dex
     ):
-        """Averaging down lowers the cost basis and preserves the first fill."""
+        """The recovery label cannot change cost basis or add capital."""
         pt = PaperTrader(starting_balance=1000.0, trade_size=50.0)
         await pt.initialize()
 
@@ -1598,79 +1579,58 @@ class TestPaperTraderDcaCostBasis:
             "memescanner.paper_trader.RecoveryChecker.check_recovery",
             new_callable=AsyncMock, return_value=self.DCA_RECOVERY,
         ):
-            await pt.check_positions()
+            closed = await pt.check_positions()
 
-        pos = pt.positions[0]
-        assert pos["dca_done"] is True
-        assert pos["amount_usd"] == pytest.approx(75.0, abs=0.1)
-        # 50000 tokens at 0.001 + 50000 at 0.0005 = 100000 tokens for $75
-        assert pos["tokens_held"] == pytest.approx(100000.0, rel=1e-6)
-        assert pos["entry_price"] == pytest.approx(0.00075, rel=1e-6)
-        # The first fill is preserved for the hard-stop rule.
-        assert pos["original_entry_price"] == pytest.approx(0.001)
-        await pt.close()
-
-    @pytest.mark.asyncio
-    async def test_recovery_after_dca_reports_a_gain(
-        self, patch_db_path, mock_telegram, mock_fetch_dex
-    ):
-        """A DCA'd position back at the original entry is genuinely up.
-
-        Before the fix, P&L was measured only from the original entry, so this
-        position reported $0 despite the added tranche having doubled.
-        """
-        pt = PaperTrader(starting_balance=1000.0, trade_size=50.0)
-        await pt.initialize()
-
-        await pt.buy(
-            {"mint": "abc123", "symbol": "TEST"},
-            {"market_cap": 100000, "price_usd": 0.001},
-        )
-        mock_fetch_dex.return_value = {"market_cap": 50000, "price_usd": 0.0005}
-        with patch(
-            "memescanner.paper_trader.RecoveryChecker.check_recovery",
-            new_callable=AsyncMock, return_value=self.DCA_RECOVERY,
-        ):
-            await pt.check_positions()
-
-        # Price returns to the original entry.
-        mock_fetch_dex.return_value = {"market_cap": 100000, "price_usd": 0.001}
-        await pt.check_positions()
-
-        pos = pt.positions[0]
-        # 100000 tokens now worth $100 against a $75 cost basis = +$25.
-        assert pos["unrealized_pnl"] == pytest.approx(25.0, abs=0.1)
-        await pt.close()
-
-    @pytest.mark.asyncio
-    async def test_hard_stop_after_dca_uses_original_entry(
-        self, patch_db_path, mock_telegram, mock_fetch_dex
-    ):
-        """The -70% hard stop stays anchored to the first fill after a DCA."""
-        pt = PaperTrader(starting_balance=1000.0, trade_size=50.0)
-        await pt.initialize()
-
-        await pt.buy(
-            {"mint": "abc123", "symbol": "TEST"},
-            {"market_cap": 100000, "price_usd": 0.001},
-        )
-        mock_fetch_dex.return_value = {"market_cap": 50000, "price_usd": 0.0005}
-        with patch(
-            "memescanner.paper_trader.RecoveryChecker.check_recovery",
-            new_callable=AsyncMock, return_value=self.DCA_RECOVERY,
-        ):
-            await pt.check_positions()
-
-        # -60% from the averaged basis, but only -60% from original: no stop yet.
-        mock_fetch_dex.return_value = {"price_usd": 0.00035, "market_cap": 35000}
-        assert await pt.check_positions() == []
-        assert len(pt.positions) == 1
-
-        # -70% from the original entry: hard stop fires.
-        mock_fetch_dex.return_value = {"price_usd": 0.0003, "market_cap": 30000}
-        closed = await pt.check_positions()
+        assert pt.positions == []
         assert len(closed) == 1
-        assert "Hard stop (-70%" in closed[0]["reason"]
+        assert closed[0]["entry_price"] == pytest.approx(0.001)
+        assert "policy forces exit" in closed[0]["reason"]
+        await pt.close()
+
+    @pytest.mark.asyncio
+    async def test_no_recovery_position_remains_after_dca_label(
+        self, patch_db_path, mock_telegram, mock_fetch_dex
+    ):
+        """No averaged position can remain to fabricate a later recovery gain."""
+        pt = PaperTrader(starting_balance=1000.0, trade_size=50.0)
+        await pt.initialize()
+
+        await pt.buy(
+            {"mint": "abc123", "symbol": "TEST"},
+            {"market_cap": 100000, "price_usd": 0.001},
+        )
+        mock_fetch_dex.return_value = {"market_cap": 50000, "price_usd": 0.0005}
+        with patch(
+            "memescanner.paper_trader.RecoveryChecker.check_recovery",
+            new_callable=AsyncMock, return_value=self.DCA_RECOVERY,
+        ):
+            await pt.check_positions()
+
+        assert pt.positions == []
+        assert pt.closed_trades[-1]["pnl_usd"] == pytest.approx(-25.0, abs=0.1)
+        await pt.close()
+
+    @pytest.mark.asyncio
+    async def test_dca_label_exits_before_any_looser_hard_stop(
+        self, patch_db_path, mock_telegram, mock_fetch_dex
+    ):
+        """A recovery label cannot loosen the original loss exit."""
+        pt = PaperTrader(starting_balance=1000.0, trade_size=50.0)
+        await pt.initialize()
+
+        await pt.buy(
+            {"mint": "abc123", "symbol": "TEST"},
+            {"market_cap": 100000, "price_usd": 0.001},
+        )
+        mock_fetch_dex.return_value = {"market_cap": 50000, "price_usd": 0.0005}
+        with patch(
+            "memescanner.paper_trader.RecoveryChecker.check_recovery",
+            new_callable=AsyncMock, return_value=self.DCA_RECOVERY,
+        ):
+            await pt.check_positions()
+
+        assert pt.positions == []
+        assert "policy forces exit" in pt.closed_trades[-1]["reason"]
         await pt.close()
 
 
