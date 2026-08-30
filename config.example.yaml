@@ -5,7 +5,7 @@ telegram:
 
 scanner:
   check_interval_seconds: 15
-  min_candidate_age_minutes: 10
+  min_candidate_age_minutes: 0
   max_candidate_age_minutes: 120
   # Bounds DEX pair calls so the 15-second loop remains below public API limits.
   # Unchecked candidates are persisted as deferred and rotate into later cycles.
@@ -14,11 +14,9 @@ scanner:
   enable_paper_trading: false  # MEMESCANNER_ENABLE_PAPER_TRADING
   # Concurrent virtual positions. 1 means one coin at a time.
   #
-  # WARNING: there is no time-based exit anywhere in the paper trader. With a
-  # single slot, one position that never exits -- a runner drifting sideways
-  # above breakeven, for instance -- blocks every future trade indefinitely.
-  # At 3 slots that was survivable; at 1 it stops the bot entirely. Raise this
-  # if you would rather keep scanning than hold one coin exclusively.
+  # Micro mode always enforces one position. Independent exit checks run every
+  # two seconds after each completed check, targeting a maximum 15-minute hold.
+  # Missing exit quotes retain the slot; the simulator never invents a fill.
   max_open_positions: 1
 
 # All enabled adapters discover Solana candidates independently. Pump.fun is
@@ -98,7 +96,7 @@ calibration:
   outcome_poll_seconds: 2
   retry_delay_seconds: 15
   report_interval_seconds: 86400
-  policy_version: "unified-safety-v2"
+  policy_version: "unified-safety-v3-micro"
   feature_schema_version: "screening-rank-v3"
   definition_version: "price-return-2x-v1"
   # Conservative chronological holdout gates. Until every gate passes, reports

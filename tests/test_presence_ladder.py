@@ -1882,13 +1882,16 @@ def test_trade_plan_carries_both_stages_to_the_paper_trader():
     decision.narrative_presence_components = {"celebrity_mint_bound": 60.0}
 
     plan = trade_plan(decision)
-    assert plan == {
+    expected = {
         "take_profit_target": 5.0,
         "runner_target": 20.0,
         "narrative_presence": 70.0,
         "narrative_presence_components": {"celebrity_mint_bound": 60.0},
         "celebrity_verified": True,
     }
+    assert {key: plan[key] for key in expected} == expected
+    assert plan["screening_score"] == decision.screening_score
+    assert plan["evidence"] == decision.evidence
 
 
 @pytest.mark.asyncio
@@ -1896,22 +1899,43 @@ async def test_main_paper_buyer_forwards_the_whole_plan():
     from memescanner.__main__ import _paper_buyer
 
     trader = AsyncMock()
+    from memescanner.micro_company import CapitalState
+    trader.capital_state.return_value = CapitalState()
     await _paper_buyer(
         trader,
         _candidate(),
-        {"market_cap": 100_000, "price_usd": 0.002},
+        {
+            "market_cap": 100_000, "price_usd": 0.002,
+            "liquidity_usd": 50_000, "volume_24h": 100_000,
+            "buys_24h": 800, "sells_24h": 500, "price_change_5m": 2,
+        },
         3.25,
         {
             "runner_target": 12.0,
             "narrative_presence": 55.0,
             "narrative_presence_components": {"x_mentions": 6.0},
             "celebrity_verified": True,
+            "screening_score": 90,
+            "evidence": {
+                "onchain": {
+                    "mint_authority_revoked": True,
+                    "freeze_authority_revoked": True,
+                    "lp_locked": True,
+                    "top10_concentration_pct": 20,
+                    "holder_suspicion": {"risk": "LOW"},
+                    "dangerous_capabilities": [],
+                    "transfer_fee_bps": 0,
+                },
+                "x": {"scam_warning": False},
+            },
         },
     )
 
     token_data, dex_data = trader.buy.await_args[0]
-    assert token_data["take_profit_target"] == 3.25
+    assert 1.08 <= token_data["take_profit_target"] <= 1.15
     assert token_data["runner_target"] == 12.0
     assert token_data["narrative_presence"] == 55.0
     assert token_data["celebrity_verified"] is True
+    assert token_data["entry_amount_usd"] <= 2.0
+    assert token_data["micro_mode"] is True
     assert dex_data["price_usd"] == 0.002

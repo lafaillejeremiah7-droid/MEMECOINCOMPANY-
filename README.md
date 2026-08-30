@@ -1,6 +1,28 @@
 # Memescanner — Solana Signal Scanner
 
-Memescanner is a **signal-only** Solana token discovery and safety-screening service. The default `python -m memescanner` runtime never loads wallet keys, signs transactions, submits transactions, or executes live trades. Optional PaperTrader behavior is virtual accounting only, is disabled by default, and is capped at three open positions.
+Memescanner is a **signal-only** Solana token discovery and safety-screening service. The default `python -m memescanner` runtime never loads wallet keys, signs transactions, submits transactions, or executes live trades. Optional PaperTrader behavior is virtual accounting only, is disabled by default, and is capped at one micro position.
+
+## $11 micro-company mode
+
+Default paper capital is $11; positions default to $1 and cannot exceed $2.
+At least $5 is reserved including estimated exit costs. Halt new entries after
+$1 daily realized loss or three consecutive losses. No DCA. Revised minimum net
+reward/risk: **1.31:1**, checked before rounding. Costs cannot exceed 25% of gross
+target profit. Gross targets are 8–15%, stops 5–8%, maximum planned hold 15 minutes.
+Target payoffs are not guaranteed returns or calibrated statistical expectancy.
+
+Exit supervision runs independently every two seconds after each completed
+check; network delays can extend this interval. Missing quotes retain the slot
+rather than invent a fill. Micro entry/exit ledger updates are serialized and
+position/balance changes commit together. Incompatible historical balances are
+rejected, never reset. Explicit larger custom ledgers are historical simulation
+only and are not used by the default runtime.
+
+The six scores currently summarize deterministic evidence checks, not six
+deployed independent research bots. See the [company blueprint](docs/early_discovery_company.md).
+Unverified LP safety still blocks trading. Real execution remains unavailable:
+100 completed forward paper trades, validation, human approval and a separately
+audited deterministic wallet service are required; there is no automatic live switch.
 
 ## Default architecture
 
@@ -16,7 +38,7 @@ The default runtime uses one normalized pipeline:
 
 ## Evidence semantics
 
-- "New" requires a known token/pair timestamp and an age of 10-120 minutes. Unknown age is rejected as `AGE_UNKNOWN_NOT_NEW`.
+- "New" requires a known token/pair timestamp and an age of 0-120 minutes by default. Unknown age is rejected as `AGE_UNKNOWN_NOT_NEW`. Existing custom configs may retain an older minimum age.
 - An X link is required. A completed public search with no result is recorded as `X_DATA_NOT_FOUND_OR_NOT_INDEXED`; that is partial OSINT, not proof that a token has no attention. A missing credential or search outage is separately marked unavailable and defers the candidate.
 - A minimum of 5 X search results (mapping to roughly 10-20 real tweets) is required. This gate is bypassed when a big/celebrity account posted about the token or when evidence content indicates viral reach (high view/impression counts).
 - Market cap must be at least $50,000. This filters dead and micro tokens (research shows Solana high-return tokens have a median market cap around $214K).
@@ -45,7 +67,7 @@ python -m memescanner
 - `MEMESCANNER_HELIUS_RPC_URL` (preferred complete RPC endpoint)
 - `MEMESCANNER_HELIUS_API_KEY` (used only when no complete RPC URL is set)
 - `MEMESCANNER_TRANSFER_HOOK_ALLOWLIST` (comma-separated exact Token-2022 hook program IDs; empty rejects hooks)
-- `MEMESCANNER_ENABLE_PAPER_TRADING=true` enables virtual PaperTrader accounting, five-minute position checks, hourly portfolio updates, and daily P&L summaries
+- `MEMESCANNER_ENABLE_PAPER_TRADING=true` enables virtual PaperTrader accounting, independent two-second exit supervision, hourly portfolio updates, and daily P&L summaries
 - `MEMESCANNER_COLLECT_OUTCOMES=false` disables prospective public-market capture; collection is enabled by default and never changes signals or position sizing
 
 Missing Telegram credentials disable delivery clearly. A completed Tavily search with no indexed result remains partial OSINT, while a missing Tavily credential or outage defers candidates. Missing Helius/Solana RPC evidence also defers candidates and prevents alerts rather than silently treating them as safe. RPC errors never log credential-bearing request URLs.

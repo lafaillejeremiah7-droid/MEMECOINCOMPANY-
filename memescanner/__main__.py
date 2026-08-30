@@ -6,15 +6,14 @@ pipeline. It contains no wallet, signing, transaction submission, or live-trade
 path. Virtual PaperTrader behavior is disabled by default and capped at
 ``scanner.max_open_positions`` concurrent positions, which defaults to 1.
 
-Note the operational consequence of that default: nothing in paper_trader.py
-closes a position on a timer, so a single position that stops producing price
-events holds the only slot indefinitely and the paper trader declines every
-later candidate while this scanner keeps alerting normally.
+Paper exits are supervised independently of discovery. Missing quotes never
+fabricate a fill; an unresolved position continues to occupy its slot.
 """
 
 from __future__ import annotations
 
 import asyncio
+import inspect
 import logging
 from datetime import datetime, timezone
 from typing import Any, List, Optional
@@ -33,6 +32,11 @@ from memescanner.discovery import (
     PumpFunSource,
     ResilientHttpClient,
     SourceAdapter,
+)
+from memescanner.micro_company import (
+    CapitalState,
+    build_micro_trade_plan,
+    format_micro_trade_plan,
 )
 from memescanner.onchain import OnchainAnalyzer
 from memescanner.outcomes import OutcomeWorker
@@ -110,11 +114,37 @@ async def _paper_buyer(
     was shown. Absent, the trader falls back to its own defaults.
     """
     ladder = plan or {}
+    capital_state = trader.capital_state()
+    if inspect.isawaitable(capital_state):
+        capital_state = await capital_state
+    if not isinstance(capital_state, CapitalState):
+        logger.error("Paper entry blocked: treasury state unavailable")
+        return None
+    micro_plan = build_micro_trade_plan(
+        token=candidate.symbol or "UNKNOWN",
+        contract=candidate.mint,
+        market=market,
+        evidence=ladder.get("evidence") or {},
+        screening_score=float(ladder.get("screening_score") or 0),
+        capital=capital_state,
+    )
+    # The complete Referee output is delivered before a simulated entry. WATCH
+    # and REJECT never reach PaperTrader.buy.
+    ticket = format_micro_trade_plan(micro_plan)
+    logger.info("%s", ticket)
+    await trader.notify_trade_plan(ticket)
+    if micro_plan.final_decision != "BUY":
+        return None
     return await trader.buy(
         {
             "mint": candidate.mint,
             "symbol": candidate.symbol or "UNKNOWN",
-            "take_profit_target": take_profit_target,
+            "take_profit_target": 1 + micro_plan.gross_target_pct / 100,
+            "entry_amount_usd": micro_plan.entry_amount_usd,
+            "stop_loss_pct": micro_plan.stop_pct,
+            "max_hold_seconds": micro_plan.maximum_holding_seconds,
+            "estimated_round_trip_costs_usd": micro_plan.estimated_round_trip_costs_usd,
+            "micro_mode": True,
             "runner_target": ladder.get("runner_target"),
             "narrative_presence": ladder.get("narrative_presence"),
             "narrative_presence_components": ladder.get(
@@ -129,6 +159,18 @@ async def _paper_buyer(
             "price_usd": market.get("price_usd"),
         },
     )
+
+
+async def _paper_supervisor(trader: PaperTrader, interval: float = 2.0) -> None:
+    """Supervise exits without waiting for discovery or narrative analysis."""
+    while True:
+        try:
+            await trader.check_positions()
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("Paper exit supervision failed; retrying")
+        await asyncio.sleep(interval)
 
 
 async def _outcome_loop(worker: OutcomeWorker, config: Config) -> None:
@@ -212,8 +254,8 @@ async def main_loop(config: Optional[Config] = None) -> None:
         paper_callback = None
         if config.scanner.enable_paper_trading:
             paper_trader = PaperTrader(
-                starting_balance=1000.0,
-                trade_size=50.0,
+                starting_balance=11.0,
+                trade_size=1.0,
                 db_path=config.database.path,
                 message_sender=sender.send,
                 onchain_analyzer=onchain,
@@ -282,7 +324,10 @@ async def main_loop(config: Optional[Config] = None) -> None:
                 ),
             ])
         loop = asyncio.get_running_loop()
-        next_paper_check = loop.time() + 300.0
+        if paper_trader is not None:
+            background_tasks.append(asyncio.create_task(
+                _paper_supervisor(paper_trader), name="paper-exit-supervisor",
+            ))
         next_portfolio_update = loop.time() + 3600.0
         paper_summary_date = datetime.now(timezone.utc).date()
         while True:
@@ -298,9 +343,6 @@ async def main_loop(config: Optional[Config] = None) -> None:
                 )
                 now = loop.time()
                 if paper_trader is not None:
-                    if now >= next_paper_check:
-                        await paper_trader.check_positions()
-                        next_paper_check = now + 300.0
                     if now >= next_portfolio_update:
                         await sender.send(await paper_trader.get_portfolio_summary())
                         next_portfolio_update = now + 3600.0

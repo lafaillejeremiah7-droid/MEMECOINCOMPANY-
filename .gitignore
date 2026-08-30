@@ -1,4 +1,5 @@
 __pycache__/
+.venv/
 *.pyc
 *.db
 # SQLite WAL sidecars. Both Database and PaperTrader set journal_mode=WAL, so

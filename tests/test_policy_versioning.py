@@ -211,7 +211,7 @@ def _feature_fingerprint() -> str:
 # Recorded fingerprints. Update these *together with* the version they describe,
 # never on their own.
 EXPECTED = {
-    "policy": ("unified-safety-v2", "9df4aba09735b9c9"),
+    "policy": ("unified-safety-v3-micro", "a711a068996dd66a"),
     # screening-rank-v4: narrative presence now ADDS to tp1 (PRESENCE_TARGET_BONUS_MAX)
     # instead of only raising its ceiling, and the pre-tp1 trail plus the runner-target
     # ratchet changed what a recorded outcome means. See

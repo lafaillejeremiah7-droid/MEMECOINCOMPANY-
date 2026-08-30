@@ -274,7 +274,10 @@ MARKET_GATES = [
 @pytest.mark.parametrize("name,overrides,expected", MARKET_GATES,
                          ids=[case[0] for case in MARKET_GATES])
 @pytest.mark.asyncio
-async def test_market_gate_fires(real_onchain_shape, name, overrides, expected):
+async def test_market_gate_fires(real_onchain_shape, name, overrides, expected, monkeypatch):
+    if name == "age_too_young":
+        # A custom minimum age still works; the new discovery default is zero.
+        monkeypatch.setattr(SCANNER, "min_candidate_age_minutes", 10)
     decision = await _decide(real_onchain_shape, market_overrides=overrides)
     assert decision.decision == "REJECTED", f"{name} was not rejected"
     assert expected in decision.reasons, (

@@ -728,6 +728,8 @@ def trade_plan(decision: CandidateDecision) -> Dict[str, Any]:
         "narrative_presence": decision.narrative_presence,
         "narrative_presence_components": dict(decision.narrative_presence_components),
         "celebrity_verified": celebrity.get("status") == "VERIFIED",
+        "screening_score": decision.screening_score,
+        "evidence": dict(decision.evidence),
     }
 
 
@@ -1275,7 +1277,7 @@ class UnifiedSolanaScanner:
         *,
         paper_buyer: Optional[PaperBuyer] = None,
         cohort_horizons: Optional[Dict[int, int]] = None,
-        policy_version: str = "unified-safety-v2",
+        policy_version: str = "unified-safety-v3-micro",
         feature_schema_version: str = "screening-rank-v3",
         max_onchain_checks: int = MAX_ONCHAIN_CHECKS_PER_CYCLE,
         max_market_checks: int = 40,
@@ -1500,7 +1502,7 @@ class UnifiedSolanaScanner:
         *,
         cycle_id: Optional[int] = None,
         candidate_id: Optional[int] = None,
-        policy_version: str = "unified-safety-v2",
+        policy_version: str = "unified-safety-v3-micro",
         feature_schema_version: str = "screening-rank-v3",
     ) -> Dict[str, Any]:
         candidate = decision.candidate
