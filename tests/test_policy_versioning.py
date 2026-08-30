@@ -27,6 +27,7 @@ from dataclasses import asdict
 from pathlib import Path
 
 from memescanner.config import CalibrationConfig, FiltersConfig, ScannerConfig
+from memescanner.micro_company import MicroTreasuryPolicy
 from memescanner.paper_trader import (
     PRE_TP1_TRAIL_ARM_MULTIPLE,
     PRE_TP1_TRAIL_WIDTH_CLIMBING_PCT,
@@ -35,6 +36,7 @@ from memescanner.paper_trader import (
     PRE_TP1_TRAIL_WIDTH_STRONG_PCT,
     RUNNER_TARGET_RATCHET_STEP,
 )
+from memescanner.signals import ALERT_VALID_SECONDS, MAX_EVIDENCE_AGE_SECONDS, SIGNAL_VERSION
 from memescanner.unified_scanner import (
     AVG_TRADE_SIZE_BOT_CHURN_MULTIPLE,
     AVG_TRADE_SIZE_SCORE_MAX,
@@ -108,6 +110,14 @@ def _policy_fingerprint() -> str:
         ],
         "market_checks": ScannerConfig().max_market_checks_per_cycle,
         "gates": _gate_reasons(),
+        "signal_company": {
+            "version": SIGNAL_VERSION,
+            "treasury": asdict(MicroTreasuryPolicy()),
+            "max_evidence_age": MAX_EVIDENCE_AGE_SECONDS,
+            "alert_valid_seconds": ALERT_VALID_SECONDS,
+            "gates": sorted(set(re.findall(r'"([A-Z][A-Z0-9_]{6,})"',
+                            Path("memescanner/signals.py").read_text(encoding="utf-8")))),
+        },
     }
     return hashlib.sha256(
         json.dumps(payload, sort_keys=True).encode()
@@ -211,7 +221,7 @@ def _feature_fingerprint() -> str:
 # Recorded fingerprints. Update these *together with* the version they describe,
 # never on their own.
 EXPECTED = {
-    "policy": ("unified-safety-v3-micro", "a711a068996dd66a"),
+    "policy": ("unified-safety-v4-signals", "caf57791dec0d399"),
     # screening-rank-v4: narrative presence now ADDS to tp1 (PRESENCE_TARGET_BONUS_MAX)
     # instead of only raising its ceiling, and the pre-tp1 trail plus the runner-target
     # ratchet changed what a recorded outcome means. See

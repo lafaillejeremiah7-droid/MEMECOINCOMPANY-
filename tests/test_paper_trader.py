@@ -2,7 +2,6 @@
 Tests for the paper trading module.
 """
 
-import os
 import time
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -21,13 +20,9 @@ TEST_DB_PATH = "test_paper_trader.db"
 
 
 @pytest.fixture(autouse=True)
-def clean_db():
-    """Remove test database before and after each test."""
-    if os.path.exists(TEST_DB_PATH):
-        os.remove(TEST_DB_PATH)
-    yield
-    if os.path.exists(TEST_DB_PATH):
-        os.remove(TEST_DB_PATH)
+def clean_db(tmp_path, monkeypatch):
+    """Isolate migrations and WAL files, including concurrent test sessions."""
+    monkeypatch.setitem(globals(), "TEST_DB_PATH", str(tmp_path / "paper.db"))
 
 
 @pytest.fixture

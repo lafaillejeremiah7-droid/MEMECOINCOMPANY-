@@ -754,7 +754,7 @@ async def test_telegram_transport_failure_propagates_as_uncertain_delivery():
             raise httpx.ReadTimeout("delivery outcome unknown")
 
     with patch("memescanner.__main__.httpx.AsyncClient", return_value=FailingClient()):
-        with pytest.raises(httpx.ReadTimeout):
+        with pytest.raises(RuntimeError, match="delivery is uncertain"):
             await TelegramSender("dummy-token", "dummy-chat").send("signal")
 
 

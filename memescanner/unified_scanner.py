@@ -1281,8 +1281,9 @@ class UnifiedSolanaScanner:
         alert_sender: AlertSender,
         *,
         paper_buyer: Optional[PaperBuyer] = None,
+        signal_preparer: Optional[Callable[[CandidateDecision], Awaitable[Optional[str]]]] = None,
         cohort_horizons: Optional[Dict[int, int]] = None,
-        policy_version: str = "unified-safety-v3-micro",
+        policy_version: str = "unified-safety-v4-signals",
         feature_schema_version: str = "screening-rank-v3",
         max_onchain_checks: int = MAX_ONCHAIN_CHECKS_PER_CYCLE,
         max_market_checks: int = 40,
@@ -1292,6 +1293,7 @@ class UnifiedSolanaScanner:
         self.database = database
         self.alert_sender = alert_sender
         self.paper_buyer = paper_buyer
+        self.signal_preparer = signal_preparer
         self.cohort_horizons = cohort_horizons or {
             0: 120, 3600: 300, 21600: 900, 86400: 3600
         }
@@ -1357,11 +1359,28 @@ class UnifiedSolanaScanner:
             reverse=True,
         )
         winner: Optional[CandidateDecision] = None
+        prepared_signal: Optional[str] = None
         winner_claimed = False
         # Try qualified candidates in rank order. A retained PENDING claim from
         # an uncertain earlier delivery must block a duplicate for that mint,
         # but must not suppress an unrelated lower-ranked candidate.
         for item in qualified:
+            if self.signal_preparer is not None:
+                try:
+                    prepared_signal = await self.signal_preparer(item)
+                except Exception as exc:
+                    item.decision = "DEFERRED"
+                    item.reasons.append(f"SIGNAL_REVIEW_FAILED:{type(exc).__name__}")
+                    continue
+                if not prepared_signal:
+                    item.decision = "DEFERRED"
+                    item.reasons.append("SIGNAL_COMPANY_VETO")
+                    continue
+                age = item.candidate.age_minutes()
+                if age is None or age > self.evaluator.max_age_minutes:
+                    item.decision = "REJECTED"
+                    item.reasons.append("AGE_EXPIRED_BEFORE_ALERT")
+                    continue
             claimed = await self.database.try_claim_candidate_alert(
                 *item.candidate.identity
             )
@@ -1392,9 +1411,18 @@ class UnifiedSolanaScanner:
             )
 
         if winner is not None and winner_claimed:
+            signal_review = winner.evidence.get("signal_company")
             try:
-                winner.alerted = await self.alert_sender(format_signal(winner))
+                if signal_review is not None and time.time() > signal_review["expires_at"]:
+                    winner.alerted = False
+                    winner.reasons.append("SIGNAL_EXPIRED_BEFORE_DELIVERY")
+                else:
+                    if signal_review is not None:
+                        signal_review["delivery"] = "PENDING"
+                    winner.alerted = await self.alert_sender(prepared_signal or format_signal(winner))
             except Exception as exc:
+                if signal_review is not None:
+                    signal_review["delivery"] = "UNCERTAIN"
                 winner.decision = "ALERT_DELIVERY_UNCERTAIN"
                 winner.reasons.append(f"ALERT_SENDER_EXCEPTION:{type(exc).__name__}")
                 await self.database.record_candidate_observation(
@@ -1412,6 +1440,8 @@ class UnifiedSolanaScanner:
                     winner.candidate.mint,
                 )
             else:
+                if signal_review is not None:
+                    signal_review["delivery"] = "ACCEPTED" if winner.alerted else "REJECTED"
                 winner.decision = "ALERTED" if winner.alerted else "DEFERRED"
                 if not winner.alerted:
                     winner.reasons.append("ALERT_DELIVERY_FAILED")
@@ -1507,7 +1537,7 @@ class UnifiedSolanaScanner:
         *,
         cycle_id: Optional[int] = None,
         candidate_id: Optional[int] = None,
-        policy_version: str = "unified-safety-v3-micro",
+        policy_version: str = "unified-safety-v4-signals",
         feature_schema_version: str = "screening-rank-v3",
     ) -> Dict[str, Any]:
         candidate = decision.candidate

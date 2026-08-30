@@ -3,11 +3,7 @@
 ``python -m memescanner`` discovers platform-neutral Solana DEX candidates,
 normalizes/deduplicates them, and sends every source through one evidence-gated
 pipeline. It contains no wallet, signing, transaction submission, or live-trade
-path. Virtual PaperTrader behavior is disabled by default and capped at
-``scanner.max_open_positions`` concurrent positions, which defaults to 1.
-
-Paper exits are supervised independently of discovery. Missing quotes never
-fabricate a fill; an unresolved position continues to occupy its slot.
+path. Production is signal-only even if an old paper-trading setting is enabled.
 """
 
 from __future__ import annotations
@@ -15,13 +11,11 @@ from __future__ import annotations
 import asyncio
 import inspect
 import logging
-from datetime import datetime, timezone
 from typing import Any, List, Optional
 
 import httpx
 
 from memescanner.calibration import CalibrationReporter
-from memescanner.company import PaperCompany
 from memescanner.config import Config
 from memescanner.database import Database
 from memescanner.discovery import (
@@ -45,6 +39,7 @@ from memescanner.paper_trader import (
     DEFAULT_TAKE_PROFIT_TARGET,
     PaperTrader,
 )
+from memescanner.signals import SignalCompany
 from memescanner.unified_scanner import CommonEvaluator, UnifiedSolanaScanner
 from memescanner.x_search import XSearchClient
 
@@ -80,12 +75,18 @@ class TelegramSender:
             )
             return False
         url = f"https://api.telegram.org/bot{self.bot_token}/sendMessage"
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            response = await client.post(url, json={
-                "chat_id": self.chat_id,
-                "text": text,
-                "disable_web_page_preview": True,
-            })
+        # HTTP client request logs include the bot token in the URL.
+        logging.getLogger("httpx").setLevel(logging.CRITICAL)
+        logging.getLogger("httpcore").setLevel(logging.CRITICAL)
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                response = await client.post(url, json={
+                    "chat_id": self.chat_id,
+                    "text": text,
+                    "disable_web_page_preview": True,
+                })
+        except httpx.HTTPError:
+            raise RuntimeError("Telegram transport failed; delivery is uncertain") from None
         # A 4xx response is a definitive rejection and can be retried only
         # after configuration is fixed. Transport failures and 5xx responses
         # are allowed to propagate so the scanner retains its PENDING claim:
@@ -96,8 +97,9 @@ class TelegramSender:
                 response.status_code,
             )
             return False
-        response.raise_for_status()
-        return bool(response.json().get("ok"))
+        if response.status_code >= 500:
+            raise RuntimeError("Telegram server failed; delivery is uncertain")
+        return response.status_code == 200 and response.json().get("ok") is True
 
 
 async def _paper_buyer(
@@ -219,8 +221,6 @@ async def main_loop(config: Optional[Config] = None) -> None:
     database = Database(config.database.path)
     await database.initialize()
     http = ResilientHttpClient()
-    paper_trader: Optional[PaperTrader] = None
-    company: Optional[PaperCompany] = None
     outcome_database: Optional[Database] = None
     calibration_database: Optional[Database] = None
     background_tasks: List[asyncio.Task[Any]] = []
@@ -253,30 +253,9 @@ async def main_loop(config: Optional[Config] = None) -> None:
             min_spike_volume_to_mcap_ratio=config.filters.min_spike_volume_to_mcap_ratio,
             reference_avg_trade_size_usd=config.filters.reference_avg_trade_size_usd,
         )
-        paper_callback = None
         if config.scanner.enable_paper_trading:
-            paper_trader = PaperTrader(
-                starting_balance=11.0,
-                trade_size=1.0,
-                db_path=config.database.path,
-                message_sender=sender.send,
-                onchain_analyzer=onchain,
-                x_client=XSearchClient(
-                    config.evidence.tavily_api_key,
-                    config.evidence.xai_api_key,
-                ),
-                max_open_positions=config.scanner.max_open_positions,
-            )
-            await paper_trader.initialize()
-            company = PaperCompany(paper_trader, config.database.path + ".company.db")
-            await company.supervise_once()
-            async def paper_callback(candidate, market, take_profit_target, plan=None):
-                assert company is not None
-                details = plan or {}
-                return await company.consider(
-                    candidate.symbol or "UNKNOWN", candidate.mint, market,
-                    details.get("evidence") or {}, details.get("screening_score") or 0,
-                )
+            logger.warning("Ignoring legacy paper setting: production sends signals only")
+        company = SignalCompany(pair_client, config.filters)
 
         outcome_worker = None
         calibration_reporter = None
@@ -301,20 +280,26 @@ async def main_loop(config: Optional[Config] = None) -> None:
             evaluator,
             database,
             sender.send,
-            paper_buyer=paper_callback,
+            signal_preparer=company.prepare,
             cohort_horizons=config.calibration.horizon_windows_seconds,
             policy_version=config.calibration.policy_version,
             feature_schema_version=config.calibration.feature_schema_version,
             max_market_checks=config.scanner.max_market_checks_per_cycle,
         )
         logger.info(
-            "Starting unified Solana signal scanner with %d sources; paper=%s; "
-            "prospective_outcomes=%s (virtual max positions=%d)",
+            "Starting signal-only company with %d sources; prospective_outcomes=%s",
             len(scanner.discovery.sources),
-            "enabled" if paper_trader else "disabled",
             "enabled" if outcome_worker else "disabled",
-            config.scanner.max_open_positions,
         )
+        if sender.bot_token and sender.chat_id:
+            delivered = await sender.send(
+                "Signal company started. Research alerts only; no automatic trades. "
+                "BUY requires every check; WATCH means do not buy yet. "
+                "Unverified liquidity safety currently blocks BUY. "
+                "GitHub sessions are finite; see Actions for session status."
+            )
+            if not delivered:
+                raise RuntimeError("Telegram startup check failed; scanner not started")
         if outcome_worker is not None and calibration_reporter is not None:
             background_tasks.extend([
                 asyncio.create_task(
@@ -326,13 +311,6 @@ async def main_loop(config: Optional[Config] = None) -> None:
                     name="calibration-reports",
                 ),
             ])
-        loop = asyncio.get_running_loop()
-        if company is not None:
-            background_tasks.append(asyncio.create_task(
-                company.supervise(), name="paper-company-execution-manager",
-            ))
-        next_portfolio_update = loop.time() + 3600.0
-        paper_summary_date = datetime.now(timezone.utc).date()
         while True:
             try:
                 result = await scanner.run_cycle()
@@ -344,15 +322,6 @@ async def main_loop(config: Optional[Config] = None) -> None:
                     sorted(result["source_failures"]),
                     result.get("evidence_health"),
                 )
-                now = loop.time()
-                if paper_trader is not None:
-                    if now >= next_portfolio_update:
-                        await sender.send(await paper_trader.get_portfolio_summary())
-                        next_portfolio_update = now + 3600.0
-                    today = datetime.now(timezone.utc).date()
-                    if today != paper_summary_date:
-                        await sender.send(await paper_trader.get_daily_summary())
-                        paper_summary_date = today
             except asyncio.CancelledError:
                 raise
             except Exception:
@@ -368,10 +337,6 @@ async def main_loop(config: Optional[Config] = None) -> None:
         if outcome_database is not None:
             await outcome_database.close()
         await http.close()
-        if company is not None:
-            company.close()
-        if paper_trader is not None:
-            await paper_trader.close()
         await database.close()
 
 

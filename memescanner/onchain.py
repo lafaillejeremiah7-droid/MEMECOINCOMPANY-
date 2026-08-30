@@ -1125,7 +1125,9 @@ class OnchainAnalyzer:
             "top10_concentration_pct": None,
             "mint_authority_revoked": None,
             "freeze_authority_revoked": None,
-            "lp_locked": False,
+            # This collector does not verify pool ownership/locks. Unknown is
+            # distinct from evidence that liquidity is actually removable.
+            "lp_locked": None,
             "safe_score": 50,
             "flags": [],
             "has_bundled_pattern": False,
@@ -1245,7 +1247,7 @@ class OnchainAnalyzer:
             result["top10_concentration_pct"],
             result["mint_authority_revoked"],
             result["freeze_authority_revoked"],
-            result["lp_locked"],
+            result["lp_locked"] is True,
             result["coordinated_risk"],
         )
         if result["dangerous_capabilities"]:

@@ -10,7 +10,7 @@ scanner:
   # Bounds DEX pair calls so the 15-second loop remains below public API limits.
   # Unchecked candidates are persisted as deferred and rotate into later cycles.
   max_market_checks_per_cycle: 40
-  # Virtual accounting only; no wallet/signing/submission exists. Default off.
+  # Legacy simulation setting. Production ignores it and sends signals only.
   enable_paper_trading: false  # MEMESCANNER_ENABLE_PAPER_TRADING
   # Concurrent virtual positions. 1 means one coin at a time.
   #
@@ -96,7 +96,7 @@ calibration:
   outcome_poll_seconds: 2
   retry_delay_seconds: 15
   report_interval_seconds: 86400
-  policy_version: "unified-safety-v3-micro"
+  policy_version: "unified-safety-v4-signals"
   feature_schema_version: "screening-rank-v3"
   definition_version: "price-return-2x-v1"
   # Conservative chronological holdout gates. Until every gate passes, reports
