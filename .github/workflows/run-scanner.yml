@@ -48,26 +48,8 @@ jobs:
         uses: actions/github-script@v7
         with:
           script: |
-            const owner = context.repo.owner, repo = context.repo.repo;
-            const artifacts = await github.paginate(github.rest.actions.listArtifacts,
-              {owner, repo, name: 'signal-state', per_page: 100});
-            const prior = artifacts.filter(a => a.workflow_run?.head_branch === 'main')
-              .sort((a,b) => b.id - a.id)[0];
-            const runs = await github.paginate(github.rest.actions.listWorkflowRuns,
-              {owner, repo, workflow_id: 'run-scanner.yml', per_page: 100});
-            const newer = runs.filter(r => r.id !== context.runId && r.head_branch === 'main'
-              && (!prior || r.id > prior.workflow_run.id));
-            for (const run of newer) {
-              const jobs = await github.paginate(github.rest.actions.listJobsForWorkflowRun,
-                {owner, repo, run_id: run.id, per_page: 100});
-              if (jobs.some(j => (j.steps || []).some(s =>
-                s.name === 'Run a 30-minute signal session' && s.conclusion !== 'skipped'))) {
-                throw new Error('A newer signal session has no checkpoint. Recover its history before restarting.');
-              }
-            }
-            if (prior?.expired) throw new Error('Signal state expired. Recover dedup history before restarting.');
-            if (prior) core.setOutput('run_id', String(prior.workflow_run.id));
-            else core.notice('First signal-only deployment: new observation/dedup database.');
+            const {findPreviousSignalState} = require('./scripts/signal_history.cjs');
+            await findPreviousSignalState({github, context, core});
 
       - name: Restore observation and alert history
         if: steps.previous.outputs.run_id != ''
