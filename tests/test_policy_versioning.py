@@ -27,6 +27,7 @@ from dataclasses import asdict
 from pathlib import Path
 
 from memescanner.config import CalibrationConfig, FiltersConfig, ScannerConfig
+from memescanner.liquidity import MIN_BURN_PCT, PUMP_AMM, RAYDIUM_V4
 from memescanner.micro_company import MicroTreasuryPolicy
 from memescanner.paper_trader import (
     PRE_TP1_TRAIL_ARM_MULTIPLE,
@@ -115,6 +116,10 @@ def _policy_fingerprint() -> str:
             "treasury": asdict(MicroTreasuryPolicy()),
             "max_evidence_age": MAX_EVIDENCE_AGE_SECONDS,
             "alert_valid_seconds": ALERT_VALID_SECONDS,
+            "lp_burn_minimum": MIN_BURN_PCT,
+            "lp_programs": [PUMP_AMM, RAYDIUM_V4],
+            "lp_gates": sorted(set(re.findall(r'"([A-Z][A-Z0-9_]{6,})"',
+                               Path("memescanner/liquidity.py").read_text(encoding="utf-8")))),
             "gates": sorted(set(re.findall(r'"([A-Z][A-Z0-9_]{6,})"',
                             Path("memescanner/signals.py").read_text(encoding="utf-8")))),
         },
@@ -221,7 +226,7 @@ def _feature_fingerprint() -> str:
 # Recorded fingerprints. Update these *together with* the version they describe,
 # never on their own.
 EXPECTED = {
-    "policy": ("unified-safety-v4-signals", "caf57791dec0d399"),
+    "policy": ("unified-safety-v5-liquidity", "11cd6b0f8d48925e"),
     # screening-rank-v4: narrative presence now ADDS to tp1 (PRESENCE_TARGET_BONUS_MAX)
     # instead of only raising its ceiling, and the pre-tp1 trail plus the runner-target
     # ratchet changed what a recorded outcome means. See

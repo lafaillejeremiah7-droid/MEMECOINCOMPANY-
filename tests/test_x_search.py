@@ -166,7 +166,7 @@ class TestXSearchClientXai:
             assert call_args[0][0] == "https://api.x.ai/v1/responses"
             payload = call_args[1]["json"]
             assert payload["model"] == XAI_MODEL
-            assert {"type": "x_search", "x_search": {}} in payload["tools"]
+            assert payload["tools"] == [{"type": "x_search"}]
             headers = call_args[1]["headers"]
             assert headers["Authorization"] == "Bearer xai-test-key-123"
 

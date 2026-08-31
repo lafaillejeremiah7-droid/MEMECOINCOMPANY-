@@ -22,6 +22,7 @@ jobs:
     timeout-minutes: 40
     env:
       MEMESCANNER_TAVILY_API_KEY: ${{ secrets.MEMESCANNER_TAVILY_API_KEY }}
+      MEMESCANNER_XAI_API_KEY: ${{ secrets.MEMESCANNER_XAI_API_KEY }}
       MEMESCANNER_HELIUS_RPC_URL: ${{ secrets.MEMESCANNER_HELIUS_RPC_URL }}
       MEMESCANNER_TELEGRAM_BOT_TOKEN: ${{ secrets.MEMESCANNER_TELEGRAM_BOT_TOKEN }}
       MEMESCANNER_TELEGRAM_CHAT_ID: ${{ secrets.MEMESCANNER_TELEGRAM_CHAT_ID }}
@@ -92,6 +93,10 @@ jobs:
       - name: Checkpoint observations and delivery claims
         if: always()
         run: python scripts/signal_state.py checkpoint
+
+      - name: Report forward validation without claiming live fills
+        if: always() && hashFiles('memescanner.db') != ''
+        run: python -m memescanner.validation --report memescanner.db
 
       - name: Preserve signal history
         if: always() && hashFiles('signal-state/memescanner.db') != ''

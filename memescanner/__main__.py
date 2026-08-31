@@ -28,12 +28,14 @@ from memescanner.discovery import (
     ResilientHttpClient,
     SourceAdapter,
 )
+from memescanner.liquidity import LiquidityVerifier
 from memescanner.micro_company import (
     CapitalState,
     build_micro_trade_plan,
     format_micro_trade_plan,
 )
 from memescanner.onchain import OnchainAnalyzer
+from memescanner.operations import HealthReporter, ProcessGuard
 from memescanner.outcomes import OutcomeWorker
 from memescanner.paper_trader import (
     DEFAULT_TAKE_PROFIT_TARGET,
@@ -41,6 +43,7 @@ from memescanner.paper_trader import (
 )
 from memescanner.signals import SignalCompany
 from memescanner.unified_scanner import CommonEvaluator, UnifiedSolanaScanner
+from memescanner.validation import ForwardValidation
 from memescanner.x_search import XSearchClient
 
 logger = logging.getLogger(__name__)
@@ -218,13 +221,15 @@ async def _calibration_loop(
 async def main_loop(config: Optional[Config] = None) -> None:
     config = config or Config.from_env()
     config.setup_logging()
+    guard = ProcessGuard(config.database.path + ".lock")
     database = Database(config.database.path)
-    await database.initialize()
     http = ResilientHttpClient()
+    validation_database: Optional[Database] = None
     outcome_database: Optional[Database] = None
     calibration_database: Optional[Database] = None
     background_tasks: List[asyncio.Task[Any]] = []
     try:
+        await database.initialize()
         sender = TelegramSender(config.telegram.bot_token, config.telegram.chat_id)
         onchain = OnchainAnalyzer(
             rpc_url=config.evidence.helius_rpc_url,
@@ -232,13 +237,11 @@ async def main_loop(config: Optional[Config] = None) -> None:
             transfer_hook_allowlist=set(config.evidence.transfer_hook_allowlist),
         )
         pair_client = DexScreenerPairClient(http)
+        social = XSearchClient(config.evidence.tavily_api_key, config.evidence.xai_api_key)
         evaluator = CommonEvaluator(
             pair_client,
             onchain,
-            XSearchClient(
-                config.evidence.tavily_api_key,
-                config.evidence.xai_api_key,
-            ),
+            social,
             min_age_minutes=config.scanner.min_candidate_age_minutes,
             max_age_minutes=config.scanner.max_candidate_age_minutes,
             min_liquidity_usd=config.filters.min_liquidity_usd,
@@ -255,7 +258,12 @@ async def main_loop(config: Optional[Config] = None) -> None:
         )
         if config.scanner.enable_paper_trading:
             logger.warning("Ignoring legacy paper setting: production sends signals only")
-        company = SignalCompany(pair_client, config.filters)
+        company = SignalCompany(pair_client, config.filters, LiquidityVerifier(onchain))
+        validation_database = Database(config.database.path)
+        await validation_database.initialize()
+        validation = ForwardValidation(validation_database, pair_client)
+        await validation.initialize()
+        health = HealthReporter()
 
         outcome_worker = None
         calibration_reporter = None
@@ -295,11 +303,15 @@ async def main_loop(config: Optional[Config] = None) -> None:
             delivered = await sender.send(
                 "Signal company started. Research alerts only; no automatic trades. "
                 "BUY requires every check; WATCH means do not buy yet. "
-                "Unverified liquidity safety currently blocks BUY. "
+                "Exact-pool LP checks are enabled; unsupported liquidity stays WATCH. "
+                "WATCH can upgrade once to BUY after fresh checks. "
                 "GitHub sessions are finite; see Actions for session status."
             )
             if not delivered:
                 raise RuntimeError("Telegram startup check failed; scanner not started")
+            logger.info("Telegram startup delivery accepted")
+        validation_task = asyncio.create_task(validation.run(), name="forward-validation")
+        background_tasks.append(validation_task)
         if outcome_worker is not None and calibration_reporter is not None:
             background_tasks.extend([
                 asyncio.create_task(
@@ -312,8 +324,17 @@ async def main_loop(config: Optional[Config] = None) -> None:
                 ),
             ])
         while True:
+            if validation_task.done():
+                await validation_task  # Do not silently keep signaling after validation failure.
+                raise RuntimeError("Forward validation task stopped")
             try:
                 result = await scanner.run_cycle()
+                alerted = result.get("alerted")
+                if alerted is not None:
+                    await validation.record(alerted.evidence.get("signal_company") or {}, alerted.market or {})
+                message = health.message(result, social.failures, onchain.last_error, await validation.report())
+                if message and sender.bot_token and sender.chat_id:
+                    await sender.send(message)
                 logger.info(
                     "Cycle: discovered=%d alerted=%s source_failures=%s "
                     "evidence_health=%s",
@@ -336,8 +357,11 @@ async def main_loop(config: Optional[Config] = None) -> None:
             await calibration_database.close()
         if outcome_database is not None:
             await outcome_database.close()
+        if validation_database is not None:
+            await validation_database.close()
         await http.close()
         await database.close()
+        guard.close()
 
 
 def main() -> None:

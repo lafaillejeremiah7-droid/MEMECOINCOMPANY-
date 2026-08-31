@@ -24,6 +24,7 @@ from memescanner.company import (
 )
 from memescanner.config import FiltersConfig
 from memescanner.discovery import DexScreenerPairClient
+from memescanner.liquidity import LiquidityVerifier
 from memescanner.micro_company import (
     CapitalState,
     EmployeeScore,
@@ -33,7 +34,7 @@ from memescanner.micro_company import (
 )
 from memescanner.unified_scanner import CandidateDecision
 
-SIGNAL_VERSION = "signal-company-v1"
+SIGNAL_VERSION = "signal-company-v2"
 MAX_EVIDENCE_AGE_SECONDS = 120
 ALERT_VALID_SECONDS = 30
 
@@ -63,9 +64,11 @@ def format_advisory(plan: MicroTradePlan, observed_at: float) -> str:
 class SignalCompany:
     """Review immediately before a durable alert claim; unsafe entries stay local."""
 
-    def __init__(self, pairs: DexScreenerPairClient, filters: FiltersConfig) -> None:
+    def __init__(self, pairs: DexScreenerPairClient, filters: FiltersConfig,
+                 liquidity: LiquidityVerifier | None = None) -> None:
         self.pairs = pairs
         self.filters = filters
+        self.liquidity = liquidity
         self.workers = (Scout(), Investigator(), RiskDefender(), MarketAnalyst())
         self.strategist = TradeStrategist()
         self.referee = Referee()
@@ -76,6 +79,15 @@ class SignalCompany:
         if not 0 <= time.time() - evidence_at <= MAX_EVIDENCE_AGE_SECONDS:
             decision.reasons.append("SIGNAL_EVIDENCE_STALE")
             return None
+        lp_evidence = None
+        if self.liquidity is not None:
+            lp_evidence = await asyncio.wait_for(
+                self.liquidity.verify(decision.candidate.mint, original), timeout=20)
+            decision.evidence["liquidity"] = lp_evidence
+            onchain = dict(decision.evidence.get("onchain") or {})
+            if onchain.get("lp_locked") is not False:
+                onchain["lp_locked"] = lp_evidence.get("lp_locked")
+            decision.evidence["onchain"] = onchain
         # A real second fetch, never a timestamp rewrite on cached evidence.
         market = await asyncio.wait_for(self.pairs.get_pair(decision.candidate.mint), timeout=8)
         observed_at = time.time()
@@ -83,6 +95,11 @@ class SignalCompany:
             decision.reasons.append("SIGNAL_MARKET_UNAVAILABLE")
             return None
         market = dict(market, company_observed_at=observed_at)
+        if (lp_evidence is not None and lp_evidence.get("lp_locked") is True
+                and (lp_evidence.get("pair") != market.get("pair_address")
+                     or not 0 <= time.time() - _number(lp_evidence.get("observed_at")) <= 30)):
+            decision.reasons.append("LIQUIDITY_EVIDENCE_STALE_OR_POOL_CHANGED")
+            return None
         old_price = _number(original.get("price_usd"))
         price = _number(market.get("price_usd"))
         if old_price <= 0 or price <= 0 or abs(price / old_price - 1) > 0.05:
@@ -149,5 +166,5 @@ class SignalCompany:
         # Suppress known hazards and missed/out-of-band entries, not just buys.
         if verdict == "REJECT" or reports[0].verdict != "PASS" or reports[3].verdict != "PASS":
             return None
-        # Conservative lifetime dedup: one alert per mint, including WATCH.
+        # Delivery claims allow one WATCH and a later fully rechecked BUY.
         return format_advisory(plan, observed_at)

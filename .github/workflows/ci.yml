@@ -63,6 +63,9 @@ jobs:
       - name: Tests with coverage gate
         run: python -m pytest -q --cov
 
+      - name: Build signal-only deployment image
+        run: docker build --tag memescanner-signal:test .
+
       # Duplicated from secret-patterns.yml on purpose: this job is the single
       # required check, and a credential must not be mergeable if the other
       # workflow is ever disabled or renamed.

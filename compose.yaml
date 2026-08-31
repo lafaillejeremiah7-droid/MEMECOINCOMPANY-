@@ -1,0 +1,17 @@
+# Run only on a host approved by the operator. No host is provisioned by this file.
+services:
+  signals:
+    build: .
+    restart: unless-stopped
+    init: true
+    stop_grace_period: 30s
+    env_file: .env
+    environment:
+      MEMESCANNER_DATABASE_PATH: /data/memescanner.db
+      MEMESCANNER_ENABLE_PAPER_TRADING: "false"
+    volumes:
+      - signal-data:/data
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+volumes:
+  signal-data:

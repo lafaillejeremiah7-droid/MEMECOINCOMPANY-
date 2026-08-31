@@ -460,12 +460,52 @@ MUTATIONS: List[Mutation] = [
 ]
 
 
+MUTATIONS.extend([
+    Mutation(
+        name="liquidity_burn_gate_removed", path="memescanner/liquidity.py",
+        old="MIN_BURN_PCT = 99", new="MIN_BURN_PCT = 0",
+        tests="tests/test_liquidity.py",
+        defect="Authorizes pools without the required LP burn evidence.",
+    ),
+    Mutation(
+        name="blocked_social_looks_available", path="memescanner/x_search.py",
+        old='if self._blocked("xai"):\n            result["evidence_availability"] = "UNAVAILABLE"',
+        new='if self._blocked("xai"):\n            result["evidence_availability"] = "AVAILABLE"',
+        tests="tests/test_provider_resilience.py",
+        defect="An access-denied provider appears healthy on the next candidate.",
+    ),
+    Mutation(
+        name="watch_prevents_buy_upgrade", path="memescanner/database.py",
+        old="AND (kind='BUY' OR status='PENDING') LIMIT 1",
+        new="AND (kind IN ('BUY','WATCH') OR status='PENDING') LIMIT 1",
+        tests="tests/test_signal_transitions.py",
+        defect="A delivered WATCH permanently prevents the newly qualified BUY.",
+    ),
+    Mutation(
+        name="forward_pnl_ignores_costs", path="memescanner/validation.py",
+        old='(price / plan["entry_price"] - 1) - plan["estimated_round_trip_costs_usd"]',
+        new='(price / plan["entry_price"] - 1) - 0',
+        tests="tests/test_forward_validation.py",
+        defect="Forward validation reports gross price movement as net profit.",
+    ),
+    Mutation(
+        name="five_minute_momentum_dropped", path="memescanner/discovery.py",
+        old='"price_change_5m": (pair.get("priceChange") or {}).get("m5"),',
+        new='"price_change_5m": None,',
+        tests="tests/test_provider_resilience.py",
+        defect="The analyst never receives the live adapter's momentum input.",
+    ),
+])
+
+
 def _run(cmd: List[str]) -> subprocess.CompletedProcess:
     return subprocess.run(cmd, capture_output=True, text=True)
 
 
 def _dirty(paths: List[str]) -> List[str]:
     result = _run(["git", "status", "--porcelain", "--"] + paths)
+    if result.returncode != 0:
+        raise RuntimeError("Cannot verify working tree; refusing mutation checks")
     return [line for line in result.stdout.splitlines() if line.strip()]
 
 
@@ -500,7 +540,12 @@ def _revert(mutation: Mutation) -> None:
     reproduces on unmodified main, so this harness has been able to poison the
     runs that follow it. Dropping the cache next to the reverted file closes it.
     """
-    _run(["git", "checkout", "--", mutation.path])
+    restored = _run(["git", "checkout", "--", mutation.path])
+    if restored.returncode != 0:
+        raise RuntimeError(f"Mutation restore failed for {mutation.path}; inspect the working tree")
+    verified = _run(["git", "diff", "--exit-code", "HEAD", "--", mutation.path])
+    if verified.returncode != 0:
+        raise RuntimeError(f"Mutation source not restored exactly: {mutation.path}")
     cache = Path(mutation.path).resolve().parent / "__pycache__"
     if cache.is_dir():
         shutil.rmtree(cache, ignore_errors=True)
@@ -548,6 +593,8 @@ def main() -> int:
                 failed = sum(
                     1 for line in result.stdout.splitlines() if line.startswith("FAILED")
                 )
+                if result.returncode != 1 or failed == 0:
+                    raise RuntimeError(f"Mutation {mutation.name}: test infrastructure failed, not a verified regression catch")
                 print(f"caught ({failed} test(s) failed)")
         finally:
             _revert(mutation)

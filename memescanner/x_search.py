@@ -21,6 +21,7 @@ import asyncio
 import logging
 import os
 import re
+import time
 from typing import Any, Dict, List, Optional
 from urllib.parse import urlparse
 
@@ -168,6 +169,25 @@ class XSearchClient:
         self.tavily_key = "" if primary_is_xai else (primary or "")
         self.timeout = httpx.Timeout(TAVILY_TIMEOUT)
         self.xai_timeout = httpx.Timeout(XAI_TIMEOUT)
+        self.access_denied: set[str] = set()
+        self.retry_after: Dict[str, float] = {}
+        self.failures: Dict[str, str] = {}
+
+    def _blocked(self, backend: str) -> bool:
+        return backend in self.access_denied or time.monotonic() < self.retry_after.get(backend, 0)
+
+    def _record_failure(self, backend: str, error: Exception) -> str:
+        """Access denials require operator action; never log bodies/credentials."""
+        status = error.response.status_code if isinstance(error, httpx.HTTPStatusError) else None
+        code = f"HTTP_{status}" if status is not None else type(error).__name__
+        if status in {401, 402, 403}:
+            self.access_denied.add(backend)
+            code += "_OPERATOR_ACTION_REQUIRED"
+        else:
+            self.retry_after[backend] = time.monotonic() + 60
+        self.failures[backend] = code
+        logger.warning("%s evidence unavailable: %s", backend, code)
+        return code
 
     async def search_token(self, symbol: str, name: str, mint: str) -> Dict[str, Any]:
         """
@@ -262,19 +282,25 @@ class XSearchClient:
         Search using the X.ai Responses API with the x_search tool.
 
         POST https://api.x.ai/v1/responses
-        Body: model XAI_MODEL, tools [{"type": "x_search", "x_search": {}}],
+        Body: model XAI_MODEL, tools [{"type": "x_search"}],
               input: an enumeration request (see build_x_search_query).
         """
         result = self._empty_result()
 
         if not self.xai_key:
             logger.info("X.ai search disabled: no 'xai-' API key is configured")
+            result["evidence_availability"] = "DISABLED"
+            return result
+
+        if self._blocked("xai"):
+            result["evidence_availability"] = "UNAVAILABLE"
+            result["error_code"] = self.failures.get("xai", "PROVIDER_COOLDOWN")
             return result
 
         try:
             payload = {
                 "model": XAI_MODEL,
-                "tools": [{"type": "x_search", "x_search": {}}],
+                "tools": [{"type": "x_search"}],
                 "input": build_x_search_query(symbol, name, mint),
             }
             headers = {
@@ -288,6 +314,7 @@ class XSearchClient:
                 )
                 response.raise_for_status()
                 data = response.json()
+            self.failures.pop("xai", None)
 
             # Parse X.ai Responses API output
             output_text, citations = self._parse_xai_response(data)
@@ -369,12 +396,7 @@ class XSearchClient:
             # The exception type matters: httpx timeout errors stringify to an
             # empty message, so logging only str(e) produced a blank reason and
             # made a systematic timeout look like an unexplained failure.
-            logger.warning(
-                "X.ai search failed for %s: %s: %s",
-                symbol,
-                type(e).__name__,
-                str(e) or "(no message)",
-            )
+            result["error_code"] = self._record_failure("xai", e)
 
         return result
 
@@ -438,6 +460,12 @@ class XSearchClient:
 
         if not self.tavily_key:
             logger.info("Tavily X search disabled: no Tavily API key is configured")
+            result["evidence_availability"] = "DISABLED"
+            return result
+
+        if self._blocked("tavily"):
+            result["evidence_availability"] = "UNAVAILABLE"
+            result["error_code"] = self.failures.get("tavily", "PROVIDER_COOLDOWN")
             return result
 
         try:
@@ -453,6 +481,7 @@ class XSearchClient:
                 response = await client.post(TAVILY_ENDPOINT, json=payload)
                 response.raise_for_status()
                 data = response.json()
+            self.failures.pop("tavily", None)
 
             results_list = data.get("results", [])
 
@@ -509,7 +538,7 @@ class XSearchClient:
 
         except Exception as e:
             result["evidence_availability"] = "UNAVAILABLE"
-            logger.warning("Tavily X search failed for %s: %s", symbol, str(e))
+            result["error_code"] = self._record_failure("tavily", e)
 
         return result
 

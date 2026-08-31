@@ -115,6 +115,14 @@ class Database:
                 PRIMARY KEY (chain_id, mint)
             );
 
+            CREATE TABLE IF NOT EXISTS signal_alert_claims (
+                chain_id TEXT NOT NULL, mint TEXT NOT NULL,
+                kind TEXT NOT NULL CHECK(kind IN ('WATCH', 'BUY')),
+                status TEXT NOT NULL CHECK(status IN ('PENDING', 'SENT')),
+                claimed_at TEXT NOT NULL, completed_at TEXT,
+                PRIMARY KEY (chain_id, mint, kind)
+            );
+
             CREATE TABLE IF NOT EXISTS cohort_candidates (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 chain_id TEXT NOT NULL,
@@ -272,8 +280,13 @@ class Database:
                 ON candidate_observations(chain_id, mint, observed_at);
             CREATE INDEX IF NOT EXISTS idx_observations_decision
                 ON candidate_observations(decision, observed_at);
-            CREATE UNIQUE INDEX IF NOT EXISTS idx_observations_single_alert
-                ON candidate_observations(chain_id, mint)
+            DROP INDEX IF EXISTS idx_observations_single_alert;
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_observations_single_signal_kind
+                ON candidate_observations(chain_id, mint,
+                    CASE WHEN json_valid(evidence_json) THEN
+                        COALESCE(json_extract(evidence_json,
+                            '$.signal_company.plan.final_decision'), 'LEGACY')
+                    ELSE 'LEGACY' END)
                 WHERE alerted = 1;
             """
         )
@@ -559,6 +572,68 @@ class Database:
         )
         await self._db.commit()
         return cursor.rowcount == 1
+
+    async def _legacy_signal_kind(self, chain_id: str, mint: str) -> Optional[str]:
+        """Old unknown/BUY/PENDING deliveries stay blocked; a proven WATCH may upgrade."""
+        assert self._db is not None
+        async with self._db.execute(
+            "SELECT status FROM candidate_alert_claims WHERE chain_id=? AND mint=?", (chain_id, mint)
+        ) as cursor:
+            claim = await cursor.fetchone()
+        if claim is None:
+            return None
+        if claim[0] != "SENT":
+            return "PENDING"
+        async with self._db.execute(
+            "SELECT evidence_json FROM candidate_observations WHERE chain_id=? AND mint=? "
+            "AND alerted=1 ORDER BY id DESC LIMIT 1", (chain_id, mint)
+        ) as cursor:
+            row = await cursor.fetchone()
+        try:
+            kind = json.loads(row[0])["signal_company"]["plan"]["final_decision"] if row else "BUY"
+            return "WATCH" if kind == "WATCH" else "BUY"
+        except (TypeError, ValueError, KeyError):
+            return "BUY"
+
+    async def signal_is_final(self, chain_id: str, mint: str) -> bool:
+        assert self._db is not None
+        if await self._legacy_signal_kind(chain_id, mint) in {"BUY", "PENDING"}:
+            return True
+        async with self._db.execute(
+            "SELECT 1 FROM signal_alert_claims WHERE chain_id=? AND mint=? "
+            "AND (kind='BUY' OR status='PENDING') LIMIT 1", (chain_id, mint)
+        ) as cursor:
+            return await cursor.fetchone() is not None
+
+    async def try_claim_signal(self, chain_id: str, mint: str, kind: str) -> bool:
+        assert self._db is not None
+        if kind not in {"WATCH", "BUY"}:
+            return False
+        legacy = await self._legacy_signal_kind(chain_id, mint)
+        if legacy in {"BUY", "PENDING"} or (legacy == "WATCH" and kind == "WATCH"):
+            return False
+        # One SQL statement owns the decision, even with concurrent processes.
+        cursor = await self._db.execute(
+            "INSERT OR IGNORE INTO signal_alert_claims (chain_id,mint,kind,status,claimed_at) "
+            "SELECT ?,?,?,'PENDING',? WHERE NOT EXISTS (SELECT 1 FROM signal_alert_claims "
+            "WHERE chain_id=? AND mint=? AND (status='PENDING' OR kind='BUY' OR kind=?))",
+            (chain_id, mint, kind, datetime.now(timezone.utc).isoformat(), chain_id, mint, kind),
+        )
+        await self._db.commit()
+        return cursor.rowcount == 1
+
+    async def finish_signal(self, chain_id: str, mint: str, kind: str, delivered: bool) -> None:
+        assert self._db is not None
+        if delivered:
+            await self._db.execute(
+                "UPDATE signal_alert_claims SET status='SENT',completed_at=? "
+                "WHERE chain_id=? AND mint=? AND kind=? AND status='PENDING'",
+                (datetime.now(timezone.utc).isoformat(), chain_id, mint, kind),
+            )
+        else:
+            await self._db.execute("DELETE FROM signal_alert_claims WHERE chain_id=? AND mint=? "
+                                   "AND kind=? AND status='PENDING'", (chain_id, mint, kind))
+        await self._db.commit()
 
     async def complete_candidate_alert(self, chain_id: str, mint: str) -> None:
         """Mark an atomic alert claim as successfully delivered."""

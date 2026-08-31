@@ -9,9 +9,11 @@ STATE = Path("memescanner.db")
 
 
 def preflight() -> None:
-    required = ("MEMESCANNER_TAVILY_API_KEY", "MEMESCANNER_HELIUS_RPC_URL",
+    required = ("MEMESCANNER_HELIUS_RPC_URL",
                 "MEMESCANNER_TELEGRAM_BOT_TOKEN", "MEMESCANNER_TELEGRAM_CHAT_ID")
     missing = [name for name in required if not os.environ.get(name, "").strip()]
+    if not any(os.environ.get(name, "").strip() for name in ("MEMESCANNER_TAVILY_API_KEY", "MEMESCANNER_XAI_API_KEY")):
+        missing.append("MEMESCANNER_TAVILY_API_KEY or MEMESCANNER_XAI_API_KEY")
     if missing:
         raise RuntimeError("Missing deployment configuration: " + ", ".join(missing))
     print("Signal-only configuration present. Telegram delivery is tested at startup.")

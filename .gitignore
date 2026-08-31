@@ -6,6 +6,7 @@ __pycache__/
 # every run produces these next to the ignored *.db file.
 *.db-wal
 *.db-shm
+*.db.lock
 # Coverage artefacts. The gate is enforced by fail_under, not by a committed file.
 .coverage
 .coverage.*

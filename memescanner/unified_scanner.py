@@ -1283,7 +1283,7 @@ class UnifiedSolanaScanner:
         paper_buyer: Optional[PaperBuyer] = None,
         signal_preparer: Optional[Callable[[CandidateDecision], Awaitable[Optional[str]]]] = None,
         cohort_horizons: Optional[Dict[int, int]] = None,
-        policy_version: str = "unified-safety-v4-signals",
+        policy_version: str = "unified-safety-v5-liquidity",
         feature_schema_version: str = "screening-rank-v3",
         max_onchain_checks: int = MAX_ONCHAIN_CHECKS_PER_CYCLE,
         max_market_checks: int = 40,
@@ -1329,7 +1329,10 @@ class UnifiedSolanaScanner:
         decisions: List[CandidateDecision] = []
         checks_used = 0
         for index, candidate in enumerate(candidates):
-            already_alerted = await self.database.has_alerted_candidate(*candidate.identity)
+            already_alerted = await (
+                self.database.signal_is_final(*candidate.identity) if self.signal_preparer
+                else self.database.has_alerted_candidate(*candidate.identity)
+            )
             if already_alerted:
                 decision = CandidateDecision(candidate, "REJECTED", ["ALREADY_ALERTED"])
             elif index >= self.max_market_checks:
@@ -1361,6 +1364,7 @@ class UnifiedSolanaScanner:
         winner: Optional[CandidateDecision] = None
         prepared_signal: Optional[str] = None
         winner_claimed = False
+        signal_kind: Optional[str] = None
         # Try qualified candidates in rank order. A retained PENDING claim from
         # an uncertain earlier delivery must block a duplicate for that mint,
         # but must not suppress an unrelated lower-ranked candidate.
@@ -1381,8 +1385,10 @@ class UnifiedSolanaScanner:
                     item.decision = "REJECTED"
                     item.reasons.append("AGE_EXPIRED_BEFORE_ALERT")
                     continue
-            claimed = await self.database.try_claim_candidate_alert(
-                *item.candidate.identity
+            signal_kind = ((item.evidence.get("signal_company") or {}).get("plan") or {}).get("final_decision")
+            claimed = await (
+                self.database.try_claim_signal(*item.candidate.identity, signal_kind or "")
+                if self.signal_preparer else self.database.try_claim_candidate_alert(*item.candidate.identity)
             )
             if claimed:
                 winner = item
@@ -1445,9 +1451,15 @@ class UnifiedSolanaScanner:
                 winner.decision = "ALERTED" if winner.alerted else "DEFERRED"
                 if not winner.alerted:
                     winner.reasons.append("ALERT_DELIVERY_FAILED")
-                    await self.database.release_candidate_alert(*winner.candidate.identity)
+                    if self.signal_preparer:
+                        await self.database.finish_signal(*winner.candidate.identity, signal_kind or "", False)
+                    else:
+                        await self.database.release_candidate_alert(*winner.candidate.identity)
                 else:
-                    await self.database.complete_candidate_alert(*winner.candidate.identity)
+                    if self.signal_preparer:
+                        await self.database.finish_signal(*winner.candidate.identity, signal_kind or "", True)
+                    else:
+                        await self.database.complete_candidate_alert(*winner.candidate.identity)
                 await self.database.record_candidate_observation(
                     self._observation(
                         winner,
@@ -1537,7 +1549,7 @@ class UnifiedSolanaScanner:
         *,
         cycle_id: Optional[int] = None,
         candidate_id: Optional[int] = None,
-        policy_version: str = "unified-safety-v4-signals",
+        policy_version: str = "unified-safety-v5-liquidity",
         feature_schema_version: str = "screening-rank-v3",
     ) -> Dict[str, Any]:
         candidate = decision.candidate

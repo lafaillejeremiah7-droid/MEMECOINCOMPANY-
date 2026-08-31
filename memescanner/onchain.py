@@ -18,8 +18,10 @@ Uses Helius RPC endpoints:
 
 import asyncio
 import logging
+import math
 import os
 import re
+import time
 from typing import Any, Dict, List, Optional, Set, Union
 
 import httpx
@@ -77,6 +79,10 @@ class OnchainAnalyzer:
         self.transfer_hook_allowlist = transfer_hook_allowlist or set()
         self.max_transfer_fee_bps = max_transfer_fee_bps
         self.timeout = httpx.Timeout(RPC_TIMEOUT)
+        self.access_denied = False
+        self.last_error: Optional[str] = None
+        self._next_rpc_at = 0.0
+        self._rpc_lock = asyncio.Lock()
 
     async def _rpc_call(self, client: httpx.AsyncClient, method: str,
                         params: list) -> Optional[RpcResult]:
@@ -100,24 +106,58 @@ class OnchainAnalyzer:
             "params": params,
         }
 
-        if not self.enabled:
+        if not self.enabled or self.access_denied:
             return None
 
-        try:
-            response = await client.post(self.rpc_url, json=payload)
-            response.raise_for_status()
-            data = response.json()
-
-            if "error" in data:
-                logger.warning("RPC error for %s: %s", method, data["error"])
-                return None
-
-            return data.get("result")
-        except Exception as e:
-            # Never include the request URL in logs: Helius API keys may be
-            # embedded in its query string.
-            logger.warning("RPC call %s failed: %s", method, type(e).__name__)
-            return None
+        # Serialize requests across workers and respect cooldowns; retry only
+        # transient failures, never an authorization denial or unsupported call.
+        async with self._rpc_lock:
+            for attempt in range(3):
+                if self.access_denied:
+                    return None
+                if self._next_rpc_at - time.monotonic() > 5:
+                    return None
+                await asyncio.sleep(max(0, self._next_rpc_at - time.monotonic()))
+                self._next_rpc_at = time.monotonic() + RPC_CALL_DELAY
+                retry = False
+                delay = 0.5 * 2 ** attempt
+                try:
+                    response = await client.post(self.rpc_url, json=payload)
+                    response.raise_for_status()
+                    data = response.json()
+                    if "error" in data:
+                        error = data["error"] or {}
+                        code = error.get("code") if isinstance(error, dict) else None
+                        self.last_error = f"RPC_{code}" if type(code) is int else "RPC_ERROR"
+                        retry = code in {-32005, -32004, 429}
+                    else:
+                        self.last_error = None
+                        return data.get("result")
+                except httpx.HTTPStatusError as exc:
+                    status = exc.response.status_code
+                    self.last_error = f"HTTP_{status}"
+                    self.access_denied = status in {401, 402, 403}
+                    retry = status == 429 or status in {500, 502, 503, 504}
+                    try:
+                        retry_after = float(exc.response.headers.get("Retry-After", "0"))
+                        if math.isfinite(retry_after):
+                            delay = max(delay, retry_after)
+                    except ValueError:
+                        pass
+                except (httpx.TimeoutException, httpx.NetworkError) as exc:
+                    self.last_error = type(exc).__name__
+                    retry = True
+                except Exception as exc:
+                    self.last_error = type(exc).__name__
+                logger.warning("RPC %s unavailable: %s", method, self.last_error)
+                if not retry:
+                    return None
+                # Long Retry-After values block subsequent calls without tying
+                # up the scanner waiting for minutes in this attempt.
+                self._next_rpc_at = time.monotonic() + max(delay, 0)
+                if delay > 5 or attempt == 2:
+                    return None
+        return None
 
     async def _get_token_largest_accounts(
         self, client: httpx.AsyncClient, mint: str

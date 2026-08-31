@@ -526,6 +526,9 @@ class DexScreenerPairClient:
             ).isoformat(),
             "captured_at_epoch": captured_epoch,
             "pair_address": pair.get("pairAddress"),
+            "dex_id": pair.get("dexId"),
+            "base_mint": base_token.get("address"),
+            "quote_mint": quote_token.get("address"),
             "price_usd": (
                 float(pair["priceUsd"])
                 if pair.get("priceUsd") not in (None, "") else None
@@ -540,6 +543,7 @@ class DexScreenerPairClient:
             "avg_trade_size_usd": avg_trade_size_usd,
             "volume_to_mcap_ratio": volume / max(market_cap, 1),
             "price_change_1h": float((pair.get("priceChange") or {}).get("h1") or 0),
+            "price_change_5m": (pair.get("priceChange") or {}).get("m5"),
             "dex_url": pair.get("url"),
             "name": candidate_token.get("name"),
             "symbol": candidate_token.get("symbol"),

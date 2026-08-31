@@ -39,19 +39,25 @@ maximum planned hold, cost estimate, gross/net payoff, liquidity, critical risks
 employee reports and BUY/WATCH/REJECT decision. Quotes are public market snapshots,
 not transaction offers. Evidence expires after 120 seconds; market data is fetched
 again before review, must pass the five-second handoff check, and the ticket expires
-30 seconds after receipt. Recheck the market and never chase a missed entry.
+30 seconds after the market snapshot, not receipt. Recheck the market and never chase a missed entry.
 
-**Current limitation: the on-chain collector does not verify pool locks. It now
-records unknown, not false evidence of removable liquidity. Unknown LP safety or
-holder-history evidence can only produce WATCH (do not buy yet), never BUY.**
+Exact-pool LP burn verification supports Raydium AMM v4 and the reviewed PumpSwap
+layout. It requires at least 99% burned LP supply, bound to the same mint, quote
+mint and pool, with pool reserves and LP supply read at one RPC slot. Unsupported
+pools and unverified time locks remain unknown. Unknown LP safety or holder-history
+evidence can only produce WATCH (do not buy yet), never BUY. LP burns do not rule out
+all contract, upgrade-authority or market risks.
 Explicit hazards are rejected and kept in the audit history rather than pushed.
-Until a verified liquidity-safety provider is implemented, production will not
-issue BUY signals. No safety gate is bypassed to manufacture recommendations.
+BUY still requires every other check. No safety gate is bypassed to manufacture recommendations.
 
-SQLite preserves observations, company tickets and delivery claims. One alert per
-mint includes WATCH; this version does not resend a WATCH as BUY later. An uncertain
+SQLite preserves observations, company tickets and delivery claims. Each mint can
+receive one WATCH and one later BUY, with all evidence freshly rechecked. An uncertain
 Telegram delivery retains its claim for operator review, preventing blind duplicates.
 Historical paper simulation remains in the codebase but is not started by production.
+An independent forward tracker samples eligible BUY setups against an $11 reference
+ledger. It records estimated costs, observed stops, momentum exits and time stops.
+Observation gaps and unknown exits are incomplete, never invented wins or losses.
+These sampled outcomes are not executable-fill verification.
 At least 100 completed forward paper signals and human approval remain prerequisites
 for any future real execution; no automatic live switch exists.
 
@@ -66,7 +72,7 @@ The default runtime uses one normalized pipeline:
 2. Normalize and merge duplicates by `(chain_id, mint)`, unioning source membership and preserving social, creator, creation-time, and paid-boost metadata.
 3. Select only a Solana DEX pair—there is no cross-chain fallback.
 4. Apply the same age, X-presence, liquidity, trading-flow, on-chain, holder, rug/scam-evidence, and evidence-availability checks to every source.
-5. Persist every observation and decision (qualified, rejected, or deferred) in SQLite, then emit at most one deduplicated alert per mint.
+5. Persist every observation and decision (qualified, rejected, or deferred) in SQLite, with at most one WATCH and one fully rechecked BUY per mint.
 
 “All-platform” means launchpad-neutral discovery across supported Solana DEX data sources. It is not a guarantee that every token will be discovered. A public source can be unavailable or rate-limited; failures are isolated and other adapters continue. DEX market enrichment is capped per cycle (40 by default); over-budget candidates are persisted as deferred and rotate into later cycles rather than being discarded.
 
@@ -98,10 +104,12 @@ python -m memescanner
 - `MEMESCANNER_TELEGRAM_BOT_TOKEN`
 - `MEMESCANNER_TELEGRAM_CHAT_ID`
 - `MEMESCANNER_TAVILY_API_KEY` (accepts both Tavily `tvly-` keys and X.ai `xai-` keys; when an X.ai key is detected, the scanner uses the X.ai Responses API with the `x_search` tool instead of Tavily)
+- `MEMESCANNER_XAI_API_KEY` (optional explicit X.ai key; one working social provider is required)
 - `MEMESCANNER_HELIUS_RPC_URL` (preferred complete RPC endpoint)
 - `MEMESCANNER_HELIUS_API_KEY` (used only when no complete RPC URL is set)
 - `MEMESCANNER_TRANSFER_HOOK_ALLOWLIST` (comma-separated exact Token-2022 hook program IDs; empty rejects hooks)
 - `MEMESCANNER_ENABLE_PAPER_TRADING` is a legacy simulation setting; production ignores it and always sends signals only.
+- `MEMESCANNER_DATABASE_PATH` (persistent SQLite path, default `memescanner.db`; run one scanner per database)
 - `MEMESCANNER_COLLECT_OUTCOMES=false` disables prospective public-market capture; collection is enabled by default and never changes signals or position sizing
 
 Missing Telegram credentials disable delivery clearly. A completed Tavily search with no indexed result remains partial OSINT, while a missing Tavily credential or outage defers candidates. Missing Helius/Solana RPC evidence also defers candidates and prevents alerts rather than silently treating them as safe. RPC errors never log credential-bearing request URLs.
@@ -116,7 +124,8 @@ A repository-local pre-commit configuration and the `Secret pattern guard` GitHu
 
 ## Deployment via GitHub Actions
 
-You can run the scanner continuously using the included GitHub Actions workflow. The workflow triggers manually and runs for up to 6 hours (the GitHub Actions per-job maximum).
+The included GitHub Actions workflow runs a finite 30-minute session, manually or
+after a main-branch push. It is not continuous hosting.
 
 ### 1. Add repository secrets
 
@@ -125,6 +134,7 @@ Go to your repository **Settings > Secrets and variables > Actions** and add the
 | Secret name | Description |
 |---|---|
 | `MEMESCANNER_TAVILY_API_KEY` | Tavily API key (`tvly-...`) or X.ai key (`xai-...`) |
+| `MEMESCANNER_XAI_API_KEY` | Alternative explicit X.ai key; at least one social key is required |
 | `MEMESCANNER_HELIUS_RPC_URL` | Helius Solana RPC endpoint URL |
 | `MEMESCANNER_TELEGRAM_BOT_TOKEN` | Telegram bot token from @BotFather |
 | `MEMESCANNER_TELEGRAM_CHAT_ID` | Telegram chat ID where alerts are delivered |
@@ -147,6 +157,12 @@ SQLite (including its WAL) to the `signal-state` artifact, then restores that
 history for the next session. Artifacts expire after 90 days. Missing checkpoints
 from an earlier started session halt restart rather than silently forgetting
 delivery claims; recover the history before retrying. Use one process per database.
+
+Docker/Compose deployment files are provided for an operator-approved always-on
+host; no host has been provisioned. Provider 401/402/403 errors require account,
+permission or billing correction by the operator. Code cannot grant access.
+Health messages expose these failures and periodic no-signal reasons, instead of
+silently suggesting the service is healthy. See [signal reliability and deployment](docs/signal_reliability.md).
 
 ## Persistence and prospective calibration
 

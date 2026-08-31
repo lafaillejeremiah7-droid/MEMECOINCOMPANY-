@@ -128,7 +128,7 @@ class CalibrationConfig:
     # be passed via the celebrity bypass. Isolating them is the entire purpose of
     # the field. tests/test_policy_versioning.py now fails if the gates change
     # without a bump.
-    policy_version: str = "unified-safety-v4-signals"
+    policy_version: str = "unified-safety-v5-liquidity"
     # Bumped from screening-rank-v1 when social presence and community takeover
     # became scoring inputs. The version is what keeps calibration honest: a
     # screening score of 55 under v1 and under v2 are not the same quantity, so
@@ -355,7 +355,7 @@ class Config:
                     "report_interval_seconds", 86400
                 ),
                 policy_version=calibration_data.get(
-                    "policy_version", "unified-safety-v4-signals"
+                    "policy_version", "unified-safety-v5-liquidity"
                 ),
                 feature_schema_version=calibration_data.get(
                     "feature_schema_version", "screening-rank-v3"
@@ -398,6 +398,7 @@ class Config:
         self.telegram.bot_token = os.getenv(
             "MEMESCANNER_TELEGRAM_BOT_TOKEN", self.telegram.bot_token
         )
+        self.database.path = os.getenv("MEMESCANNER_DATABASE_PATH", self.database.path)
         self.telegram.chat_id = os.getenv(
             "MEMESCANNER_TELEGRAM_CHAT_ID", self.telegram.chat_id
         )
