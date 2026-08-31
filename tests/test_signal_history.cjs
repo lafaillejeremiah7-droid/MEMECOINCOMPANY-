@@ -80,5 +80,10 @@ test('rerunning an older workflow cannot roll back newer delivery history', asyn
 
 test('deployment passes the real attempt number into the rerun guard', () => {
   const source = readFileSync('.github/workflows/run-scanner.yml', 'utf8');
-  assert.match(source, /runAttempt: process\.env\.GITHUB_RUN_ATTEMPT/);
+  if (source.includes('findPreviousSignalState')) {
+    assert.match(source, /runAttempt: process\.env\.GITHUB_RUN_ATTEMPT/);
+  } else {
+    assert.match(source, /confirmShutdown/);
+    assert.doesNotMatch(source, /python -m memescanner/);
+  }
 });

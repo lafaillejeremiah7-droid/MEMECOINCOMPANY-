@@ -1,5 +1,9 @@
 # Memescanner — Telegram Signal Company
 
+Deployment status: **OFF by operator request**. The deployment workflow only stops
+existing sessions and sends a shutdown confirmation to the configured Telegram chat.
+It does not start the scanner. Restart requires explicit operator approval.
+
 Memescanner researches Solana memecoins and sends Telegram alerts. You decide whether
 to trade manually. Production never starts a paper trader, loads wallet keys, signs
 transactions, or places trades—even if an old paper-trading setting is enabled.

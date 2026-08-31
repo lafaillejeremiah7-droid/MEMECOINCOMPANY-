@@ -53,7 +53,7 @@ jobs:
         run: python -m py_compile memescanner/*.py scripts/*.py tests/*.py
 
       - name: Verify deployment history guard
-        run: node --test tests/test_signal_history.cjs
+        run: node --test tests/test_signal_history.cjs tests/test_signal_shutdown.cjs
 
       - name: Lint (ruff)
         run: python -m ruff check .
