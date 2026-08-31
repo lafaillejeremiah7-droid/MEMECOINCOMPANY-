@@ -67,11 +67,20 @@ until an operator reviews the missing path. Restarts never clear this state or t
 loss halts. Preserve the database for review; do not delete rows to obtain a pass.
 The production signal stream is advisory and does not read your actual holdings.
 
+Version `sampled-micro-v2` starts its entry and sample clocks at the actual market
+snapshot, not Telegram delivery. Entries delayed beyond the 15-second observation
+limit are not recorded. Non-numeric plans and malformed stored data cannot become
+completed samples. Earlier-version rows remain intact and are not pooled into the
+new counter; unresolved paths from any version still block readiness.
+
 Inspect the reference report without starting the scanner:
 
 ```bash
 python -m memescanner.validation --report memescanner.db
 ```
+
+Reporting opens SQLite read-only. A wrong path or uninitialized history fails
+explicitly rather than creating or migrating a database.
 
 The 100-sample counter is version-isolated. Even after 100 completed samples, status
 is only NEEDS_HUMAN_REVIEW; `live_execution_allowed` and `executable_fills_verified`
@@ -100,3 +109,7 @@ Compose uses a persistent volume, a non-root process, dropped capabilities, a
 single-process lock, and restart-unless-stopped. It is deployment scaffolding, not
 evidence that an always-on host is running. Startup checks presence of required
 configuration and Telegram acceptance; this does not certify all providers healthy.
+
+For Actions restarts, use **Run workflow** to start a new run. **Re-run jobs** is
+blocked for signal deployments: an old run ID could otherwise restore an old
+checkpoint over newer delivery history. This restriction does not affect CI reruns.

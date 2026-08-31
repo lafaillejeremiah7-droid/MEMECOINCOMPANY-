@@ -49,7 +49,7 @@ jobs:
         with:
           script: |
             const {findPreviousSignalState} = require('./scripts/signal_history.cjs');
-            await findPreviousSignalState({github, context, core});
+            await findPreviousSignalState({github, context, core, runAttempt: process.env.GITHUB_RUN_ATTEMPT});
 
       - name: Restore observation and alert history
         if: steps.previous.outputs.run_id != ''

@@ -227,17 +227,13 @@ class XSearchClient:
             return_exceptions=True,
         )
         results: List[Dict[str, Any]] = []
-        for backend, outcome in zip(("tavily", "x.ai"), outcomes, strict=True):
+        for backend, outcome in zip(("tavily", "xai"), outcomes, strict=True):
             if isinstance(outcome, BaseException):
-                # Named explicitly: a backend that raises every time is otherwise
-                # indistinguishable from a token that genuinely has no mentions.
-                logger.warning(
-                    "X evidence backend %s raised %s for %s",
-                    backend,
-                    type(outcome).__name__,
-                    symbol,
-                )
-                results.append(self._empty_result())
+                if not isinstance(outcome, Exception):
+                    raise outcome  # Cancellation must stop research, not produce evidence.
+                result = self._empty_result()
+                result["error_code"] = self._record_failure(backend, outcome)
+                results.append(result)
             else:
                 results.append(outcome)
         tavily_result, xai_result = results
@@ -553,5 +549,5 @@ class XSearchClient:
             "has_buzz": False,
             "top_snippet": "",
             "evidence": [],
-            "evidence_availability": "DISABLED" if not self.api_key else "AVAILABLE",
+            "evidence_availability": "UNAVAILABLE" if self.xai_key or self.tavily_key else "DISABLED",
         }

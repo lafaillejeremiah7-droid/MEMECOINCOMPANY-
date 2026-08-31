@@ -152,6 +152,8 @@ Each deployment runs a **30-minute session**, not a 24/7 service. GitHub Actions
 ### 3. Restarting
 
 Once the 30-minute session ends, manually start another session from Actions.
+Choose **Run workflow**, not **Re-run jobs**; old deployment reruns are blocked
+to prevent restoring outdated delivery history.
 There is no automatic restart or scheduled 24/7 coverage. The workflow backs up
 SQLite (including its WAL) to the `signal-state` artifact, then restores that
 history for the next session. Artifacts expire after 90 days. Missing checkpoints

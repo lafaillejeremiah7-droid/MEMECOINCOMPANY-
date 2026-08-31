@@ -45,5 +45,6 @@ class HealthReporter:
             "401/402/403 require the operator to check API credentials, credits and access. No bypass is attempted.",
             f"Most common blocks: {dict(reasons.most_common(3))}",
             f"Forward samples: {validation['completed']}/100 complete; {validation['incomplete']} incomplete; {validation['status']}",
+            f"Unresolved paths across validation versions: {validation.get('unresolved_across_versions', 0)}",
             "Paper outcomes use estimated costs and sampled prices, not proven swap fills. No live execution.",
         ))

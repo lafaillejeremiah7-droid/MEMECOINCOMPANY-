@@ -1,3 +1,4 @@
+import json
 import time
 from unittest.mock import AsyncMock
 
@@ -5,7 +6,7 @@ import pytest
 import pytest_asyncio
 
 from memescanner.database import Database
-from memescanner.validation import ForwardValidation
+from memescanner.validation import VALIDATION_VERSION, ForwardValidation, _report
 from tests.test_micro_company import plan
 
 
@@ -163,3 +164,103 @@ async def test_overflowing_exit_pnl_is_incomplete_not_a_win(tmp_path):
     report = await worker.report()
     assert report["completed"] == 0 and report["incomplete"] == 1
     await db.close()
+
+
+@pytest.mark.asyncio
+async def test_report_missing_path_never_creates_new_history(tmp_path):
+    path = tmp_path / "mistyped.db"
+    with pytest.raises((FileNotFoundError, RuntimeError)):
+        await _report(str(path))
+    assert not path.exists()
+
+
+@pytest.mark.asyncio
+async def test_report_does_not_initialize_or_migrate_existing_database(tmp_path):
+    db = Database(str(tmp_path / "old-history.db"))
+    await db.initialize()
+    await db.close()
+    path = tmp_path / "old-history.db"
+    before = path.read_bytes()
+    with pytest.raises(RuntimeError, match="not initialized"):
+        await _report(str(path))
+    assert path.read_bytes() == before
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("field", ["entry_price", "stop_price", "entry_amount_usd", "maximum_holding_seconds"])
+async def test_string_numbers_cannot_enter_a_ledger_that_requires_arithmetic(tmp_path, field):
+    db, pairs, worker = await validator(tmp_path)
+    r = review()
+    r["plan"][field] = str(r["plan"][field])
+    assert not await worker.record(r, {"pair_address": "pool"})
+
+
+@pytest.mark.asyncio
+async def test_delayed_delivery_cannot_hide_an_observation_gap(tmp_path):
+    db, pairs, worker = await validator(tmp_path)
+    r = review()
+    r["market_observed_at"] -= 20
+    assert not await worker.record(r, {"pair_address": "pool"})
+
+
+@pytest.mark.asyncio
+async def test_entry_clock_uses_market_snapshot_not_telegram_delivery(tmp_path):
+    db, pairs, worker = await validator(tmp_path)
+    r = review()
+    r["market_observed_at"] -= 8
+    assert await worker.record(r, {"pair_address": "pool"})
+    async with db._db.execute("SELECT opened,last_sample FROM forward_signals") as cursor:
+        row = await cursor.fetchone()
+    assert row["opened"] == r["market_observed_at"]
+    assert row["last_sample"] == r["market_observed_at"]
+
+
+@pytest.mark.asyncio
+async def test_report_existing_history_is_read_only_and_accurate(tmp_path, capsys):
+    db, pairs, worker = await validator(tmp_path)
+    assert await worker.record(review(), {"pair_address": "pool"})
+    pairs.get_pair.return_value = {"price_usd": .012, "price_change_5m": 2, "pair_address": "pool"}
+    await worker.sample_once()
+    expected = await worker.report()
+    await db.close()
+    path = tmp_path / "validation.db"
+    before = path.read_bytes()
+    await _report(str(path))
+    assert json.loads(capsys.readouterr().out) == expected
+    assert path.read_bytes() == before
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("fault", ["string_plan", "broken_json", "malformed_market"])
+async def test_bad_stored_plan_or_quote_is_incomplete_not_a_dead_worker(tmp_path, fault):
+    db, pairs, worker = await validator(tmp_path)
+    r = review()
+    assert await worker.record(r, {"pair_address": "pool"})
+    pairs.get_pair.return_value = {"price_usd": .012, "price_change_5m": 2, "pair_address": "pool"}
+    if fault == "malformed_market":
+        pairs.get_pair.return_value = ["not a quote"]
+    else:
+        r["plan"]["stop_price"] = str(r["plan"]["stop_price"])
+        encoded = "{" if fault == "broken_json" else json.dumps(r["plan"])
+        await db._db.execute("UPDATE forward_signals SET plan=?", (encoded,))
+        await db._db.commit()
+    await worker.sample_once()
+    report = await worker.report()
+    assert report["completed"] == 0 and report["incomplete"] == 1
+    await worker.sample_once()  # The observer survives; no invented completion.
+
+
+@pytest.mark.asyncio
+async def test_old_unresolved_paths_still_block_new_version_readiness(tmp_path):
+    db, pairs, worker = await validator(tmp_path)
+    assert await worker.record(review(), {"pair_address": "pool"})
+    await db._db.execute("UPDATE forward_signals SET version='old-version',state='INCOMPLETE'")
+    # Synthetic test rows, never a production validation record.
+    await db._db.executemany("INSERT INTO forward_signals (mint,version,plan,pair,opened,last_sample,state,net_pnl,cost_model) VALUES (?,?,'{}','pool',0,0,'COMPLETE',0.01,'TEST_FIXTURE')",
+                            [(f"synthetic-{i}", VALIDATION_VERSION) for i in range(100)])
+    await db._db.commit()
+    report = await worker.report()
+    assert report["completed"] == 100
+    assert report["unresolved_across_versions"] == 1
+    assert report["status"] == "NOT_VALIDATED"
+    assert not report["live_execution_allowed"]

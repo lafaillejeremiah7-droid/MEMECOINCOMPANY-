@@ -18,18 +18,20 @@ response has eleven distinct citations, where ``max(11, 1)`` and
 fixtures pin realistic shapes; unit tests pin the edge cases a recording does not
 happen to contain, and neither layer replaces the other.
 
-Every mutation is reverted with ``git checkout`` in a finally block. The script
-refuses to run if the files it edits have uncommitted changes, so a crash can never
-lose work.
+Each mutation runs in a fresh disposable copy of tracked files. The working
+checkout is never mutated, so failed cleanup or stale bytecode cannot poison the
+release files or the next test case. No Git branch or worktree is created.
 """
 
 from __future__ import annotations
 
 import argparse
-import shutil
+import os
 import subprocess
 import sys
-from dataclasses import dataclass
+import tempfile
+from contextlib import contextmanager
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import List
 
@@ -498,8 +500,9 @@ MUTATIONS.extend([
 ])
 
 
-def _run(cmd: List[str]) -> subprocess.CompletedProcess:
-    return subprocess.run(cmd, capture_output=True, text=True)
+def _run(cmd: List[str], *, cwd: Path | None = None) -> subprocess.CompletedProcess:
+    env = None if cwd is None else dict(os.environ, PYTHONPATH=str(cwd), PYTHONDONTWRITEBYTECODE="1")
+    return subprocess.run(cmd, capture_output=True, text=True, cwd=cwd, env=env, timeout=120)
 
 
 def _dirty(paths: List[str]) -> List[str]:
@@ -509,46 +512,36 @@ def _dirty(paths: List[str]) -> List[str]:
     return [line for line in result.stdout.splitlines() if line.strip()]
 
 
+def _tracked_snapshot() -> dict[str, bytes]:
+    result = _run(["git", "ls-files", "-z"])
+    if result.returncode != 0:
+        raise RuntimeError("Cannot snapshot tracked files for mutation tests")
+    return {name: Path(name).read_bytes() for name in result.stdout.split("\0") if name}
+
+
+@contextmanager
+def _isolated_case(snapshot: dict[str, bytes]):
+    with tempfile.TemporaryDirectory(prefix="memescanner-mutation-") as directory:
+        workspace = Path(directory)
+        for name, content in snapshot.items():
+            relative = Path(name)
+            if relative.is_absolute() or ".." in relative.parts:
+                raise ValueError("Invalid mutation snapshot path")
+            path = workspace / relative
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(content)
+        yield workspace
+
+
 def _apply(mutation: Mutation) -> bool:
     path = Path(mutation.path)
-    # Encoding is pinned, not left to the platform default. This function edits
-    # real source files in place, and memescanner/unified_scanner.py -- one of the
-    # files mutated below -- contains a non-ASCII em dash. Under a non-UTF-8
-    # default encoding this read would raise, or the write would re-encode that
-    # character, so the harness meant to leave the tree untouched would be the
-    # thing that corrupted it.
-    source = path.read_text(encoding="utf-8")
+    # Operate only on an isolated case. Preserve UTF-8 and original line endings.
+    original = path.read_bytes()
+    source = original.decode("utf-8")
     if mutation.old not in source:
         return False
-    path.write_text(source.replace(mutation.old, mutation.new, 1), encoding="utf-8")
+    path.write_bytes(source.replace(mutation.old, mutation.new, 1).encode("utf-8"))
     return True
-
-
-def _revert(mutation: Mutation) -> None:
-    """Restore the source, and discard the bytecode compiled from the mutation.
-
-    Restoring the text is not enough. CPython validates a cached ``.pyc`` against
-    the source's (mtime, size), and one mutation here is byte-length identical to
-    the code it replaces -- ``max_top10_concentration_pct: float = 30.0`` becomes
-    ``25.0``, 41 bytes either way. Filesystem mtime granularity is coarse enough
-    that the mutation write and this restore can land in the same tick, and then
-    both halves of the validation key match and the stale bytecode is accepted.
-
-    The result is a *later* pytest run importing the mutated constant from cache
-    while the source on disk is correct, which surfaces as
-    test_policy_versioning.py failing against code that is actually right. That
-    reproduces on unmodified main, so this harness has been able to poison the
-    runs that follow it. Dropping the cache next to the reverted file closes it.
-    """
-    restored = _run(["git", "checkout", "--", mutation.path])
-    if restored.returncode != 0:
-        raise RuntimeError(f"Mutation restore failed for {mutation.path}; inspect the working tree")
-    verified = _run(["git", "diff", "--exit-code", "HEAD", "--", mutation.path])
-    if verified.returncode != 0:
-        raise RuntimeError(f"Mutation source not restored exactly: {mutation.path}")
-    cache = Path(mutation.path).resolve().parent / "__pycache__"
-    if cache.is_dir():
-        shutil.rmtree(cache, ignore_errors=True)
 
 
 def main() -> int:
@@ -563,29 +556,30 @@ def main() -> int:
             print(f"  {mutation.name}")
         return 2
 
-    # Refuse to touch files that already have uncommitted edits, so a revert can
-    # never discard someone's work in progress.
+    # Only test clean release inputs. The originals remain read-only throughout.
     paths = sorted({m.path for m in selected})
     dirty = _dirty(paths)
     if dirty:
         print("Refusing to run: these files have uncommitted changes.")
         for line in dirty:
             print(f"  {line}")
-        print("\nCommit or stash them first; this script reverts with git checkout.")
+        print("\nCommit or stash them first; mutation inputs must be clean.")
         return 2
 
     print(f"Checking {len(selected)} mutation(s). Each must make its tests FAIL.\n")
     survived: List[Mutation] = []
     unapplied: List[Mutation] = []
+    snapshot = _tracked_snapshot()
 
     for mutation in selected:
         print(f"  {mutation.name:32s} ", end="", flush=True)
-        try:
-            if not _apply(mutation):
+        with _isolated_case(snapshot) as workspace:
+            isolated = replace(mutation, path=str(workspace / mutation.path))
+            if not _apply(isolated):
                 unapplied.append(mutation)
                 print("SKIPPED (pattern not found -- code has moved on)")
                 continue
-            result = _run([sys.executable, "-m", "pytest", mutation.tests, "-q"])
+            result = _run([sys.executable, "-m", "pytest", mutation.tests, "-q"], cwd=workspace)
             if result.returncode == 0:
                 survived.append(mutation)
                 print("SURVIVED -- the tests did not notice")
@@ -596,17 +590,15 @@ def main() -> int:
                 if result.returncode != 1 or failed == 0:
                     raise RuntimeError(f"Mutation {mutation.name}: test infrastructure failed, not a verified regression catch")
                 print(f"caught ({failed} test(s) failed)")
-        finally:
-            _revert(mutation)
 
     print()
     still_dirty = _dirty(paths)
     if still_dirty:
-        print("WARNING: files remain modified after revert:")
+        print("WARNING: original checkout changed during mutation checks:")
         for line in still_dirty:
             print(f"  {line}")
         return 2
-    print("All mutations reverted; working tree clean.")
+    print("All isolated cases discarded; original working tree clean.")
 
     if unapplied:
         print("\nMutations that could not be applied (update or remove them):")

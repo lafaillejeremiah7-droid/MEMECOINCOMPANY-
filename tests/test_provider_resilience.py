@@ -1,3 +1,4 @@
+import asyncio
 from unittest.mock import AsyncMock, patch
 
 import httpx
@@ -89,3 +90,36 @@ def test_health_reports_access_denials_immediately_once():
     assert health.message({}, {}, None, report) is None
     assert health.message({}, {"xai": "HTTP_403_OPERATOR_ACTION_REQUIRED"}, None, report)
     assert health.message({}, {"xai": "HTTP_403_OPERATOR_ACTION_REQUIRED"}, None, report) is None
+
+
+@pytest.mark.asyncio
+async def test_unexpected_dual_backend_failures_never_become_available():
+    client = XSearchClient(api_key="tvly-example", xai_api_key="xai-example")
+    client._search_tavily = AsyncMock(side_effect=RuntimeError("private-detail"))
+    client._search_xai = AsyncMock(side_effect=RuntimeError("private-detail"))
+    result = await client.search_token("T", "Token", "mint")
+    assert result["evidence_availability"] == "UNAVAILABLE"
+    assert set(client.failures) == {"tavily", "xai"}
+
+
+@pytest.mark.asyncio
+async def test_unexpected_primary_failure_uses_working_backend_count():
+    client = XSearchClient(api_key="tvly-example", xai_api_key="xai-example")
+    client._search_tavily = AsyncMock(side_effect=RuntimeError())
+    client._search_xai = AsyncMock(return_value={"evidence_availability": "AVAILABLE", "result_count": 7})
+    result = await client.search_token("T", "Token", "mint")
+    assert result["result_count"] == 7
+
+
+@pytest.mark.asyncio
+async def test_cancelled_social_task_is_not_swallowed_as_empty_evidence():
+    client = XSearchClient(api_key="tvly-example", xai_api_key="xai-example")
+    client._search_tavily = AsyncMock(side_effect=asyncio.CancelledError())
+    client._search_xai = AsyncMock(return_value={"evidence_availability": "AVAILABLE"})
+    with pytest.raises(asyncio.CancelledError):
+        await client.search_token("T", "Token", "mint")
+
+
+def test_health_exposes_blocking_history_from_previous_validation_versions():
+    report = {"completed": 0, "incomplete": 0, "status": "NOT_VALIDATED", "unresolved_across_versions": 2}
+    assert "Unresolved paths across validation versions: 2" in HealthReporter().message({}, {}, None, report)

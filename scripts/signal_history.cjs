@@ -17,7 +17,12 @@ function sessionStarted(jobs) {
   }));
 }
 
-async function findPreviousSignalState({github, context, core}) {
+async function findPreviousSignalState({github, context, core, runAttempt = 1}) {
+  // Run IDs order first attempts, not reruns. An older rerun can otherwise
+  // restore its old checkpoint over newer accepted delivery history.
+  if (id(runAttempt) !== 1n) {
+    throw new Error('Start a new workflow run instead of rerunning an old deployment; history must not roll back.');
+  }
   const {owner, repo} = context.repo;
   const current = id(context.runId);
   const artifacts = await github.paginate(github.rest.actions.listArtifacts,

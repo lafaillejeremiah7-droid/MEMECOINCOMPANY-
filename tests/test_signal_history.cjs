@@ -1,6 +1,7 @@
 'use strict';
 const {test} = require('node:test');
 const assert = require('node:assert/strict');
+const {readFileSync} = require('node:fs');
 const {findPreviousSignalState, sessionStarted} = require('../scripts/signal_history.cjs');
 
 const artifact = (run = 10, extra = {}) => ({id: run * 100, name: 'signal-state',
@@ -67,4 +68,17 @@ test('genuinely first deployment can initialize without inventing history', asyn
   const f = fixture({artifacts: []});
   assert.equal(await findPreviousSignalState(f.args), null);
   assert.equal(sessionStarted([job('completed', 'skipped')]), false);
+});
+
+test('rerunning an older workflow cannot roll back newer delivery history', async () => {
+  const f = fixture({current: 20, artifacts: [artifact(10), artifact(30)],
+    runs: [{id: 30, head_branch: 'main'}], jobs: {30: [job()]}});
+  f.args.runAttempt = 2;
+  await assert.rejects(findPreviousSignalState(f.args), /new workflow run/);
+  assert.deepEqual(f.output, {});
+});
+
+test('deployment passes the real attempt number into the rerun guard', () => {
+  const source = readFileSync('.github/workflows/run-scanner.yml', 'utf8');
+  assert.match(source, /runAttempt: process\.env\.GITHUB_RUN_ATTEMPT/);
 });
