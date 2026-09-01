@@ -1,4 +1,5 @@
-# Finite shadow deployment. No wallets or simulated/live execution.
+# Finite shadow deployment. Activation retried after required secrets were configured.
+# No wallets or simulated/live execution.
 name: Shadow Signal Company
 
 on:
