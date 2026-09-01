@@ -1,4 +1,4 @@
-# Finite shadow deployment. Activation retried after required secrets were configured.
+# Finite shadow deployment. Operator activation request 8.
 # No wallets or simulated/live execution.
 name: Shadow Signal Company
 
