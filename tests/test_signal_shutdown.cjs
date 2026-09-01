@@ -47,10 +47,11 @@ test('uncertain delivery is not retried and credentials are not exposed', async 
   assert.equal(calls, 1);
 });
 
-test('OFF workflow cancels the existing concurrency group and contains no scanner launch', () => {
+test('shadow workflow uses the company concurrency group and cannot enable trading', () => {
   const source = readFileSync('.github/workflows/run-scanner.yml', 'utf8');
   assert.match(source, /group: signal-company-state/);
-  assert.match(source, /cancel-in-progress: true/);
-  assert.match(source, /confirmShutdown/);
-  assert.doesNotMatch(source, /python -m memescanner|Run a 30-minute signal session|MEMESCANNER_TAVILY_API_KEY/);
+  assert.match(source, /name: Shadow Signal Company/);
+  assert.match(source, /MEMESCANNER_ENABLE_PAPER_TRADING: 'false'/);
+  assert.match(source, /python -m memescanner/);
+  assert.doesNotMatch(source, /private.key|execute.trade/i);
 });

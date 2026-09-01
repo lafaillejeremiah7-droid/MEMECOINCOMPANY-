@@ -301,7 +301,7 @@ async def main_loop(config: Optional[Config] = None) -> None:
         )
         if sender.bot_token and sender.chat_id:
             delivered = await sender.send(
-                "Signal company started. Research alerts only; no automatic trades. "
+                "SHADOW MODE ON. Signal company started. Research alerts only; no automatic trades. "
                 "BUY requires every check; WATCH means do not buy yet. "
                 "Exact-pool LP checks are enabled; unsupported liquidity stays WATCH. "
                 "WATCH can upgrade once to BUY after fresh checks. "
